@@ -62,7 +62,7 @@ enum Commands {
 #[tokio::main]
 async fn main() {
     if let Err(e) = run().await {
-        eprintln!("\x1b[91m\rError: {e}\x1b[0m");
+        eprintln!("\x1b[91m\rerror:\x1b[0m {e}");
         process::exit(1);
     }
 }
