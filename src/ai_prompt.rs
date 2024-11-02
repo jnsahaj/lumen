@@ -10,7 +10,8 @@ impl AIPrompt {
         let system_prompt = String::from(
             "You are a helpful assistant that explains Git changes in a concise way. \
             Focus only on the most significant changes and their direct impact. \
-            Keep explanations brief but informative. Use markdown for clarity.",
+            Keep explanations brief but informative and don't ask for further explanations. \
+            Use markdown for clarity.",
         );
 
         let user_prompt = match git_entity {
