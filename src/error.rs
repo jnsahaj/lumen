@@ -1,9 +1,10 @@
 use std::io;
 
-use crate::git_commit::GitCommitError;
+use crate::git_entity::{git_commit::GitCommitError, git_diff::GitDiffError};
 
 pub enum LumenError {
     GitCommitError(GitCommitError),
+    GitDiffError(GitDiffError),
     MissingApiKey(String),
     UnknownError(Box<dyn std::error::Error>),
 }
@@ -11,6 +12,12 @@ pub enum LumenError {
 impl From<GitCommitError> for LumenError {
     fn from(err: GitCommitError) -> LumenError {
         LumenError::GitCommitError(err)
+    }
+}
+
+impl From<GitDiffError> for LumenError {
+    fn from(err: GitDiffError) -> LumenError {
+        LumenError::GitDiffError(err)
     }
 }
 
@@ -38,6 +45,7 @@ impl std::fmt::Display for LumenError {
             LumenError::GitCommitError(err) => write!(f, "{err}"),
             LumenError::UnknownError(err) => write!(f, "{err}"),
             LumenError::MissingApiKey(provider) => write!(f, "Missing API key for {provider}"),
+            LumenError::GitDiffError(err) => write!(f, "{err}"),
         }
     }
 }

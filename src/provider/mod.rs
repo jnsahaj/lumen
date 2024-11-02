@@ -4,7 +4,7 @@ use groq::GroqProvider;
 use openai::OpenAIProvider;
 use phind::PhindProvider;
 
-use crate::{error::LumenError, git_commit::GitCommit, ProviderType};
+use crate::{error::LumenError, git_entity::GitEntity, ProviderType};
 
 pub mod claude;
 pub mod groq;
@@ -13,7 +13,7 @@ pub mod phind;
 
 #[async_trait]
 pub trait AIProvider {
-    async fn explain(&self, commit: GitCommit) -> Result<String, Box<dyn std::error::Error>>;
+    async fn explain(&self, git_entity: GitEntity) -> Result<String, Box<dyn std::error::Error>>;
 }
 
 pub enum LumenProvider {
@@ -58,12 +58,12 @@ impl LumenProvider {
 
 #[async_trait]
 impl AIProvider for LumenProvider {
-    async fn explain(&self, commit: GitCommit) -> Result<String, Box<dyn std::error::Error>> {
+    async fn explain(&self, git_entity: GitEntity) -> Result<String, Box<dyn std::error::Error>> {
         match self {
-            LumenProvider::OpenAI(provider) => provider.explain(commit).await,
-            LumenProvider::Phind(provider) => provider.explain(commit).await,
-            LumenProvider::Groq(provider) => provider.explain(commit).await,
-            LumenProvider::Claude(provider) => provider.explain(commit).await,
+            LumenProvider::OpenAI(provider) => provider.explain(git_entity).await,
+            LumenProvider::Phind(provider) => provider.explain(git_entity).await,
+            LumenProvider::Groq(provider) => provider.explain(git_entity).await,
+            LumenProvider::Claude(provider) => provider.explain(git_entity).await,
         }
     }
 }
