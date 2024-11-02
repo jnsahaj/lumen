@@ -1,6 +1,6 @@
 use clap::{command, Parser, Subcommand, ValueEnum};
 use error::LumenError;
-use git_entity::{git_commit::GitCommit, GitEntity};
+use git_entity::{git_commit::GitCommit, git_diff::GitDiff, GitEntity};
 use reqwest;
 use std::process;
 use tokio;
@@ -44,8 +44,13 @@ enum ProviderType {
 #[derive(Subcommand)]
 enum Commands {
     Explain {
-        #[arg()]
-        sha: String,
+        /// The commit hash to use
+        #[arg(group = "target")]
+        sha: Option<String>,
+
+        /// Use staged diff
+        #[arg(long, group = "target")]
+        diff: bool,
     },
     List,
 }
@@ -65,8 +70,13 @@ async fn run() -> Result<(), LumenError> {
     let command = command::LumenCommand::new(provider);
 
     match cli.command {
-        Commands::Explain { sha } => {
-            let git_entity = GitEntity::Commit(GitCommit::new(sha)?);
+        Commands::Explain { sha, diff } => {
+            let git_entity = if diff {
+                GitEntity::StagedDiff(GitDiff::new_staged_diff()?)
+            } else {
+                let sha = sha.expect("sha and diff are mutually exclusive");
+                GitEntity::Commit(GitCommit::new(sha)?)
+            };
             command.explain(&git_entity).await?
         }
         Commands::List => command.list().await?,
