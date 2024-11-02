@@ -110,6 +110,8 @@ impl AIProvider for PhindProvider {
             GitEntity::Diff(diff) => self.create_request("Staged diff", &diff.diff).await?,
         };
 
+        // YOU CAN ADD YOUR OWN PROMPT HERE
+
         let headers = Self::create_headers()?;
 
         let response = self
