@@ -58,14 +58,13 @@ async fn get_completion_result(
 #[async_trait]
 impl AIProvider for GroqProvider {
     async fn explain(&self, git_entity: GitEntity) -> Result<String, Box<dyn std::error::Error>> {
-        let commit = match git_entity {
-            GitEntity::Commit(commit) => commit,
+        let user_input = match git_entity {
+            GitEntity::Commit(commit) => format!(
+                    "Please analyze this git commit and provide a summary.\n\nCommit Message:\n{}\n\nDiff Content:\n{}",
+                    commit.message, commit.diff
+                ),
+            GitEntity::StagedDiff(_) => todo!()
         };
-
-        let user_input = format!(
-            "Please analyze this git commit and provide a summary.\n\nCommit Message:\n{}\n\nDiff Content:\n{}",
-            commit.message, commit.diff
-        );
 
         let payload = json!({
             "model": self.model,
