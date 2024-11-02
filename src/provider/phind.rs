@@ -1,4 +1,4 @@
-use crate::git_entity::GitEntity;
+use crate::{ai_prompt::AIPrompt, git_entity::GitEntity};
 
 use super::AIProvider;
 use async_trait::async_trait;
@@ -51,13 +51,9 @@ impl PhindProvider {
 
     async fn create_request(
         &self,
-        commit_message: &str,
-        diff_content: &str,
+        ai_prompt: AIPrompt,
     ) -> Result<PhindRequest, Box<dyn std::error::Error>> {
-        let user_input = format!(
-            "Please analyze this git commit and provide a summary.\n\nCommit Message:\n{}\n\nDiff Content:\n{}",
-            commit_message, diff_content
-        );
+        let user_input = ai_prompt.user_prompt;
 
         Ok(PhindRequest {
             additional_extension_context: String::new(),
@@ -105,10 +101,9 @@ impl PhindProvider {
 #[async_trait]
 impl AIProvider for PhindProvider {
     async fn explain(&self, git_entity: GitEntity) -> Result<String, Box<dyn std::error::Error>> {
-        let request = match git_entity {
-            GitEntity::Commit(commit) => self.create_request(&commit.message, &commit.diff).await?,
-            GitEntity::Diff(diff) => self.create_request("Staged diff", &diff.diff).await?,
-        };
+        let request = self
+            .create_request(AIPrompt::build_explain_prompt(&git_entity))
+            .await?;
 
         let headers = Self::create_headers()?;
 

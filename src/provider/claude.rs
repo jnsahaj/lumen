@@ -1,5 +1,5 @@
 use super::AIProvider;
-use crate::git_entity::GitEntity;
+use crate::{ai_prompt::AIPrompt, git_entity::GitEntity};
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::json;
@@ -55,13 +55,10 @@ async fn get_completion_result(
 #[async_trait]
 impl AIProvider for ClaudeProvider {
     async fn explain(&self, git_entity: GitEntity) -> Result<String, Box<dyn std::error::Error>> {
-        let user_input = match git_entity {
-            GitEntity::Commit(commit) => format!(
-                    "Please analyze this git commit and provide a summary.\n\nCommit Message:\n{}\n\nDiff Content:\n{}",
-                    commit.message, commit.diff
-                ),
-            GitEntity::Diff(_) => todo!()
-        };
+        let AIPrompt {
+            system_prompt,
+            user_prompt,
+        } = AIPrompt::build_explain_prompt(&git_entity);
 
         let payload = json!({
             "model": self.model,
@@ -69,13 +66,11 @@ impl AIProvider for ClaudeProvider {
             "messages": [
                 {
                     "role": "system",
-                    "content": "You are a helpful assistant that analyzes git commits. \
-                               Provide a concise summary of the changes based on the commit message and diff content. \
-                               Focus on the impact and purpose of the changes."
+                    "content": system_prompt
                 },
                 {
                     "role": "user",
-                    "content": user_input,
+                    "content": user_prompt,
                 }
             ]
         });
