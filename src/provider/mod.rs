@@ -4,7 +4,7 @@ use groq::GroqProvider;
 use openai::OpenAIProvider;
 use phind::PhindProvider;
 
-use crate::{error::LumenError, git_commit::GitCommit, ProviderType};
+use crate::{error::LumenError, git_entity::git_commit::GitCommit, ProviderType};
 
 pub mod claude;
 pub mod groq;

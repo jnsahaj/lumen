@@ -1,7 +1,8 @@
 use std::process::Stdio;
 
 use crate::error::LumenError;
-use crate::git_commit::GitCommit;
+use crate::git_entity::git_commit::GitCommit;
+use crate::git_entity::GitEntity;
 use crate::provider::AIProvider;
 use crate::provider::LumenProvider;
 
@@ -16,50 +17,7 @@ impl LumenCommand {
         LumenCommand { provider }
     }
 
-    pub fn print_with_mdcat(&self, content: String) -> Result<(), LumenError> {
-        match std::process::Command::new("mdcat")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .spawn()
-        {
-            Ok(mut mdcat) => {
-                if let Some(stdin) = mdcat.stdin.take() {
-                    std::process::Command::new("echo")
-                        .arg(&content)
-                        .stdout(stdin)
-                        .spawn()?
-                        .wait()?;
-                }
-                let output = mdcat.wait_with_output()?;
-                println!("{}", String::from_utf8(output.stdout)?);
-            }
-            Err(_) => {
-                println!("{}", content);
-            }
-        }
-        Ok(())
-    }
-
-    pub async fn explain(&self, sha: String) -> Result<(), LumenError> {
-        let commit = GitCommit::new(sha)?;
-
-        let result = format!(
-            "`commit {}` | {} <{}> | {}\n\n{}\n-----\n",
-            commit.full_hash, commit.author_name, commit.author_email, commit.date, commit.message,
-        );
-
-        self.print_with_mdcat(result)?;
-
-        let mut spinner = Spinner::new(spinners::Dots, "Generating Summary...", Color::Blue);
-        let result = self.provider.explain(commit.clone()).await?;
-        spinner.success("Done");
-
-        self.print_with_mdcat(result)?;
-
-        Ok(())
-    }
-
-    pub async fn list(&self) -> Result<(), LumenError> {
+    fn get_sha_from_fzf() -> Result<String, LumenError> {
         let command = "git log --color=always --format='%C(auto)%h%d %s %C(black)%C(bold)%cr' | fzf --ansi --reverse --bind='enter:become(echo {1})' --wrap";
 
         let output = std::process::Command::new("sh")
@@ -94,6 +52,52 @@ impl LumenCommand {
         let mut sha = String::from_utf8(output.stdout)?;
         sha.pop(); // remove trailing newline from echo
 
-        self.explain(sha).await
+        Ok(sha)
+    }
+
+    fn print_with_mdcat(content: String) -> Result<(), LumenError> {
+        match std::process::Command::new("mdcat")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+        {
+            Ok(mut mdcat) => {
+                if let Some(stdin) = mdcat.stdin.take() {
+                    std::process::Command::new("echo")
+                        .arg(&content)
+                        .stdout(stdin)
+                        .spawn()?
+                        .wait()?;
+                }
+                let output = mdcat.wait_with_output()?;
+                println!("{}", String::from_utf8(output.stdout)?);
+            }
+            Err(_) => {
+                println!("{}", content);
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn explain(&self, git_entity: &GitEntity) -> Result<(), LumenError> {
+        let commit = match git_entity {
+            GitEntity::Commit(commit) => commit,
+        };
+
+        Self::print_with_mdcat(git_entity.format_static_details())?;
+
+        let mut spinner = Spinner::new(spinners::Dots, "Generating Summary...", Color::Blue);
+        let result = self.provider.explain(commit.clone()).await?;
+        spinner.success("Done");
+
+        Self::print_with_mdcat(result)?;
+
+        Ok(())
+    }
+
+    pub async fn list(&self) -> Result<(), LumenError> {
+        let sha = Self::get_sha_from_fzf()?;
+        let git_entity = GitEntity::Commit(GitCommit::new(sha)?);
+        self.explain(&git_entity).await
     }
 }

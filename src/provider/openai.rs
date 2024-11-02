@@ -1,4 +1,4 @@
-use crate::git_commit::GitCommit;
+use crate::git_entity::git_commit::GitCommit;
 
 use super::AIProvider;
 use async_trait::async_trait;

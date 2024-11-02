@@ -1,12 +1,13 @@
 use clap::{command, Parser, Subcommand, ValueEnum};
 use error::LumenError;
+use git_entity::{git_commit::GitCommit, GitEntity};
 use reqwest;
 use std::process;
 use tokio;
 
 mod command;
 mod error;
-mod git_commit;
+mod git_entity;
 mod provider;
 
 #[derive(Parser)]
@@ -64,7 +65,10 @@ async fn run() -> Result<(), LumenError> {
     let command = command::LumenCommand::new(provider);
 
     match cli.command {
-        Commands::Explain { sha } => command.explain(sha).await?,
+        Commands::Explain { sha } => {
+            let git_entity = GitEntity::Commit(GitCommit::new(sha)?);
+            command.explain(&git_entity).await?
+        }
         Commands::List => command.list().await?,
     }
 
