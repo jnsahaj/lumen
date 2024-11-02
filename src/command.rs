@@ -80,14 +80,10 @@ impl LumenCommand {
     }
 
     pub async fn explain(&self, git_entity: &GitEntity) -> Result<(), LumenError> {
-        let commit = match git_entity {
-            GitEntity::Commit(commit) => commit,
-        };
-
         Self::print_with_mdcat(git_entity.format_static_details())?;
 
         let mut spinner = Spinner::new(spinners::Dots, "Generating Summary...", Color::Blue);
-        let result = self.provider.explain(commit.clone()).await?;
+        let result = self.provider.explain(git_entity.clone()).await?;
         spinner.success("Done");
 
         Self::print_with_mdcat(result)?;

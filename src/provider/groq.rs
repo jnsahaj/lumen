@@ -1,5 +1,5 @@
 use super::AIProvider;
-use crate::git_entity::git_commit::GitCommit;
+use crate::git_entity::GitEntity;
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::json;
@@ -57,7 +57,11 @@ async fn get_completion_result(
 
 #[async_trait]
 impl AIProvider for GroqProvider {
-    async fn explain(&self, commit: GitCommit) -> Result<String, Box<dyn std::error::Error>> {
+    async fn explain(&self, git_entity: GitEntity) -> Result<String, Box<dyn std::error::Error>> {
+        let commit = match git_entity {
+            GitEntity::Commit(commit) => commit,
+        };
+
         let user_input = format!(
             "Please analyze this git commit and provide a summary.\n\nCommit Message:\n{}\n\nDiff Content:\n{}",
             commit.message, commit.diff

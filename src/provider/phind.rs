@@ -1,4 +1,4 @@
-use crate::git_entity::git_commit::GitCommit;
+use crate::git_entity::GitEntity;
 
 use super::AIProvider;
 use async_trait::async_trait;
@@ -104,7 +104,10 @@ impl PhindProvider {
 
 #[async_trait]
 impl AIProvider for PhindProvider {
-    async fn explain(&self, commit: GitCommit) -> Result<String, Box<dyn std::error::Error>> {
+    async fn explain(&self, git_entity: GitEntity) -> Result<String, Box<dyn std::error::Error>> {
+        let commit = match git_entity {
+            GitEntity::Commit(commit) => commit,
+        };
         let request = self.create_request(&commit.message, &commit.diff).await?;
         let headers = Self::create_headers()?;
 
