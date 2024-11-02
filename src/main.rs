@@ -77,10 +77,14 @@ async fn run() -> Result<(), LumenError> {
         Commands::Explain { sha, diff, staged } => {
             let git_entity = if diff {
                 GitEntity::Diff(GitDiff::new(staged)?)
-            } else {
-                let sha = sha.expect("sha and diff are mutually exclusive");
+            } else if let Some(sha) = sha {
                 GitEntity::Commit(GitCommit::new(sha)?)
+            } else {
+                return Err(LumenError::InvalidArguments(
+                    "`explain` expects SHA-1 or --diff to be present".into(),
+                ));
             };
+
             command.explain(&git_entity).await?
         }
         Commands::List => command.list().await?,

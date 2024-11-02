@@ -7,6 +7,7 @@ pub enum LumenError {
     GitDiffError(GitDiffError),
     MissingApiKey(String),
     UnknownError(Box<dyn std::error::Error>),
+    InvalidArguments(String),
 }
 
 impl From<GitCommitError> for LumenError {
@@ -46,6 +47,7 @@ impl std::fmt::Display for LumenError {
             LumenError::UnknownError(err) => write!(f, "{err}"),
             LumenError::MissingApiKey(provider) => write!(f, "Missing API key for {provider}"),
             LumenError::GitDiffError(err) => write!(f, "{err}"),
+            LumenError::InvalidArguments(err) => write!(f, "Invalid arguments: {err}"),
         }
     }
 }
