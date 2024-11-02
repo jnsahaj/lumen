@@ -107,7 +107,7 @@ impl AIProvider for PhindProvider {
     async fn explain(&self, git_entity: GitEntity) -> Result<String, Box<dyn std::error::Error>> {
         let request = match git_entity {
             GitEntity::Commit(commit) => self.create_request(&commit.message, &commit.diff).await?,
-            GitEntity::StagedDiff(diff) => self.create_request("Staged diff", &diff.diff).await?,
+            GitEntity::Diff(diff) => self.create_request("Staged diff", &diff.diff).await?,
         };
 
         let headers = Self::create_headers()?;

@@ -7,7 +7,7 @@ pub mod git_diff;
 #[derive(Debug, Clone)]
 pub enum GitEntity {
     Commit(GitCommit),
-    StagedDiff(GitDiff),
+    Diff(GitDiff),
 }
 
 impl GitEntity {
@@ -21,7 +21,9 @@ impl GitEntity {
                 commit.date,
                 commit.message,
             ),
-            GitEntity::StagedDiff(_) => "Staged Diff\n".into(),
+            GitEntity::Diff(diff) => {
+                format!("Diff{}\n", if diff.staged { " (staged)" } else { "" })
+            }
         }
     }
 }
@@ -38,7 +40,7 @@ impl AsRef<GitCommit> for GitEntity {
 impl AsRef<GitDiff> for GitEntity {
     fn as_ref(&self) -> &GitDiff {
         match self {
-            GitEntity::StagedDiff(diff) => diff,
+            GitEntity::Diff(diff) => diff,
             _ => panic!("Not a Diff"),
         }
     }

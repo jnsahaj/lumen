@@ -63,7 +63,7 @@ impl AIProvider for GroqProvider {
                     "Please analyze this git commit and provide a summary.\n\nCommit Message:\n{}\n\nDiff Content:\n{}",
                     commit.message, commit.diff
                 ),
-            GitEntity::StagedDiff(_) => todo!()
+            GitEntity::Diff(_) => todo!()
         };
 
         let payload = json!({

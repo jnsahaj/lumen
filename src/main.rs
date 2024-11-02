@@ -51,6 +51,9 @@ enum Commands {
         /// Use staged diff
         #[arg(long, group = "target")]
         diff: bool,
+
+        #[arg(long)]
+        staged: bool,
     },
     List,
 }
@@ -70,9 +73,9 @@ async fn run() -> Result<(), LumenError> {
     let command = command::LumenCommand::new(provider);
 
     match cli.command {
-        Commands::Explain { sha, diff } => {
+        Commands::Explain { sha, diff, staged } => {
             let git_entity = if diff {
-                GitEntity::StagedDiff(GitDiff::new_staged_diff()?)
+                GitEntity::Diff(GitDiff::new(staged)?)
             } else {
                 let sha = sha.expect("sha and diff are mutually exclusive");
                 GitEntity::Commit(GitCommit::new(sha)?)

@@ -62,9 +62,9 @@ impl AIProvider for OpenAIProvider {
         let user_input = match git_entity {
             GitEntity::Commit(commit) => format!(
                     "Please analyze this git commit and provide a summary.\n\nCommit Message:\n{}\n\nDiff Content:\n{}",
-                        commit.message, commit.diff
+                    commit.message, commit.diff
                 ),
-            GitEntity::StagedDiff(_) => todo!()
+            GitEntity::Diff(_) => todo!()
         };
 
         let payload = json!({
