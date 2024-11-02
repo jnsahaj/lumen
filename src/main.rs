@@ -5,6 +5,7 @@ use reqwest;
 use std::process;
 use tokio;
 
+mod ai_prompt;
 mod command;
 mod error;
 mod git_entity;
