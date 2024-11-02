@@ -1,6 +1,6 @@
 [package]
 name = "lumen"
-version = "0.5.1"
+version = "0.6.0"
 edition = "2021"
 license = "MIT"
 description = "Instant AI Git Commit Summaries from CLI (no API key required)"
