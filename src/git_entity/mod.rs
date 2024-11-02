@@ -14,7 +14,8 @@ impl GitEntity {
     pub fn format_static_details(&self) -> String {
         match self {
             GitEntity::Commit(commit) => format!(
-                "`commit {}` | {} <{}> | {}\n\n{}\n-----\n",
+                "{}\n`commit {}` | {} <{}> | {}\n\n{}\n-----\n",
+                "# Entity: Commit",
                 commit.full_hash,
                 commit.author_name,
                 commit.author_email,
@@ -22,7 +23,11 @@ impl GitEntity {
                 commit.message,
             ),
             GitEntity::Diff(diff) => {
-                format!("Diff{}\n", if diff.staged { " (staged)" } else { "" })
+                format!(
+                    "{}{}\n",
+                    "# Entity: Diff",
+                    if diff.staged { " (staged)" } else { "" }
+                )
             }
         }
     }
