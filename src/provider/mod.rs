@@ -14,6 +14,7 @@ pub mod phind;
 #[async_trait]
 pub trait AIProvider {
     async fn explain(&self, git_entity: GitEntity) -> Result<String, Box<dyn std::error::Error>>;
+    async fn draft(&self, git_entity: GitEntity) -> Result<String, Box<dyn std::error::Error>>;
 }
 
 pub enum LumenProvider {
@@ -64,6 +65,14 @@ impl AIProvider for LumenProvider {
             LumenProvider::Phind(provider) => provider.explain(git_entity).await,
             LumenProvider::Groq(provider) => provider.explain(git_entity).await,
             LumenProvider::Claude(provider) => provider.explain(git_entity).await,
+        }
+    }
+    async fn draft(&self, git_entity: GitEntity) -> Result<String, Box<dyn std::error::Error>> {
+        match self {
+            LumenProvider::OpenAI(provider) => provider.draft(git_entity).await,
+            LumenProvider::Phind(provider) => provider.draft(git_entity).await,
+            LumenProvider::Groq(provider) => provider.draft(git_entity).await,
+            LumenProvider::Claude(provider) => provider.draft(git_entity).await,
         }
     }
 }

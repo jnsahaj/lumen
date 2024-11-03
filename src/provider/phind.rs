@@ -120,4 +120,25 @@ impl AIProvider for PhindProvider {
         let res = Self::get_main_text(&response).await?;
         Ok(res)
     }
+
+    async fn draft(&self, git_entity: GitEntity) -> Result<String, Box<dyn std::error::Error>> {
+        let request = self
+            .create_request(AIPrompt::build_draft_prompt(&git_entity))
+            .await?;
+
+        let headers = Self::create_headers()?;
+
+        let response = self
+            .client
+            .post("https://https.extension.phind.com/agent/")
+            .headers(headers)
+            .json(&request)
+            .send()
+            .await?
+            .text()
+            .await?;
+
+        let res = Self::get_main_text(&response).await?;
+        Ok(res)
+    }
 }

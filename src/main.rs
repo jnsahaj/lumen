@@ -57,6 +57,7 @@ enum Commands {
         staged: bool,
     },
     List,
+    Draft,
 }
 
 #[tokio::main]
@@ -88,6 +89,7 @@ async fn run() -> Result<(), LumenError> {
             command.explain(&git_entity).await?
         }
         Commands::List => command.list().await?,
+        Commands::Draft => command.draft().await?,
     }
 
     Ok(())

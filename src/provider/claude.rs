@@ -78,4 +78,8 @@ impl AIProvider for ClaudeProvider {
         let res = get_completion_result(&self.client, &self.api_key, payload).await?;
         Ok(res)
     }
+
+    async fn draft(&self, git_entity: GitEntity) -> Result<String, Box<dyn std::error::Error>> {
+        todo!()
+    }
 }
