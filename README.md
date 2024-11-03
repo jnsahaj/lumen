@@ -1,6 +1,6 @@
 
 # <p align="center"><img src="https://github.com/user-attachments/assets/896f9239-134a-4428-9bb5-50ea59cdb5c3" alt="lumen" /></p>
-![Crates.io Total Downloads](https://img.shields.io/crates/d/lumen)
+![Crates.io Total Downloads](https://img.shields.io/crates/d/lumen?label=downloads%20%40crates.io)
 ![GitHub License](https://img.shields.io/github/license/jnsahaj/lumen)
 ![Crates.io Size](https://img.shields.io/crates/size/lumen)
 
