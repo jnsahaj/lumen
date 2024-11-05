@@ -1,8 +1,9 @@
 use async_trait::async_trait;
 use claude::ClaudeProvider;
 use groq::GroqProvider;
-use openai::OpenAIProvider;
+use openai::{OpenAIConfig, OpenAIProvider};
 use phind::PhindProvider;
+use thiserror::Error;
 
 use crate::{error::LumenError, git_entity::GitEntity, ProviderType};
 
@@ -15,6 +16,15 @@ pub mod phind;
 pub trait AIProvider {
     async fn explain(&self, git_entity: GitEntity) -> Result<String, Box<dyn std::error::Error>>;
     async fn draft(&self, git_entity: GitEntity) -> Result<String, Box<dyn std::error::Error>>;
+}
+
+// Custom error type for OpenAI-specific errors
+#[derive(Error, Debug)]
+pub enum ProviderError {
+    #[error("API request failed: {0}")]
+    RequestError(#[from] reqwest::Error),
+    #[error("No completion choice available")]
+    NoCompletionChoice,
 }
 
 pub enum LumenProvider {
@@ -34,8 +44,8 @@ impl LumenProvider {
         match provider_type {
             ProviderType::Openai => {
                 let api_key = api_key.ok_or(LumenError::MissingApiKey("OpenAI".to_string()))?;
-                let provider =
-                    LumenProvider::OpenAI(Box::new(OpenAIProvider::new(client, api_key, model)));
+                let config = OpenAIConfig::new(api_key, model);
+                let provider = LumenProvider::OpenAI(Box::new(OpenAIProvider::new(client, config)));
                 Ok(provider)
             }
             ProviderType::Phind => Ok(LumenProvider::Phind(Box::new(PhindProvider::new(

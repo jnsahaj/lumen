@@ -16,6 +16,7 @@ serde_json = "1.0"
 tokio = { version = "1.0", features = ["full"] }
 async-trait = "0.1.83"
 spinoff = { version = "0.8.0", features = ["dots"] }
+thiserror = "1.0"
 
 [profile.release]
 lto = true
