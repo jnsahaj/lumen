@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use claude::{ClaudeConfig, ClaudeProvider};
 use groq::GroqProvider;
 use openai::{OpenAIConfig, OpenAIProvider};
-use phind::PhindProvider;
+use phind::{PhindConfig, PhindProvider};
 use thiserror::Error;
 
 use crate::{error::LumenError, git_entity::GitEntity, ProviderType};
@@ -49,7 +49,8 @@ impl LumenProvider {
                 Ok(provider)
             }
             ProviderType::Phind => Ok(LumenProvider::Phind(Box::new(PhindProvider::new(
-                client, None,
+                client,
+                PhindConfig::new(model),
             )))),
             ProviderType::Groq => {
                 let api_key = api_key.ok_or(LumenError::MissingApiKey("Groq".to_string()))?;
