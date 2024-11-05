@@ -22,10 +22,18 @@ pub trait AIProvider {
 pub enum ProviderError {
     #[error("API request failed: {0}")]
     RequestError(#[from] reqwest::Error),
+
     #[error("No completion choice available")]
     NoCompletionChoice,
+
     #[error(transparent)]
     AIPromptError(#[from] AIPromptError),
+
+    #[error("API request failed with status code {0}: {1}")]
+    APIError(reqwest::StatusCode, String),
+
+    #[error("Unexpected response")]
+    UnexpectedResponse,
 }
 
 pub enum LumenProvider {
