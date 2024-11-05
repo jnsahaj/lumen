@@ -1,13 +1,16 @@
 use crate::error::LumenError;
 
+#[derive(Debug)]
 pub enum GitDiffError {
-    EmptyDiff,
+    EmptyDiff { staged: bool },
 }
 
 impl std::fmt::Display for GitDiffError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            GitDiffError::EmptyDiff => write!(f, "Diff is empty"),
+            GitDiffError::EmptyDiff { staged } => {
+                write!(f, "diff{} is empty", if *staged { " (staged)" } else { "" })
+            }
         }
     }
 }
@@ -37,7 +40,7 @@ impl GitDiff {
 
         let diff = String::from_utf8(output.stdout)?;
         if diff.is_empty() {
-            return Err(GitDiffError::EmptyDiff.into());
+            return Err(GitDiffError::EmptyDiff { staged }.into());
         }
 
         Ok(diff)

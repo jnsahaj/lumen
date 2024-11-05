@@ -1,6 +1,5 @@
+use super::{AIProvider, ProviderError};
 use crate::{ai_prompt::AIPrompt, git_entity::GitEntity};
-
-use super::AIProvider;
 use async_trait::async_trait;
 use reqwest::header::{HeaderMap, HeaderValue};
 use serde::{Deserialize, Serialize};
@@ -36,39 +35,33 @@ struct Delta {
     content: String,
 }
 
+// Configuration type to match other providers
+#[derive(Clone)]
+pub struct PhindConfig {
+    model: String,
+    api_base_url: String,
+}
+
+impl PhindConfig {
+    pub fn new(model: Option<String>) -> Self {
+        Self {
+            model: model.unwrap_or_else(|| "Phind-70B".to_string()),
+            api_base_url: "https://https.extension.phind.com/agent/".to_string(),
+        }
+    }
+}
+
 pub struct PhindProvider {
     client: reqwest::Client,
-    model: String,
+    config: PhindConfig,
 }
 
 impl PhindProvider {
-    pub fn new(client: reqwest::Client, model: Option<String>) -> Self {
-        PhindProvider {
-            client,
-            model: model.unwrap_or_else(|| "Phind-70B".to_string()),
-        }
+    pub fn new(client: reqwest::Client, config: PhindConfig) -> Self {
+        Self { client, config }
     }
 
-    async fn create_request(
-        &self,
-        ai_prompt: AIPrompt,
-    ) -> Result<PhindRequest, Box<dyn std::error::Error>> {
-        let user_input = ai_prompt.user_prompt;
-
-        Ok(PhindRequest {
-            additional_extension_context: String::new(),
-            allow_magic_buttons: true,
-            is_vscode_extension: true,
-            message_history: vec![Message {
-                content: user_input.clone(),
-                role: "user".to_string(),
-            }],
-            requested_model: self.model.clone(),
-            user_input,
-        })
-    }
-
-    fn create_headers() -> Result<HeaderMap, Box<dyn std::error::Error>> {
+    fn create_headers() -> Result<HeaderMap, ProviderError> {
         let mut headers = HeaderMap::new();
         headers.insert("Content-Type", HeaderValue::from_static("application/json"));
         headers.insert("User-Agent", HeaderValue::from_static(""));
@@ -77,7 +70,33 @@ impl PhindProvider {
         Ok(headers)
     }
 
-    async fn get_main_text(response: &str) -> Result<String, Box<dyn std::error::Error>> {
+    async fn complete(&self, prompt: AIPrompt) -> Result<String, ProviderError> {
+        // Create the request payload
+        let request = PhindRequest {
+            additional_extension_context: String::new(),
+            allow_magic_buttons: true,
+            is_vscode_extension: true,
+            message_history: vec![Message {
+                content: prompt.user_prompt.clone(),
+                role: "user".to_string(),
+            }],
+            requested_model: self.config.model.clone(),
+            user_input: prompt.user_prompt,
+        };
+
+        let headers = Self::create_headers()?;
+
+        let response = self
+            .client
+            .post(&self.config.api_base_url)
+            .headers(headers)
+            .json(&request)
+            .send()
+            .await?
+            .text()
+            .await?;
+
+        // Parse the streaming response
         let lines: Vec<&str> = response.split('\n').collect();
         let mut full_text = String::new();
 
@@ -94,6 +113,10 @@ impl PhindProvider {
             }
         }
 
+        if full_text.is_empty() {
+            return Err(ProviderError::NoCompletionChoice);
+        }
+
         Ok(full_text)
     }
 }
@@ -101,23 +124,12 @@ impl PhindProvider {
 #[async_trait]
 impl AIProvider for PhindProvider {
     async fn explain(&self, git_entity: GitEntity) -> Result<String, Box<dyn std::error::Error>> {
-        let request = self
-            .create_request(AIPrompt::build_explain_prompt(&git_entity))
-            .await?;
+        let prompt = AIPrompt::build_explain_prompt(&git_entity);
+        Ok(self.complete(prompt).await?)
+    }
 
-        let headers = Self::create_headers()?;
-
-        let response = self
-            .client
-            .post("https://https.extension.phind.com/agent/")
-            .headers(headers)
-            .json(&request)
-            .send()
-            .await?
-            .text()
-            .await?;
-
-        let res = Self::get_main_text(&response).await?;
-        Ok(res)
+    async fn draft(&self, git_entity: GitEntity) -> Result<String, Box<dyn std::error::Error>> {
+        let prompt = AIPrompt::build_draft_prompt(&git_entity)?;
+        Ok(self.complete(prompt).await?)
     }
 }
