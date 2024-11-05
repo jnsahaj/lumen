@@ -1,14 +1,8 @@
-use super::AIProvider;
+use super::{AIProvider, ProviderError};
 use crate::{ai_prompt::AIPrompt, git_entity::GitEntity};
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::json;
-
-pub struct GroqProvider {
-    client: reqwest::Client,
-    api_key: String,
-    model: String,
-}
 
 #[derive(Deserialize)]
 struct GroqResponse {
@@ -25,63 +19,75 @@ struct GroqMessage {
     content: String,
 }
 
-impl GroqProvider {
-    pub fn new(client: reqwest::Client, api_key: String, model: Option<String>) -> Self {
-        GroqProvider {
-            client,
+// Configuration type to match other providers
+#[derive(Clone)]
+pub struct GroqConfig {
+    api_key: String,
+    model: String,
+    api_base_url: String,
+}
+
+impl GroqConfig {
+    pub fn new(api_key: String, model: Option<String>) -> Self {
+        Self {
             api_key,
             model: model.unwrap_or_else(|| "mixtral-8x7b-32768".to_string()),
+            api_base_url: "https://api.groq.com/openai/v1/chat/completions".to_string(),
         }
     }
 }
 
-async fn get_completion_result(
-    client: &reqwest::Client,
-    api_key: &str,
-    payload: serde_json::Value,
-) -> Result<String, Box<dyn std::error::Error>> {
-    let response = client
-        .post("https://api.groq.com/openai/v1/chat/completions")
-        .header("Authorization", format!("Bearer {}", api_key))
-        .json(&payload)
-        .send()
-        .await?;
+pub struct GroqProvider {
+    client: reqwest::Client,
+    config: GroqConfig,
+}
 
-    let groq_response: GroqResponse = response.json().await?;
-    Ok(groq_response
-        .choices
-        .get(0)
-        .map(|choice| choice.message.content.clone())
-        .unwrap_or_default())
+impl GroqProvider {
+    pub fn new(client: reqwest::Client, config: GroqConfig) -> Self {
+        Self { client, config }
+    }
+
+    async fn complete(&self, prompt: AIPrompt) -> Result<String, ProviderError> {
+        let payload = json!({
+            "model": self.config.model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": prompt.system_prompt
+                },
+                {
+                    "role": "user",
+                    "content": prompt.user_prompt
+                }
+            ]
+        });
+
+        let response = self
+            .client
+            .post(&self.config.api_base_url)
+            .header("Authorization", format!("Bearer {}", self.config.api_key))
+            .json(&payload)
+            .send()
+            .await?;
+
+        let groq_response: GroqResponse = response.json().await?;
+        groq_response
+            .choices
+            .get(0)
+            .map(|choice| choice.message.content.clone())
+            .ok_or(ProviderError::NoCompletionChoice)
+    }
 }
 
 #[async_trait]
 impl AIProvider for GroqProvider {
     async fn explain(&self, git_entity: GitEntity) -> Result<String, Box<dyn std::error::Error>> {
-        let AIPrompt {
-            system_prompt,
-            user_prompt,
-        } = AIPrompt::build_explain_prompt(&git_entity);
-
-        let payload = json!({
-            "model": self.model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": system_prompt
-                },
-                {
-                    "role": "user",
-                    "content": user_prompt
-                }
-            ]
-        });
-
-        let res = get_completion_result(&self.client, &self.api_key, payload).await?;
-        Ok(res)
+        let prompt = AIPrompt::build_explain_prompt(&git_entity);
+        Ok(self.complete(prompt).await?)
     }
 
     async fn draft(&self, git_entity: GitEntity) -> Result<String, Box<dyn std::error::Error>> {
-        todo!()
+        let prompt = AIPrompt::build_draft_prompt(&git_entity)?;
+        Ok(self.complete(prompt).await?)
     }
 }

@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use claude::{ClaudeConfig, ClaudeProvider};
-use groq::GroqProvider;
+use groq::{GroqConfig, GroqProvider};
 use openai::{OpenAIConfig, OpenAIProvider};
 use phind::{PhindConfig, PhindProvider};
 use thiserror::Error;
@@ -18,7 +18,6 @@ pub trait AIProvider {
     async fn draft(&self, git_entity: GitEntity) -> Result<String, Box<dyn std::error::Error>>;
 }
 
-// Custom error type for OpenAI-specific errors
 #[derive(Error, Debug)]
 pub enum ProviderError {
     #[error("API request failed: {0}")]
@@ -54,8 +53,8 @@ impl LumenProvider {
             )))),
             ProviderType::Groq => {
                 let api_key = api_key.ok_or(LumenError::MissingApiKey("Groq".to_string()))?;
-                let provider =
-                    LumenProvider::Groq(Box::new(GroqProvider::new(client, api_key, model)));
+                let config = GroqConfig::new(api_key, model);
+                let provider = LumenProvider::Groq(Box::new(GroqProvider::new(client, config)));
                 Ok(provider)
             }
             ProviderType::Claude => {
