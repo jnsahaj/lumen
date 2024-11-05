@@ -1,25 +1,9 @@
 use super::{AIProvider, ProviderError};
 use crate::{ai_prompt::AIPrompt, git_entity::GitEntity};
 use async_trait::async_trait;
-use serde::Deserialize;
-use serde_json::json;
+use reqwest::StatusCode;
+use serde_json::{json, Value};
 
-#[derive(Deserialize)]
-struct GroqResponse {
-    choices: Vec<GroqChoice>,
-}
-
-#[derive(Deserialize)]
-struct GroqChoice {
-    message: GroqMessage,
-}
-
-#[derive(Deserialize)]
-struct GroqMessage {
-    content: String,
-}
-
-// Configuration type to match other providers
 #[derive(Clone)]
 pub struct GroqConfig {
     api_key: String,
@@ -70,12 +54,30 @@ impl GroqProvider {
             .send()
             .await?;
 
-        let groq_response: GroqResponse = response.json().await?;
-        groq_response
-            .choices
-            .get(0)
-            .map(|choice| choice.message.content.clone())
-            .ok_or(ProviderError::NoCompletionChoice)
+        let status = response.status();
+        match status {
+            StatusCode::OK => {
+                let response_json: Value = response.json().await?;
+                let content = response_json
+                    .get("choices")
+                    .and_then(|choices| choices.get(0))
+                    .and_then(|choice| choice.get("message"))
+                    .and_then(|message| message.get("content"))
+                    .and_then(|content| content.as_str())
+                    .ok_or(ProviderError::NoCompletionChoice)?;
+                Ok(content.to_string())
+            }
+            _ => {
+                let error_json: Value = response.json().await?;
+                let error_message = error_json
+                    .get("error")
+                    .and_then(|error| error.get("message"))
+                    .and_then(|msg| msg.as_str())
+                    .ok_or(ProviderError::UnexpectedResponse)?
+                    .into();
+                Err(ProviderError::APIError(status, error_message))
+            }
+        }
     }
 }
 

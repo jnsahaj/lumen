@@ -1,41 +1,12 @@
 use super::{AIProvider, ProviderError};
 use crate::{ai_prompt::AIPrompt, git_entity::GitEntity};
 use async_trait::async_trait;
-use reqwest::header::{HeaderMap, HeaderValue};
-use serde::{Deserialize, Serialize};
+use reqwest::{
+    header::{HeaderMap, HeaderValue},
+    StatusCode,
+};
+use serde_json::{json, Value};
 
-#[derive(Debug, Serialize, Deserialize)]
-struct Message {
-    content: String,
-    role: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct PhindRequest {
-    additional_extension_context: String,
-    allow_magic_buttons: bool,
-    is_vscode_extension: bool,
-    message_history: Vec<Message>,
-    requested_model: String,
-    user_input: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct PhindResponse {
-    choices: Option<Vec<Choice>>,
-}
-
-#[derive(Debug, Deserialize)]
-struct Choice {
-    delta: Delta,
-}
-
-#[derive(Debug, Deserialize)]
-struct Delta {
-    content: String,
-}
-
-// Configuration type to match other providers
 #[derive(Clone)]
 pub struct PhindConfig {
     model: String,
@@ -70,54 +41,74 @@ impl PhindProvider {
         Ok(headers)
     }
 
+    fn parse_line(line: &str) -> Option<String> {
+        let data = line.strip_prefix("data: ")?; // Extract data after "data: " prefix
+        let json_value: Value = serde_json::from_str(data).ok()?;
+
+        json_value
+            .get("choices")?
+            .as_array()?
+            .first()?
+            .get("delta")?
+            .get("content")?
+            .as_str()
+            .map(String::from)
+    }
+
+    fn parse_stream_response(response_text: &str) -> String {
+        response_text
+            .split('\n')
+            .filter_map(Self::parse_line)
+            .collect()
+    }
+
     async fn complete(&self, prompt: AIPrompt) -> Result<String, ProviderError> {
-        // Create the request payload
-        let request = PhindRequest {
-            additional_extension_context: String::new(),
-            allow_magic_buttons: true,
-            is_vscode_extension: true,
-            message_history: vec![Message {
-                content: prompt.user_prompt.clone(),
-                role: "user".to_string(),
+        let payload = json!({
+            "additional_extension_context": "",
+            "allow_magic_buttons": true,
+            "is_vscode_extension": true,
+            "message_history": [{
+                "content": prompt.user_prompt,
+                "role": "user"
             }],
-            requested_model: self.config.model.clone(),
-            user_input: prompt.user_prompt,
-        };
+            "requested_model": self.config.model,
+            "user_input": prompt.user_prompt
+        });
 
         let headers = Self::create_headers()?;
-
         let response = self
             .client
             .post(&self.config.api_base_url)
             .headers(headers)
-            .json(&request)
+            .json(&payload)
             .send()
-            .await?
-            .text()
             .await?;
 
-        // Parse the streaming response
-        let lines: Vec<&str> = response.split('\n').collect();
-        let mut full_text = String::new();
+        let status = response.status();
+        match status {
+            StatusCode::OK => {
+                let response_text = response.text().await?;
+                let full_text = Self::parse_stream_response(&response_text);
 
-        for line in lines {
-            if line.starts_with("data: ") {
-                let obj = line.strip_prefix("data: ").unwrap_or("{}");
-                if let Ok(response) = serde_json::from_str::<PhindResponse>(obj) {
-                    if let Some(choices) = response.choices {
-                        if !choices.is_empty() {
-                            full_text.push_str(&choices[0].delta.content);
-                        }
-                    }
+                if full_text.is_empty() {
+                    return Err(ProviderError::NoCompletionChoice);
                 }
+                Ok(full_text)
+            }
+            _ => {
+                let error_text = response.text().await?;
+                let error_json: Value = serde_json::from_str(&error_text)
+                    .unwrap_or_else(|_| json!({"error": {"message": "Unknown error"}}));
+
+                let error_message = error_json
+                    .get("error")
+                    .and_then(|error| error.get("message"))
+                    .and_then(|msg| msg.as_str())
+                    .ok_or(ProviderError::UnexpectedResponse)?
+                    .into();
+                Err(ProviderError::APIError(status, error_message))
             }
         }
-
-        if full_text.is_empty() {
-            return Err(ProviderError::NoCompletionChoice);
-        }
-
-        Ok(full_text)
     }
 }
 
