@@ -1,20 +1,14 @@
-use std::process::Command;
-
 use crate::error::LumenError;
+use std::process::Command;
+use thiserror::Error;
 
-#[derive(Debug, Clone)]
+#[derive(Error, Debug, Clone)]
 pub enum GitCommitError {
+    #[error("Commit '{0}' not found")]
     InvalidCommit(String),
-    EmptyDiff(String),
-}
 
-impl std::fmt::Display for GitCommitError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            GitCommitError::InvalidCommit(sha) => write!(f, "Commit '{sha}' not found"),
-            GitCommitError::EmptyDiff(sha) => write!(f, "Diff for commit '{sha}' is empty"),
-        }
-    }
+    #[error("Diff for commit '{0}' is empty")]
+    EmptyDiff(String),
 }
 
 #[derive(Clone, Debug)]

@@ -1,18 +1,10 @@
 use crate::error::LumenError;
+use thiserror::Error;
 
-#[derive(Debug)]
+#[derive(Error, Debug)]
 pub enum GitDiffError {
+    #[error("diff{} is empty", if *staged { " (staged)" } else { "" })]
     EmptyDiff { staged: bool },
-}
-
-impl std::fmt::Display for GitDiffError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            GitDiffError::EmptyDiff { staged } => {
-                write!(f, "diff{} is empty", if *staged { " (staged)" } else { "" })
-            }
-        }
-    }
 }
 
 #[derive(Clone, Debug)]

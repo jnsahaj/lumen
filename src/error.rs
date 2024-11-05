@@ -1,56 +1,27 @@
-use std::io;
-
 use crate::git_entity::{git_commit::GitCommitError, git_diff::GitDiffError};
+use std::io;
+use thiserror::Error;
 
-#[derive(Debug)]
+#[derive(Error, Debug)]
 pub enum LumenError {
-    GitCommitError(GitCommitError),
-    GitDiffError(GitDiffError),
+    #[error("{0}")]
+    GitCommitError(#[from] GitCommitError),
+
+    #[error("{0}")]
+    GitDiffError(#[from] GitDiffError),
+
+    #[error("Missing API key for {0}")]
     MissingApiKey(String),
-    UnknownError(Box<dyn std::error::Error>),
+
+    #[error("Invalid arguments: {0}")]
     InvalidArguments(String),
-}
 
-impl From<GitCommitError> for LumenError {
-    fn from(err: GitCommitError) -> LumenError {
-        LumenError::GitCommitError(err)
-    }
-}
+    #[error(transparent)]
+    IoError(#[from] io::Error),
 
-impl From<GitDiffError> for LumenError {
-    fn from(err: GitDiffError) -> LumenError {
-        LumenError::GitDiffError(err)
-    }
-}
+    #[error(transparent)]
+    Utf8Error(#[from] std::string::FromUtf8Error),
 
-impl From<Box<dyn std::error::Error>> for LumenError {
-    fn from(err: Box<dyn std::error::Error>) -> LumenError {
-        LumenError::UnknownError(err)
-    }
+    #[error(transparent)]
+    UnknownError(#[from] Box<dyn std::error::Error>),
 }
-
-impl From<io::Error> for LumenError {
-    fn from(err: io::Error) -> LumenError {
-        LumenError::UnknownError(err.into())
-    }
-}
-
-impl From<std::string::FromUtf8Error> for LumenError {
-    fn from(err: std::string::FromUtf8Error) -> LumenError {
-        LumenError::UnknownError(err.into())
-    }
-}
-
-impl std::fmt::Display for LumenError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            LumenError::GitCommitError(err) => write!(f, "{err}"),
-            LumenError::UnknownError(err) => write!(f, "{err}"),
-            LumenError::MissingApiKey(provider) => write!(f, "Missing API key for {provider}"),
-            LumenError::GitDiffError(err) => write!(f, "{err}"),
-            LumenError::InvalidArguments(err) => write!(f, "Invalid arguments: {err}"),
-        }
-    }
-}
-
-impl std::error::Error for LumenError {}
