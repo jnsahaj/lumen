@@ -83,6 +83,26 @@ impl AIProvider for OpenAIProvider {
     }
 
     async fn draft(&self, git_entity: GitEntity) -> Result<String, Box<dyn std::error::Error>> {
-        todo!()
+        let AIPrompt {
+            system_prompt,
+            user_prompt,
+        } = AIPrompt::build_draft_prompt(&git_entity)?;
+
+        let payload = json!({
+            "model": self.model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": system_prompt
+                },
+                {
+                    "role": "user",
+                    "content": user_prompt,
+                }
+            ]
+        });
+
+        let res = get_completion_result(&self.client, &self.api_key, payload).await?;
+        Ok(res)
     }
 }
