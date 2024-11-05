@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use claude::ClaudeProvider;
+use claude::{ClaudeConfig, ClaudeProvider};
 use groq::GroqProvider;
 use openai::{OpenAIConfig, OpenAIProvider};
 use phind::PhindProvider;
@@ -59,8 +59,8 @@ impl LumenProvider {
             }
             ProviderType::Claude => {
                 let api_key = api_key.ok_or(LumenError::MissingApiKey("Claude".to_string()))?;
-                let provider =
-                    LumenProvider::Claude(Box::new(ClaudeProvider::new(client, api_key, model)));
+                let config = ClaudeConfig::new(api_key, model);
+                let provider = LumenProvider::Claude(Box::new(ClaudeProvider::new(client, config)));
                 Ok(provider)
             }
         }
