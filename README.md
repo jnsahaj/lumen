@@ -7,20 +7,38 @@
 
 
 
-lumen is a command-line tool that uses AI to generate summary of your git changes
+lumen is a command-line tool that uses AI to generate commit messages, summarise git diffs or past commits, and more without requiring an API key.
 
 ![demo](https://github.com/user-attachments/assets/0d029bdb-3b11-4b5c-bed6-f5a91d8529f2)
 
 # Features
+- Generate commit message for staged changes
 - Generate summary for changes in a git commit by providing its [SHA-1](https://graphite.dev/guides/git-hash)
 - Generate summary for changes in git diff (staged/unstaged)
 - Fuzzy-search for the commit to generate a summary
-- Pretty output formatting enabled by Markdown
 - Free and unlimited - no API key required to work out of the box
+- Pretty output formatting enabled by Markdown
 - Supports multiple AI providers
 
 # Usage
 Try `lumen --help`
+
+To generate a commit message for staged changes
+```zsh
+lumen draft
+```
+The commit message can be piped to other commands
+```zsh
+# copy the commit message to clipboard (macos and linux, respectively)
+lumen draft | pbcopy
+lumen draft | xclip -selection clipboard
+
+# open the commit message in your code editor
+lumen draft | code -
+
+# directly commit with the generated message
+lumen draft | git commit -F -
+```
 
 To summarise a commit, pass in its SHA-1 
 ```zsh
@@ -41,13 +59,13 @@ lumen explain --diff --staged
 
 AI Provider can be configured by using CLI arguments or Environment variables.
 ```sh
--p, --provider <PROVIDER>  [env: LUMEN_AI_PROVIDER] [default: phind] [possible values: openai, phind, groq]
+-p, --provider <PROVIDER>  [env: LUMEN_AI_PROVIDER] [default: phind] [possible values: openai, phind, groq, claude]
 -k, --api-key <API_KEY>    [env: LUMEN_API_KEY]
 -m, --model <MODEL>        [env: LUMEN_AI_MODEL]
 
 # eg: lumen -p="openai" -k="<your-api-key>" -m="gpt-4o" explain HEAD
-# eg: lumen -p="openai" -k="<your-api-key>" -m="gpt-4o" list
-
+# eg: lumen -p="openai" -k="<your-api-key>" -m="gpt-4o" draft
+# eg: LUMEN_AI_PROVIDER="openai" LUMEN_API_KEY="<your-api-key>" LUMEN_AI_MODEL="gpt-4o" lumen list
 ```
 
 ### Supported providers
@@ -65,7 +83,7 @@ AI Provider can be configured by using CLI arguments or Environment variables.
 ### Using [Homebrew](https://brew.sh/) (MacOS and Linux)
 ```
 brew tap jnsahaj/lumen
-brew install lumen --formula
+brew install --formula lumen
 ```
 ### Using [Cargo](https://github.com/rust-lang/cargo)
 

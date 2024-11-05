@@ -1,9 +1,9 @@
 [package]
 name = "lumen"
-version = "0.6.1"
+version = "1.0.0"
 edition = "2021"
 license = "MIT"
-description = "Instant AI Git Commit Summaries from CLI (no API key required)"
+description = "lumen is a command-line tool that uses AI to generate commit messages, summarise git diffs or past commits, and more without requiring an API key."
 keywords = ["cli", "terminal", "ai", "git", "commit"]
 categories = ["command-line-interface", "command-line-utilities"]
 repository = "https://github.com/jnsahaj/lumen"
