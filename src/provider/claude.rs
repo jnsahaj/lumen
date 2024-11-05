@@ -1,20 +1,9 @@
 use super::{AIProvider, ProviderError};
 use crate::{ai_prompt::AIPrompt, git_entity::GitEntity};
 use async_trait::async_trait;
-use serde::Deserialize;
-use serde_json::json;
+use reqwest::StatusCode;
+use serde_json::{json, Value};
 
-#[derive(Deserialize)]
-struct ClaudeResponse {
-    content: Vec<ClaudeContent>,
-}
-
-#[derive(Deserialize)]
-struct ClaudeContent {
-    text: String,
-}
-
-// Configuration type to match OpenAI pattern
 #[derive(Clone)]
 pub struct ClaudeConfig {
     api_key: String,
@@ -53,7 +42,7 @@ impl ClaudeProvider {
                 },
                 {
                     "role": "user",
-                    "content": prompt.user_prompt,
+                    "content": prompt.user_prompt
                 }
             ]
         });
@@ -68,12 +57,29 @@ impl ClaudeProvider {
             .send()
             .await?;
 
-        let claude_response: ClaudeResponse = response.json().await?;
-        claude_response
-            .content
-            .first()
-            .map(|content| content.text.clone())
-            .ok_or(ProviderError::NoCompletionChoice)
+        let status = response.status();
+        match status {
+            StatusCode::OK => {
+                let response_json: Value = response.json().await?;
+                let content = response_json
+                    .get("content")
+                    .and_then(|content| content.get(0))
+                    .and_then(|message| message.get("text"))
+                    .and_then(|text| text.as_str())
+                    .ok_or(ProviderError::NoCompletionChoice)?;
+                Ok(content.to_string())
+            }
+            _ => {
+                let error_json: Value = response.json().await?;
+                let error_message = error_json
+                    .get("error")
+                    .and_then(|error| error.get("message"))
+                    .and_then(|msg| msg.as_str())
+                    .ok_or(ProviderError::UnexpectedResponse)?
+                    .into();
+                Err(ProviderError::APIError(status, error_message))
+            }
+        }
     }
 }
 
