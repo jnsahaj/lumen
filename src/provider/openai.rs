@@ -31,7 +31,7 @@ impl OpenAIConfig {
     pub fn new(api_key: String, model: Option<String>) -> Self {
         Self {
             api_key,
-            model: model.unwrap_or_else(|| "gpt-4-mini".to_string()),
+            model: model.unwrap_or_else(|| "gpt-4o-mini".to_string()),
             api_base_url: "https://api.openai.com/v1/chat/completions".to_string(),
         }
     }
