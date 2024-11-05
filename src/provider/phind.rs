@@ -122,10 +122,8 @@ impl AIProvider for PhindProvider {
     }
 
     async fn draft(&self, git_entity: GitEntity) -> Result<String, Box<dyn std::error::Error>> {
-        let request = self
-            .create_request(AIPrompt::build_draft_prompt(&git_entity))
-            .await?;
-
+        let prompt = AIPrompt::build_draft_prompt(&git_entity)?;
+        let request = self.create_request(prompt).await?;
         let headers = Self::create_headers()?;
 
         let response = self

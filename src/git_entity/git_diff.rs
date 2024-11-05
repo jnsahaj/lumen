@@ -1,5 +1,6 @@
 use crate::error::LumenError;
 
+#[derive(Debug)]
 pub enum GitDiffError {
     EmptyDiff { staged: bool },
 }

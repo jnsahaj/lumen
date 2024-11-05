@@ -105,8 +105,10 @@ impl LumenCommand {
             .draft(GitEntity::Diff(GitDiff::new(true)?))
             .await?;
 
+        // print without newline
         print!("{result}");
         std::io::stdout().flush()?;
+
         Ok(())
     }
 }

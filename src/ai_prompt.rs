@@ -1,4 +1,4 @@
-use crate::git_entity::GitEntity;
+use crate::{error::LumenError, git_entity::GitEntity};
 
 pub struct AIPrompt {
     pub system_prompt: String,
@@ -44,9 +44,11 @@ impl AIPrompt {
         }
     }
 
-    pub fn build_draft_prompt(git_entity: &GitEntity) -> Self {
+    pub fn build_draft_prompt(git_entity: &GitEntity) -> Result<Self, LumenError> {
         let GitEntity::Diff(diff) = git_entity else {
-            panic!("`draft` is only supported for diffs");
+            return Err(LumenError::UnknownError(
+                "`draft` is only supported for diffs".into(),
+            ));
         };
 
         let conventional_types = r#"{
@@ -75,18 +77,17 @@ impl AIPrompt {
                         "Generate a concise git commit message written in present tense for the following code diff with the given specifications below:\n\
                         \nThe output response must be in format:\n<type>(<optional scope>): <commit message>\
                         \nFocus on being accurate and concise.\
-                        \nChoose a type from the type-to-description JSON below that best describes the git diff:\n{}\
                         \nCommit message must be a maximum of 72 characters.\
-                        \nAdd a description after the commit message.\
+                        \nChoose a type from the type-to-description JSON below that best describes the git diff:\n{}\
                         \nExclude anything unnecessary such as translation. Your entire response will be passed directly into git commit.\
                         \n\nCode diff:\n```diff\n{}\n```",
                         conventional_types,
                         diff.diff
                     );
 
-        AIPrompt {
+        Ok(AIPrompt {
             system_prompt,
             user_prompt,
-        }
+        })
     }
 }

@@ -2,6 +2,7 @@ use std::io;
 
 use crate::git_entity::{git_commit::GitCommitError, git_diff::GitDiffError};
 
+#[derive(Debug)]
 pub enum LumenError {
     GitCommitError(GitCommitError),
     GitDiffError(GitDiffError),
@@ -51,3 +52,5 @@ impl std::fmt::Display for LumenError {
         }
     }
 }
+
+impl std::error::Error for LumenError {}
