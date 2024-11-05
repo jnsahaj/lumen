@@ -1,4 +1,9 @@
-use crate::{error::LumenError, git_entity::GitEntity};
+use crate::git_entity::GitEntity;
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+#[error("{0}")]
+pub struct AIPromptError(String);
 
 pub struct AIPrompt {
     pub system_prompt: String,
@@ -6,7 +11,7 @@ pub struct AIPrompt {
 }
 
 impl AIPrompt {
-    pub fn build_explain_prompt(git_entity: &GitEntity) -> Self {
+    pub fn build_explain_prompt(git_entity: &GitEntity) -> Result<Self, AIPromptError> {
         let system_prompt = String::from(
             "You are a helpful assistant that explains Git changes in a concise way. \
             Focus only on the most significant changes and their direct impact. \
@@ -38,17 +43,15 @@ impl AIPrompt {
             }
         };
 
-        AIPrompt {
+        Ok(AIPrompt {
             system_prompt,
             user_prompt,
-        }
+        })
     }
 
-    pub fn build_draft_prompt(git_entity: &GitEntity) -> Result<Self, LumenError> {
+    pub fn build_draft_prompt(git_entity: &GitEntity) -> Result<Self, AIPromptError> {
         let GitEntity::Diff(diff) = git_entity else {
-            return Err(LumenError::UnknownError(
-                "`draft` is only supported for diffs".into(),
-            ));
+            return Err(AIPromptError("`draft` is only supported for diffs".into()));
         };
 
         let conventional_types = r#"{

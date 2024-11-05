@@ -1,4 +1,7 @@
-use crate::git_entity::{git_commit::GitCommitError, git_diff::GitDiffError};
+use crate::{
+    git_entity::{git_commit::GitCommitError, git_diff::GitDiffError},
+    provider::ProviderError,
+};
 use std::io;
 use thiserror::Error;
 
@@ -22,6 +25,9 @@ pub enum LumenError {
     #[error(transparent)]
     Utf8Error(#[from] std::string::FromUtf8Error),
 
+    #[error("{0}")]
+    CommandError(String),
+
     #[error(transparent)]
-    UnknownError(#[from] Box<dyn std::error::Error>),
+    ProvderError(#[from] ProviderError),
 }

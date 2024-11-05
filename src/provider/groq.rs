@@ -81,13 +81,13 @@ impl GroqProvider {
 
 #[async_trait]
 impl AIProvider for GroqProvider {
-    async fn explain(&self, git_entity: GitEntity) -> Result<String, Box<dyn std::error::Error>> {
-        let prompt = AIPrompt::build_explain_prompt(&git_entity);
-        Ok(self.complete(prompt).await?)
+    async fn explain(&self, git_entity: GitEntity) -> Result<String, ProviderError> {
+        let prompt = AIPrompt::build_explain_prompt(&git_entity)?;
+        self.complete(prompt).await
     }
 
-    async fn draft(&self, git_entity: GitEntity) -> Result<String, Box<dyn std::error::Error>> {
+    async fn draft(&self, git_entity: GitEntity) -> Result<String, ProviderError> {
         let prompt = AIPrompt::build_draft_prompt(&git_entity)?;
-        Ok(self.complete(prompt).await?)
+        self.complete(prompt).await
     }
 }

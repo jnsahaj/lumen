@@ -5,7 +5,7 @@ use openai::{OpenAIConfig, OpenAIProvider};
 use phind::{PhindConfig, PhindProvider};
 use thiserror::Error;
 
-use crate::{error::LumenError, git_entity::GitEntity, ProviderType};
+use crate::{ai_prompt::AIPromptError, error::LumenError, git_entity::GitEntity, ProviderType};
 
 pub mod claude;
 pub mod groq;
@@ -14,8 +14,8 @@ pub mod phind;
 
 #[async_trait]
 pub trait AIProvider {
-    async fn explain(&self, git_entity: GitEntity) -> Result<String, Box<dyn std::error::Error>>;
-    async fn draft(&self, git_entity: GitEntity) -> Result<String, Box<dyn std::error::Error>>;
+    async fn explain(&self, git_entity: GitEntity) -> Result<String, ProviderError>;
+    async fn draft(&self, git_entity: GitEntity) -> Result<String, ProviderError>;
 }
 
 #[derive(Error, Debug)]
@@ -24,6 +24,8 @@ pub enum ProviderError {
     RequestError(#[from] reqwest::Error),
     #[error("No completion choice available")]
     NoCompletionChoice,
+    #[error(transparent)]
+    AIPromptError(#[from] AIPromptError),
 }
 
 pub enum LumenProvider {
@@ -69,7 +71,7 @@ impl LumenProvider {
 
 #[async_trait]
 impl AIProvider for LumenProvider {
-    async fn explain(&self, git_entity: GitEntity) -> Result<String, Box<dyn std::error::Error>> {
+    async fn explain(&self, git_entity: GitEntity) -> Result<String, ProviderError> {
         match self {
             LumenProvider::OpenAI(provider) => provider.explain(git_entity).await,
             LumenProvider::Phind(provider) => provider.explain(git_entity).await,
@@ -77,7 +79,7 @@ impl AIProvider for LumenProvider {
             LumenProvider::Claude(provider) => provider.explain(git_entity).await,
         }
     }
-    async fn draft(&self, git_entity: GitEntity) -> Result<String, Box<dyn std::error::Error>> {
+    async fn draft(&self, git_entity: GitEntity) -> Result<String, ProviderError> {
         match self {
             LumenProvider::OpenAI(provider) => provider.draft(git_entity).await,
             LumenProvider::Phind(provider) => provider.draft(git_entity).await,

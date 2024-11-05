@@ -46,7 +46,7 @@ impl LumenCommand {
                 None => String::new(),
             };
 
-            return Err(LumenError::UnknownError(
+            return Err(LumenError::CommandError(
                 format!("{} {}", stderr, hint).into(),
             ));
         }
