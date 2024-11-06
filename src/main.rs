@@ -57,7 +57,10 @@ enum Commands {
         staged: bool,
     },
     List,
-    Draft,
+    Draft {
+        #[arg(short, long)]
+        context: Option<String>,
+    },
 }
 
 #[tokio::main]
@@ -89,7 +92,7 @@ async fn run() -> Result<(), LumenError> {
             command.explain(&git_entity).await?
         }
         Commands::List => command.list().await?,
-        Commands::Draft => command.draft().await?,
+        Commands::Draft { context } => command.draft(context).await?,
     }
 
     Ok(())

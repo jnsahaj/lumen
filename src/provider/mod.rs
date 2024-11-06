@@ -15,7 +15,11 @@ pub mod phind;
 #[async_trait]
 pub trait AIProvider {
     async fn explain(&self, git_entity: GitEntity) -> Result<String, ProviderError>;
-    async fn draft(&self, git_entity: GitEntity) -> Result<String, ProviderError>;
+    async fn draft(
+        &self,
+        git_entity: GitEntity,
+        context: Option<String>,
+    ) -> Result<String, ProviderError>;
 }
 
 #[derive(Error, Debug)]
@@ -87,12 +91,16 @@ impl AIProvider for LumenProvider {
             LumenProvider::Claude(provider) => provider.explain(git_entity).await,
         }
     }
-    async fn draft(&self, git_entity: GitEntity) -> Result<String, ProviderError> {
+    async fn draft(
+        &self,
+        git_entity: GitEntity,
+        context: Option<String>,
+    ) -> Result<String, ProviderError> {
         match self {
-            LumenProvider::OpenAI(provider) => provider.draft(git_entity).await,
-            LumenProvider::Phind(provider) => provider.draft(git_entity).await,
-            LumenProvider::Groq(provider) => provider.draft(git_entity).await,
-            LumenProvider::Claude(provider) => provider.draft(git_entity).await,
+            LumenProvider::OpenAI(provider) => provider.draft(git_entity, context).await,
+            LumenProvider::Phind(provider) => provider.draft(git_entity, context).await,
+            LumenProvider::Groq(provider) => provider.draft(git_entity, context).await,
+            LumenProvider::Claude(provider) => provider.draft(git_entity, context).await,
         }
     }
 }

@@ -119,8 +119,12 @@ impl AIProvider for PhindProvider {
         self.complete(prompt).await
     }
 
-    async fn draft(&self, git_entity: GitEntity) -> Result<String, ProviderError> {
-        let prompt = AIPrompt::build_draft_prompt(&git_entity)?;
+    async fn draft(
+        &self,
+        git_entity: GitEntity,
+        context: Option<String>,
+    ) -> Result<String, ProviderError> {
+        let prompt = AIPrompt::build_draft_prompt(&git_entity, context)?;
         self.complete(prompt).await
     }
 }
