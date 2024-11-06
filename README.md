@@ -42,11 +42,9 @@ lumen draft | git commit -F -
 The AI generates more meaningful commit messages when you provide context.
 
 ```zsh
-# Without context:
 lumen draft
 # Output: "feat(button.tsx): Change button color to blue"
 
-# With context - just add a simple why:
 lumen draft --context "match brand guidelines"
 # Output: "feat(button.tsx): Update button color to align with brand identity"
 ```
