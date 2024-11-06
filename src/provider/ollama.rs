@@ -51,6 +51,7 @@ impl OllamaProvider {
 
                 let content = response_json
                     .get("response")
+                    .and_then(|response| response.as_str())
                     .ok_or(ProviderError::NoCompletionChoice)?;
 
                 Ok(content.to_string())
