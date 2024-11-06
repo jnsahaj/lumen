@@ -48,7 +48,7 @@ lumen draft
 
 # With context - just add a simple why:
 lumen draft --context "match brand guidelines"
-# Output: "style(button.tsx): Update button color to align with brand identity"
+# Output: "feat(button.tsx): Update button color to align with brand identity"
 ```
 To summarise a commit, pass in its SHA-1 
 ```zsh
