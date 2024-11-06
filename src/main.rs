@@ -40,6 +40,7 @@ enum ProviderType {
     Phind,
     Groq,
     Claude,
+    Ollama,
 }
 
 #[derive(Subcommand)]

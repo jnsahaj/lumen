@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use claude::{ClaudeConfig, ClaudeProvider};
 use groq::{GroqConfig, GroqProvider};
+use ollama::{OllamaConfig, OllamaProvider};
 use openai::{OpenAIConfig, OpenAIProvider};
 use phind::{PhindConfig, PhindProvider};
 use thiserror::Error;
@@ -9,6 +10,7 @@ use crate::{ai_prompt::AIPromptError, error::LumenError, git_entity::GitEntity, 
 
 pub mod claude;
 pub mod groq;
+pub mod ollama;
 pub mod openai;
 pub mod phind;
 
@@ -45,6 +47,7 @@ pub enum LumenProvider {
     Phind(Box<PhindProvider>),
     Groq(Box<GroqProvider>),
     Claude(Box<ClaudeProvider>),
+    Ollama(Box<OllamaProvider>),
 }
 
 impl LumenProvider {
@@ -77,6 +80,12 @@ impl LumenProvider {
                 let provider = LumenProvider::Claude(Box::new(ClaudeProvider::new(client, config)));
                 Ok(provider)
             }
+            ProviderType::Ollama => {
+                let model = model.ok_or(LumenError::MissingModel("Ollama".to_string()))?;
+                let config = OllamaConfig::new(model);
+                let provider = LumenProvider::Ollama(Box::new(OllamaProvider::new(client, config)));
+                Ok(provider)
+            }
         }
     }
 }
@@ -89,6 +98,7 @@ impl AIProvider for LumenProvider {
             LumenProvider::Phind(provider) => provider.explain(git_entity).await,
             LumenProvider::Groq(provider) => provider.explain(git_entity).await,
             LumenProvider::Claude(provider) => provider.explain(git_entity).await,
+            LumenProvider::Ollama(provider) => provider.explain(git_entity).await,
         }
     }
     async fn draft(
@@ -101,6 +111,7 @@ impl AIProvider for LumenProvider {
             LumenProvider::Phind(provider) => provider.draft(git_entity, context).await,
             LumenProvider::Groq(provider) => provider.draft(git_entity, context).await,
             LumenProvider::Claude(provider) => provider.draft(git_entity, context).await,
+            LumenProvider::Ollama(provider) => provider.draft(git_entity, context).await,
         }
     }
 }
