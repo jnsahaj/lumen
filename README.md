@@ -67,7 +67,7 @@ lumen explain --diff --staged
 
 AI Provider can be configured by using CLI arguments or Environment variables.
 ```sh
--p, --provider <PROVIDER>  [env: LUMEN_AI_PROVIDER] [default: phind] [possible values: openai, phind, groq, claude]
+-p, --provider <PROVIDER>  [env: LUMEN_AI_PROVIDER] [default: phind] [possible values: openai, phind, groq, claude, ollama]
 -k, --api-key <API_KEY>    [env: LUMEN_API_KEY]
 -m, --model <MODEL>        [env: LUMEN_AI_MODEL]
 
