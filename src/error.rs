@@ -32,5 +32,5 @@ pub enum LumenError {
     CommandError(String),
 
     #[error(transparent)]
-    ProvderError(#[from] ProviderError),
+    ProviderError(#[from] ProviderError),
 }
