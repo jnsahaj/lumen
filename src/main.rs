@@ -24,7 +24,10 @@ async fn run() -> Result<(), LumenError> {
     let cli = Cli::parse();
     let client = reqwest::Client::new();
 
-    let config: LumenConfig = LumenConfig::Build(&cli);
+    let config = match LumenConfig::Build(&cli) {
+        Ok(config) => config,
+        Err(e) => return Err(e),
+    };
 
     let provider = provider::LumenProvider::new(
         client,

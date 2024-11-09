@@ -22,6 +22,9 @@ pub enum LumenError {
     #[error("Invalid arguments: {0}")]
     InvalidArguments(String),
 
+    #[error("Invalid configuration: {0}")]
+    InvalidConfiguration(String),
+
     #[error(transparent)]
     IoError(#[from] io::Error),
 

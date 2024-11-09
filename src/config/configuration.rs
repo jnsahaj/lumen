@@ -1,4 +1,5 @@
 use crate::config::cli::ProviderType;
+use crate::error::LumenError;
 use serde::{Deserialize, Deserializer};
 use std::collections::HashMap;
 use std::env;
@@ -104,9 +105,12 @@ fn default_draft_config() -> DraftConfig {
 }
 
 impl LumenConfig {
-    pub fn Build(cli: &Cli) -> Self {
+    pub fn Build(cli: &Cli) -> Result<Self, LumenError> {
         let config_path = "./lumen.config.json";
-        let config = LumenConfig::from_file(&config_path.to_string());
+        let config = match LumenConfig::from_file(config_path) {
+            Ok(config) => config,
+            Err(e) => return Err(e),
+        };
 
         let ai_provider: ProviderType = cli
             .provider
@@ -116,27 +120,27 @@ impl LumenConfig {
         let api_key: String = cli.api_key.clone().unwrap_or(config.api_key);
         let model: String = cli.model.clone().unwrap_or(config.model);
 
-        LumenConfig {
+        Ok(LumenConfig {
             ai_provider,
             model,
             api_key,
             draft: config.draft,
             explain: None,
             list: None,
-        }
+        })
     }
 
-    pub fn from_file(file_path: &String) -> Self {
+    pub fn from_file(file_path: &str) -> Result<Self, LumenError> {
         let content = match fs::read_to_string(file_path) {
             Ok(content) => content,
-            Err(_) => return LumenConfig::default(),
+            // FILE DOSENT EXIST
+            Err(_) => return Ok(LumenConfig::default()),
         };
 
         match serde_json::from_str::<LumenConfig>(&content) {
-            Ok(config) => config,
+            Ok(config) => Ok(config),
             Err(e) => {
-                eprintln!("Failed to parse JSON: {}", e);
-                LumenConfig::default()
+                Err(LumenError::InvalidConfiguration(e.to_string()))
             }
         }
     }
