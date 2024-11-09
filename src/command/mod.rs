@@ -6,7 +6,7 @@ use std::process::Stdio;
 
 use crate::error::LumenError;
 use crate::git_entity::git_diff::GitDiff;
-use crate::git_entity::GitEntity;
+use crate::git_entity::{self, GitEntity};
 use crate::provider::LumenProvider;
 
 pub mod draft;
@@ -15,7 +15,10 @@ pub mod list;
 
 #[derive(Debug)]
 pub enum CommandType {
-    Explain(GitEntity),
+    Explain {
+        git_entity: GitEntity,
+        query: Option<String>,
+    },
     List,
     Draft(Option<String>),
 }
@@ -28,7 +31,9 @@ pub trait Command {
 impl CommandType {
     pub fn create_command(self) -> Result<Box<dyn Command>, LumenError> {
         Ok(match self {
-            CommandType::Explain(git_entity) => Box::new(ExplainCommand { git_entity }),
+            CommandType::Explain { git_entity, query } => {
+                Box::new(ExplainCommand { git_entity, query })
+            }
             CommandType::List => Box::new(ListCommand),
             CommandType::Draft(context) => Box::new(DraftCommand {
                 context,
@@ -78,9 +83,7 @@ impl LumenCommand {
                 None => String::new(),
             };
 
-            return Err(LumenError::CommandError(
-                format!("{} {}", stderr, hint),
-            ));
+            return Err(LumenError::CommandError(format!("{} {}", stderr, hint)));
         }
 
         let mut sha = String::from_utf8(output.stdout)?;

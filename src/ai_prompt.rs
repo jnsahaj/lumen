@@ -17,32 +17,52 @@ impl AIPrompt {
     pub fn build_explain_prompt(command: &ExplainCommand) -> Result<Self, AIPromptError> {
         let system_prompt = String::from(
             "You are a helpful assistant that explains Git changes in a concise way. \
-            Focus only on the most significant changes and their direct impact. \
-            Keep explanations brief but informative and don't ask for further explanations. \
-            Use markdown for clarity.",
+        Focus only on the most significant changes and their direct impact. \
+        When answering specific questions, address them directly and precisely. \
+        Keep explanations brief but informative and don't ask for further explanations. \
+        Use markdown for clarity.",
         );
 
-        let user_prompt = match &command.git_entity {
+        let base_content = match &command.git_entity {
             GitEntity::Commit(commit) => {
                 format!(
-                    "Explain this commit briefly:\n\
-                    \nMessage: {}\
-                    \n\nChanges:\n```diff\n{}\n```\
-                    \n\nProvide a short explanation covering:\n\
-                    1. Core changes made\n\
-                    2. Direct impact",
+                    "Context - Commit:\n\
+                \nMessage: {}\
+                \nChanges:\n```diff\n{}\n```",
                     commit.message, commit.diff
                 )
             }
             GitEntity::Diff(diff) => {
                 format!(
-                    "Explain these changes concisely:\n\
-                    \n```diff\n{}\n```\
-                    \n\nProvide:\n\
-                    1. Key changes\n\
-                    2. Notable concerns (if any)",
+                    "Context - Changes:\n\
+                \n```diff\n{}\n```",
                     diff.diff
                 )
+            }
+        };
+
+        let user_prompt = match &command.query {
+            Some(query) => {
+                format!(
+                    "{}\n\nQuestion: {}\
+                \nProvide a focused answer to the question based on the changes shown above.",
+                    base_content, query
+                )
+            }
+            None => {
+                let analysis_points = match &command.git_entity {
+                    GitEntity::Commit(_) => {
+                        "\n\nProvide a short explanation covering:\n\
+                    1. Core changes made\n\
+                    2. Direct impact"
+                    }
+                    GitEntity::Diff(_) => {
+                        "\n\nProvide:\n\
+                    1. Key changes\n\
+                    2. Notable concerns (if any)"
+                    }
+                };
+                format!("{}{}", base_content, analysis_points)
             }
         };
 
