@@ -54,6 +54,9 @@ enum Commands {
 
         #[arg(long)]
         staged: bool,
+
+        #[arg(short, long)]
+        query: Option<String>,
     },
     List,
     Draft {
@@ -77,7 +80,12 @@ async fn run() -> Result<(), LumenError> {
     let command = command::LumenCommand::new(provider);
 
     match cli.command {
-        Commands::Explain { sha, diff, staged } => {
+        Commands::Explain {
+            sha,
+            diff,
+            staged,
+            query,
+        } => {
             let git_entity = if diff {
                 GitEntity::Diff(GitDiff::new(staged)?)
             } else if let Some(sha) = sha {
@@ -89,7 +97,7 @@ async fn run() -> Result<(), LumenError> {
             };
 
             command
-                .execute(command::CommandType::Explain(git_entity))
+                .execute(command::CommandType::Explain { git_entity, query })
                 .await?;
         }
         Commands::List => command.execute(command::CommandType::List).await?,
