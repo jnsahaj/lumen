@@ -6,7 +6,7 @@ use std::process::Stdio;
 
 use crate::error::LumenError;
 use crate::git_entity::git_diff::GitDiff;
-use crate::git_entity::{self, GitEntity};
+use crate::git_entity::{GitEntity};
 use crate::provider::LumenProvider;
 
 pub mod draft;
