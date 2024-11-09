@@ -1,9 +1,7 @@
 use clap::{command, Parser, Subcommand, ValueEnum};
 use error::LumenError;
 use git_entity::{git_commit::GitCommit, git_diff::GitDiff, GitEntity};
-use reqwest;
 use std::process;
-use tokio;
 
 mod ai_prompt;
 mod command;

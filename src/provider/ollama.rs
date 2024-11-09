@@ -1,5 +1,5 @@
 use super::{AIProvider, ProviderError};
-use crate::{ai_prompt::AIPrompt, git_entity::GitEntity};
+use crate::ai_prompt::AIPrompt;
 use async_trait::async_trait;
 use reqwest::StatusCode;
 use serde_json::{json, Value};

@@ -79,7 +79,7 @@ impl LumenCommand {
             };
 
             return Err(LumenError::CommandError(
-                format!("{} {}", stderr, hint).into(),
+                format!("{} {}", stderr, hint),
             ));
         }
 

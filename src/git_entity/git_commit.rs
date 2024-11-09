@@ -23,7 +23,7 @@ pub struct GitCommit {
 
 impl GitCommit {
     pub fn new(sha: String) -> Result<Self, LumenError> {
-        let _ = Self::is_valid_commit(&sha)?;
+        Self::is_valid_commit(&sha)?;
 
         Ok(GitCommit {
             full_hash: Self::get_full_hash(&sha)?,
