@@ -58,7 +58,7 @@ async fn run() -> Result<(), LumenError> {
         Commands::List => command.execute(command::CommandType::List).await?,
         Commands::Draft { context } => {
             command
-                .execute(command::CommandType::Draft(context, config.commit_types))
+                .execute(command::CommandType::Draft(context, config.draft))
                 .await?
         }
     }

@@ -101,7 +101,7 @@ impl AIPrompt {
                 \nExclude anything unnecessary such as translation. Your entire response will be passed directly into git commit.\
                 \n\nCode diff:\n```diff\n{}\n```",
                 context,
-                command.commit_types,
+                command.draft_config.commit_types,
                 diff.diff
             );
 

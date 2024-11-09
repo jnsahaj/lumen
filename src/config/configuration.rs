@@ -20,11 +20,33 @@ pub struct LumenConfig {
     #[serde(default = "default_api_key")]
     pub api_key: String,
 
+    #[serde(default = "default_draft_config")]
+    pub draft: DraftConfig,
+
+    #[serde(default)]
+    pub explain: Option<ExplainConfig>,
+
+    #[serde(default)]
+    pub list: Option<ListConfig>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct DraftConfig {
     #[serde(
-        default = "default_commit_prefix",
+        default = "default_commit_types",
         deserialize_with = "deserialize_commit_types"
     )]
     pub commit_types: String,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct ExplainConfig {
+    // Add explain-specific settings
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct ListConfig {
+    // Add list-specific settings
 }
 
 fn default_ai_provider() -> ProviderType {
@@ -50,7 +72,7 @@ fn default_api_key() -> String {
     env::var("LUMEN_API_KEY").unwrap_or_else(|_| "".to_string())
 }
 
-fn default_commit_prefix() -> String {
+fn default_commit_types() -> String {
     r#"{
         "docs": "Documentation only changes",
         "style": "Changes that do not affect the meaning of the code",
@@ -75,6 +97,12 @@ where
     serde_json::to_string(&commit_types_map).map_err(serde::de::Error::custom)
 }
 
+fn default_draft_config() -> DraftConfig {
+    DraftConfig {
+        commit_types: default_commit_types(),
+    }
+}
+
 impl LumenConfig {
     pub fn Build(cli: &Cli) -> Self {
         let config_path = "./lumen.config.json";
@@ -92,7 +120,9 @@ impl LumenConfig {
             ai_provider,
             model,
             api_key,
-            commit_types: config.commit_types,
+            draft: config.draft,
+            explain: None,
+            list: None,
         }
     }
 
@@ -118,7 +148,9 @@ impl Default for LumenConfig {
             ai_provider: default_ai_provider(),
             model: default_model(),
             api_key: default_api_key(),
-            commit_types: default_commit_prefix(),
+            draft: default_draft_config(), 
+            explain: None,
+            list: None,
         }
     }
 }
