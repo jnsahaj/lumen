@@ -1,4 +1,7 @@
-use crate::git_entity::GitEntity;
+use crate::{
+    command::{draft::DraftCommand, explain::ExplainCommand},
+    git_entity::GitEntity,
+};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -11,7 +14,7 @@ pub struct AIPrompt {
 }
 
 impl AIPrompt {
-    pub fn build_explain_prompt(git_entity: &GitEntity) -> Result<Self, AIPromptError> {
+    pub fn build_explain_prompt(command: &ExplainCommand) -> Result<Self, AIPromptError> {
         let system_prompt = String::from(
             "You are a helpful assistant that explains Git changes in a concise way. \
             Focus only on the most significant changes and their direct impact. \
@@ -19,7 +22,7 @@ impl AIPrompt {
             Use markdown for clarity.",
         );
 
-        let user_prompt = match git_entity {
+        let user_prompt = match &command.git_entity {
             GitEntity::Commit(commit) => {
                 format!(
                     "Explain this commit briefly:\n\
@@ -49,11 +52,8 @@ impl AIPrompt {
         })
     }
 
-    pub fn build_draft_prompt(
-        git_entity: &GitEntity,
-        context: Option<String>,
-    ) -> Result<Self, AIPromptError> {
-        let GitEntity::Diff(diff) = git_entity else {
+    pub fn build_draft_prompt(command: &DraftCommand) -> Result<Self, AIPromptError> {
+        let GitEntity::Diff(diff) = &command.git_entity else {
             return Err(AIPromptError("`draft` is only supported for diffs".into()));
         };
 
@@ -79,7 +79,7 @@ impl AIPrompt {
                         \n4. Follow the format: <type>(<optional scope>): <commit message>",
         );
 
-        let context = if let Some(context) = context {
+        let context = if let Some(context) = &command.context {
             format!("Use the following context to understand intent:\n{context}")
         } else {
             "".to_string()

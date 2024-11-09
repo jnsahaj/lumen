@@ -1,11 +1,7 @@
 use async_trait::async_trait;
 use spinoff::{spinners, Color, Spinner};
 
-use crate::{
-    error::LumenError,
-    git_entity::GitEntity,
-    provider::{AIProvider, LumenProvider},
-};
+use crate::{error::LumenError, git_entity::GitEntity, provider::LumenProvider};
 
 use super::{Command, LumenCommand};
 
@@ -19,7 +15,7 @@ impl Command for ExplainCommand {
         LumenCommand::print_with_mdcat(self.git_entity.format_static_details())?;
 
         let mut spinner = Spinner::new(spinners::Dots, "Generating Summary...", Color::Blue);
-        let result = provider.explain(self.git_entity.clone()).await?;
+        let result = provider.explain(self).await?;
         spinner.success("Done");
 
         LumenCommand::print_with_mdcat(result)?;

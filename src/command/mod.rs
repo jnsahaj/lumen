@@ -5,12 +5,13 @@ use list::ListCommand;
 use std::process::Stdio;
 
 use crate::error::LumenError;
+use crate::git_entity::git_diff::GitDiff;
 use crate::git_entity::GitEntity;
 use crate::provider::LumenProvider;
 
-mod draft;
-mod explain;
-mod list;
+pub mod draft;
+pub mod explain;
+pub mod list;
 
 #[derive(Debug)]
 pub enum CommandType {
@@ -25,12 +26,15 @@ pub trait Command {
 }
 
 impl CommandType {
-    pub fn create_command(self) -> Box<dyn Command> {
-        match self {
+    pub fn create_command(self) -> Result<Box<dyn Command>, LumenError> {
+        Ok(match self {
             CommandType::Explain(git_entity) => Box::new(ExplainCommand { git_entity }),
             CommandType::List => Box::new(ListCommand),
-            CommandType::Draft(context) => Box::new(DraftCommand { context }),
-        }
+            CommandType::Draft(context) => Box::new(DraftCommand {
+                context,
+                git_entity: GitEntity::Diff(GitDiff::new(true)?),
+            }),
+        })
     }
 }
 
@@ -44,7 +48,7 @@ impl LumenCommand {
     }
 
     pub async fn execute(&self, command_type: CommandType) -> Result<(), LumenError> {
-        command_type.create_command().execute(&self.provider).await
+        command_type.create_command()?.execute(&self.provider).await
     }
 
     fn get_sha_from_fzf() -> Result<String, LumenError> {

@@ -85,17 +85,7 @@ impl ClaudeProvider {
 
 #[async_trait]
 impl AIProvider for ClaudeProvider {
-    async fn explain(&self, git_entity: GitEntity) -> Result<String, ProviderError> {
-        let prompt = AIPrompt::build_explain_prompt(&git_entity)?;
-        self.complete(prompt).await
-    }
-
-    async fn draft(
-        &self,
-        git_entity: GitEntity,
-        context: Option<String>,
-    ) -> Result<String, ProviderError> {
-        let prompt = AIPrompt::build_draft_prompt(&git_entity, context)?;
+    async fn complete(&self, prompt: AIPrompt) -> Result<String, ProviderError> {
         self.complete(prompt).await
     }
 }
