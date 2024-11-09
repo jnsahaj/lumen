@@ -1,14 +1,38 @@
-use std::io::Write;
+use async_trait::async_trait;
+use draft::DraftCommand;
+use explain::ExplainCommand;
+use list::ListCommand;
 use std::process::Stdio;
 
 use crate::error::LumenError;
-use crate::git_entity::git_commit::GitCommit;
-use crate::git_entity::git_diff::GitDiff;
 use crate::git_entity::GitEntity;
-use crate::provider::AIProvider;
 use crate::provider::LumenProvider;
 
-use spinoff::{spinners, Color, Spinner};
+mod draft;
+mod explain;
+mod list;
+
+#[derive(Debug)]
+pub enum CommandType {
+    Explain(GitEntity),
+    List,
+    Draft(Option<String>),
+}
+
+#[async_trait]
+pub trait Command {
+    async fn execute(&self, provider: &LumenProvider) -> Result<(), LumenError>;
+}
+
+impl CommandType {
+    pub fn create_command(self) -> Box<dyn Command> {
+        match self {
+            CommandType::Explain(git_entity) => Box::new(ExplainCommand { git_entity }),
+            CommandType::List => Box::new(ListCommand),
+            CommandType::Draft(context) => Box::new(DraftCommand { context }),
+        }
+    }
+}
 
 pub struct LumenCommand {
     provider: LumenProvider,
@@ -17,6 +41,10 @@ pub struct LumenCommand {
 impl LumenCommand {
     pub fn new(provider: LumenProvider) -> Self {
         LumenCommand { provider }
+    }
+
+    pub async fn execute(&self, command_type: CommandType) -> Result<(), LumenError> {
+        command_type.create_command().execute(&self.provider).await
     }
 
     fn get_sha_from_fzf() -> Result<String, LumenError> {
@@ -78,37 +106,6 @@ impl LumenCommand {
                 println!("{}", content);
             }
         }
-        Ok(())
-    }
-
-    pub async fn explain(&self, git_entity: &GitEntity) -> Result<(), LumenError> {
-        Self::print_with_mdcat(git_entity.format_static_details())?;
-
-        let mut spinner = Spinner::new(spinners::Dots, "Generating Summary...", Color::Blue);
-        let result = self.provider.explain(git_entity.clone()).await?;
-        spinner.success("Done");
-
-        Self::print_with_mdcat(result)?;
-
-        Ok(())
-    }
-
-    pub async fn list(&self) -> Result<(), LumenError> {
-        let sha = Self::get_sha_from_fzf()?;
-        let git_entity = GitEntity::Commit(GitCommit::new(sha)?);
-        self.explain(&git_entity).await
-    }
-
-    pub async fn draft(&self, context: Option<String>) -> Result<(), LumenError> {
-        let result = self
-            .provider
-            .draft(GitEntity::Diff(GitDiff::new(true)?), context)
-            .await?;
-
-        // print without newline
-        print!("{result}");
-        std::io::stdout().flush()?;
-
         Ok(())
     }
 }
