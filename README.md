@@ -15,6 +15,7 @@ lumen is a command-line tool that uses AI to generate commit messages, summarise
 - Generate commit message for staged changes
 - Generate summary for changes in a git commit by providing its [SHA-1](https://graphite.dev/guides/git-hash)
 - Generate summary for changes in git diff (staged/unstaged)
+- Ask questions about a specific change
 - Fuzzy-search for the commit to generate a summary
 - Free and unlimited - no API key required to work out of the box
 - Pretty output formatting enabled by Markdown
@@ -51,7 +52,6 @@ lumen draft --context "match brand guidelines"
 To summarise a commit, pass in its SHA-1 
 ```zsh
 lumen explain HEAD
-# OR
 lumen explain cc50651f
 ```
 To use the interactive fuzzy-finder (requires: fzf)
@@ -61,8 +61,12 @@ lumen list
 To generate a summary for the current git diff
 ```zsh
 lumen explain --diff
-# OR
 lumen explain --diff --staged
+```
+You can ask a question about the diff (or a commit) using `--query`
+```zsh
+lumen explain --diff --query "how will this change affect performance?"
+lumen explain HEAD~2 --query "how can this be improved?"
 ```
 
 AI Provider can be configured by using CLI arguments or Environment variables.

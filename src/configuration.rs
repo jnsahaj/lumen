@@ -3,10 +3,10 @@ use std::collections::HashMap;
 use std::env;
 use std::fs;
 
-#[derive(Deserialize)]
-pub struct ProjectConfig {
+#[derive(Debug, Deserialize)]
+pub struct LumenConfig {
     #[serde(default = "default_model_provider")]
-    pub model_provider: String,
+    pub ai_provider: String,
 
     #[serde(default = "default_model")]
     pub model: String,
@@ -16,9 +16,9 @@ pub struct ProjectConfig {
 
     #[serde(
         default = "default_commit_prefix",
-        deserialize_with = "deserialize_prefix"
+        deserialize_with = "deserialize_commit_types"
     )]
-    pub prefix: String,
+    pub commit_types: String,
 }
 
 fn default_model_provider() -> String {
@@ -50,32 +50,38 @@ fn default_commit_prefix() -> String {
     .to_string()
 }
 
-fn deserialize_prefix<'de, D>(deserializer: D) -> Result<String, D::Error>
+fn deserialize_commit_types<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
     D: Deserializer<'de>,
 {
-    let prefix_map: HashMap<String, String> = HashMap::deserialize(deserializer)?;
-    serde_json::to_string(&prefix_map).map_err(serde::de::Error::custom)
+    let commit_types_map: HashMap<String, String> = HashMap::deserialize(deserializer)?;
+    serde_json::to_string(&commit_types_map).map_err(serde::de::Error::custom)
 }
 
-impl ProjectConfig {
+impl LumenConfig {
     pub fn from_file(file_path: &String) -> Self {
         let content = match fs::read_to_string(file_path) {
             Ok(content) => content,
-            Err(_) => return ProjectConfig::default(),
+            Err(_) => return LumenConfig::default(),
         };
 
-        serde_json::from_str(&content).unwrap_or_else(|_| ProjectConfig::default())
+        match serde_json::from_str::<LumenConfig>(&content) {
+            Ok(config) => config,
+            Err(e) => {
+                eprintln!("Failed to parse JSON: {}", e);
+                LumenConfig::default()
+            }
+        }
     }
 }
 
-impl Default for ProjectConfig {
+impl Default for LumenConfig {
     fn default() -> Self {
-        ProjectConfig {
-            model_provider: default_model_provider(),
+        LumenConfig {
+            ai_provider: default_model_provider(),
             model: default_model(),
             api_key: default_api_key(),
-            prefix: default_commit_prefix(),
+            commit_types: default_commit_prefix(),
         }
     }
 }

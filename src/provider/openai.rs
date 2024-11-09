@@ -1,5 +1,5 @@
 use super::{AIProvider, ProviderError};
-use crate::{ai_prompt::AIPrompt, git_entity::GitEntity};
+use crate::ai_prompt::AIPrompt;
 use async_trait::async_trait;
 use reqwest::StatusCode;
 use serde_json::{json, Value};
@@ -88,18 +88,7 @@ impl OpenAIProvider {
 
 #[async_trait]
 impl AIProvider for OpenAIProvider {
-    async fn explain(&self, git_entity: GitEntity) -> Result<String, ProviderError> {
-        let prompt = AIPrompt::build_explain_prompt(&git_entity)?;
-        self.complete(prompt).await
-    }
-
-    async fn draft(
-        &self,
-        git_entity: GitEntity,
-        context: Option<String>,
-        prefix_types: String,
-    ) -> Result<String, ProviderError> {
-        let prompt = AIPrompt::build_draft_prompt(&git_entity, context, prefix_types)?;
+    async fn complete(&self, prompt: AIPrompt) -> Result<String, ProviderError> {
         self.complete(prompt).await
     }
 }

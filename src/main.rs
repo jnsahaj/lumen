@@ -1,11 +1,9 @@
 use clap::{command, Parser, Subcommand, ValueEnum};
-use configuration::ProjectConfig;
+use configuration::LumenConfig;
 use error::LumenError;
 use git_entity::{git_commit::GitCommit, git_diff::GitDiff, GitEntity};
-use reqwest;
 use std::process;
 use std::str::FromStr;
-use tokio;
 
 mod ai_prompt;
 mod command;
@@ -57,20 +55,29 @@ impl FromStr for ProviderType {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Explain the changes in a commit, or the current diff
     Explain {
         /// The commit hash to use
         #[arg(group = "target")]
         sha: Option<String>,
 
-        /// Use staged diff
+        /// Explain current diff
         #[arg(long, group = "target")]
         diff: bool,
 
+        /// Use staged diff
         #[arg(long)]
         staged: bool,
+
+        /// Ask a question instead of summary
+        #[arg(short, long)]
+        query: Option<String>,
     },
+    /// List all commits in an interactive fuzzy-finder, and summarize the changes
     List,
+    /// Generate a commit message for the staged changes
     Draft {
+        /// Add context to communicate intent
         #[arg(short, long)]
         context: Option<String>,
     },
@@ -78,8 +85,8 @@ enum Commands {
 
 #[tokio::main]
 async fn main() {
-    let config_path = "./lumen_config.json";
-    let config: ProjectConfig = ProjectConfig::from_file(&config_path.to_string());
+    let config_path = "./lumen.config.json";
+    let config: LumenConfig = LumenConfig::from_file(&config_path.to_string());
 
     if let Err(e) = run(config).await {
         eprintln!("\x1b[91m\rerror:\x1b[0m {e}");
@@ -87,13 +94,13 @@ async fn main() {
     }
 }
 
-async fn run(config: configuration::ProjectConfig) -> Result<(), LumenError> {
+async fn run(config: configuration::LumenConfig) -> Result<(), LumenError> {
     let cli = Cli::parse();
     let client = reqwest::Client::new();
 
     let model_provider: ProviderType = cli
         .provider
-        .or_else(|| config.model_provider.parse().ok())
+        .or_else(|| config.ai_provider.parse().ok())
         .unwrap_or(ProviderType::Phind);
 
     let api_key: Option<String> = cli.api_key.or_else(|| Some(config.api_key));
@@ -104,7 +111,12 @@ async fn run(config: configuration::ProjectConfig) -> Result<(), LumenError> {
     let command = command::LumenCommand::new(provider);
 
     match cli.command {
-        Commands::Explain { sha, diff, staged } => {
+        Commands::Explain {
+            sha,
+            diff,
+            staged,
+            query,
+        } => {
             let git_entity = if diff {
                 GitEntity::Diff(GitDiff::new(staged)?)
             } else if let Some(sha) = sha {
@@ -115,10 +127,16 @@ async fn run(config: configuration::ProjectConfig) -> Result<(), LumenError> {
                 ));
             };
 
-            command.explain(&git_entity).await?
+            command
+                .execute(command::CommandType::Explain { git_entity, query })
+                .await?;
         }
-        Commands::List => command.list().await?,
-        Commands::Draft { context } => command.draft(context, config.prefix).await?,
+        Commands::List => command.execute(command::CommandType::List).await?,
+        Commands::Draft { context } => {
+            command
+                .execute(command::CommandType::Draft(context, config.commit_types))
+                .await?
+        }
     }
 
     Ok(())

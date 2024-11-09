@@ -6,7 +6,12 @@ use openai::{OpenAIConfig, OpenAIProvider};
 use phind::{PhindConfig, PhindProvider};
 use thiserror::Error;
 
-use crate::{ai_prompt::AIPromptError, error::LumenError, git_entity::GitEntity, ProviderType};
+use crate::{
+    ai_prompt::{AIPrompt, AIPromptError},
+    command::{draft::DraftCommand, explain::ExplainCommand},
+    error::LumenError,
+    ProviderType,
+};
 
 pub mod claude;
 pub mod groq;
@@ -16,13 +21,7 @@ pub mod phind;
 
 #[async_trait]
 pub trait AIProvider {
-    async fn explain(&self, git_entity: GitEntity) -> Result<String, ProviderError>;
-    async fn draft(
-        &self,
-        git_entity: GitEntity,
-        context: Option<String>,
-        prefix_types: String,
-    ) -> Result<String, ProviderError>;
+    async fn complete(&self, prompt: AIPrompt) -> Result<String, ProviderError>;
 }
 
 #[derive(Error, Debug)]
@@ -89,41 +88,25 @@ impl LumenProvider {
             }
         }
     }
-}
 
-#[async_trait]
-impl AIProvider for LumenProvider {
-    async fn explain(&self, git_entity: GitEntity) -> Result<String, ProviderError> {
+    pub async fn explain(&self, command: &ExplainCommand) -> Result<String, ProviderError> {
+        let prompt = AIPrompt::build_explain_prompt(command)?;
         match self {
-            LumenProvider::OpenAI(provider) => provider.explain(git_entity).await,
-            LumenProvider::Phind(provider) => provider.explain(git_entity).await,
-            LumenProvider::Groq(provider) => provider.explain(git_entity).await,
-            LumenProvider::Claude(provider) => provider.explain(git_entity).await,
-            LumenProvider::Ollama(provider) => provider.explain(git_entity).await,
+            LumenProvider::OpenAI(provider) => provider.complete(prompt).await,
+            LumenProvider::Phind(provider) => provider.complete(prompt).await,
+            LumenProvider::Groq(provider) => provider.complete(prompt).await,
+            LumenProvider::Claude(provider) => provider.complete(prompt).await,
+            LumenProvider::Ollama(provider) => provider.complete(prompt).await,
         }
     }
-    async fn draft(
-        &self,
-        git_entity: GitEntity,
-        context: Option<String>,
-        prefix_types: String,
-    ) -> Result<String, ProviderError> {
+    pub async fn draft(&self, command: &DraftCommand) -> Result<String, ProviderError> {
+        let prompt = AIPrompt::build_draft_prompt(command)?;
         match self {
-            LumenProvider::OpenAI(provider) => {
-                provider.draft(git_entity, context, prefix_types).await
-            }
-            LumenProvider::Phind(provider) => {
-                provider.draft(git_entity, context, prefix_types).await
-            }
-            LumenProvider::Groq(provider) => {
-                provider.draft(git_entity, context, prefix_types).await
-            }
-            LumenProvider::Claude(provider) => {
-                provider.draft(git_entity, context, prefix_types).await
-            }
-            LumenProvider::Ollama(provider) => {
-                provider.draft(git_entity, context, prefix_types).await
-            }
+            LumenProvider::OpenAI(provider) => provider.complete(prompt).await,
+            LumenProvider::Phind(provider) => provider.complete(prompt).await,
+            LumenProvider::Groq(provider) => provider.complete(prompt).await,
+            LumenProvider::Claude(provider) => provider.complete(prompt).await,
+            LumenProvider::Ollama(provider) => provider.complete(prompt).await,
         }
     }
 }

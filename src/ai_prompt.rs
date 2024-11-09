@@ -1,4 +1,7 @@
-use crate::git_entity::GitEntity;
+use crate::{
+    command::{draft::DraftCommand, explain::ExplainCommand},
+    git_entity::GitEntity,
+};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -11,35 +14,55 @@ pub struct AIPrompt {
 }
 
 impl AIPrompt {
-    pub fn build_explain_prompt(git_entity: &GitEntity) -> Result<Self, AIPromptError> {
+    pub fn build_explain_prompt(command: &ExplainCommand) -> Result<Self, AIPromptError> {
         let system_prompt = String::from(
             "You are a helpful assistant that explains Git changes in a concise way. \
-            Focus only on the most significant changes and their direct impact. \
-            Keep explanations brief but informative and don't ask for further explanations. \
-            Use markdown for clarity.",
+        Focus only on the most significant changes and their direct impact. \
+        When answering specific questions, address them directly and precisely. \
+        Keep explanations brief but informative and don't ask for further explanations. \
+        Use markdown for clarity.",
         );
 
-        let user_prompt = match git_entity {
+        let base_content = match &command.git_entity {
             GitEntity::Commit(commit) => {
                 format!(
-                    "Explain this commit briefly:\n\
-                    \nMessage: {}\
-                    \n\nChanges:\n```diff\n{}\n```\
-                    \n\nProvide a short explanation covering:\n\
-                    1. Core changes made\n\
-                    2. Direct impact",
+                    "Context - Commit:\n\
+                \nMessage: {}\
+                \nChanges:\n```diff\n{}\n```",
                     commit.message, commit.diff
                 )
             }
             GitEntity::Diff(diff) => {
                 format!(
-                    "Explain these changes concisely:\n\
-                    \n```diff\n{}\n```\
-                    \n\nProvide:\n\
-                    1. Key changes\n\
-                    2. Notable concerns (if any)",
+                    "Context - Changes:\n\
+                \n```diff\n{}\n```",
                     diff.diff
                 )
+            }
+        };
+
+        let user_prompt = match &command.query {
+            Some(query) => {
+                format!(
+                    "{}\n\nQuestion: {}\
+                \nProvide a focused answer to the question based on the changes shown above.",
+                    base_content, query
+                )
+            }
+            None => {
+                let analysis_points = match &command.git_entity {
+                    GitEntity::Commit(_) => {
+                        "\n\nProvide a short explanation covering:\n\
+                    1. Core changes made\n\
+                    2. Direct impact"
+                    }
+                    GitEntity::Diff(_) => {
+                        "\n\nProvide:\n\
+                    1. Key changes\n\
+                    2. Notable concerns (if any)"
+                    }
+                };
+                format!("{}{}", base_content, analysis_points)
             }
         };
 
@@ -49,12 +72,8 @@ impl AIPrompt {
         })
     }
 
-    pub fn build_draft_prompt(
-        git_entity: &GitEntity,
-        context: Option<String>,
-        prefix_types: String,
-    ) -> Result<Self, AIPromptError> {
-        let GitEntity::Diff(diff) = git_entity else {
+    pub fn build_draft_prompt(command: &DraftCommand) -> Result<Self, AIPromptError> {
+        let GitEntity::Diff(diff) = &command.git_entity else {
             return Err(AIPromptError("`draft` is only supported for diffs".into()));
         };
 
@@ -66,7 +85,7 @@ impl AIPrompt {
                         \n4. Follow the format: <type>(<optional scope>): <commit message>",
         );
 
-        let context = if let Some(context) = context {
+        let context = if let Some(context) = &command.context {
             format!("Use the following context to understand intent:\n{context}")
         } else {
             "".to_string()
@@ -82,7 +101,7 @@ impl AIPrompt {
                 \nExclude anything unnecessary such as translation. Your entire response will be passed directly into git commit.\
                 \n\nCode diff:\n```diff\n{}\n```",
                 context,
-                prefix_types,
+                command.commit_types,
                 diff.diff
             );
 
