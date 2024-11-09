@@ -90,10 +90,16 @@ async fn run() -> Result<(), LumenError> {
                 ));
             };
 
-            command.explain(&git_entity).await?
+            command
+                .execute(command::CommandType::Explain(git_entity))
+                .await?;
         }
-        Commands::List => command.list().await?,
-        Commands::Draft { context } => command.draft(context).await?,
+        Commands::List => command.execute(command::CommandType::List).await?,
+        Commands::Draft { context } => {
+            command
+                .execute(command::CommandType::Draft(context))
+                .await?
+        }
     }
 
     Ok(())
