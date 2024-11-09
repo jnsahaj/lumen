@@ -21,6 +21,7 @@ pub trait AIProvider {
         &self,
         git_entity: GitEntity,
         context: Option<String>,
+        prefix_types: String,
     ) -> Result<String, ProviderError>;
 }
 
@@ -105,13 +106,24 @@ impl AIProvider for LumenProvider {
         &self,
         git_entity: GitEntity,
         context: Option<String>,
+        prefix_types: String,
     ) -> Result<String, ProviderError> {
         match self {
-            LumenProvider::OpenAI(provider) => provider.draft(git_entity, context).await,
-            LumenProvider::Phind(provider) => provider.draft(git_entity, context).await,
-            LumenProvider::Groq(provider) => provider.draft(git_entity, context).await,
-            LumenProvider::Claude(provider) => provider.draft(git_entity, context).await,
-            LumenProvider::Ollama(provider) => provider.draft(git_entity, context).await,
+            LumenProvider::OpenAI(provider) => {
+                provider.draft(git_entity, context, prefix_types).await
+            }
+            LumenProvider::Phind(provider) => {
+                provider.draft(git_entity, context, prefix_types).await
+            }
+            LumenProvider::Groq(provider) => {
+                provider.draft(git_entity, context, prefix_types).await
+            }
+            LumenProvider::Claude(provider) => {
+                provider.draft(git_entity, context, prefix_types).await
+            }
+            LumenProvider::Ollama(provider) => {
+                provider.draft(git_entity, context, prefix_types).await
+            }
         }
     }
 }

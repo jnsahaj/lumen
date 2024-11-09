@@ -78,7 +78,7 @@ enum Commands {
 
 #[tokio::main]
 async fn main() {
-    let config_path = "./lumen_config.json"; // TODO: Fix hardcoded path!
+    let config_path = "./lumen_config.json";
     let config: ProjectConfig = ProjectConfig::from_file(&config_path.to_string());
 
     if let Err(e) = run(config).await {
@@ -118,7 +118,7 @@ async fn run(config: configuration::ProjectConfig) -> Result<(), LumenError> {
             command.explain(&git_entity).await?
         }
         Commands::List => command.list().await?,
-        Commands::Draft { context } => command.draft(context).await?,
+        Commands::Draft { context } => command.draft(context, config.prefix).await?,
     }
 
     Ok(())

@@ -94,8 +94,9 @@ impl AIProvider for ClaudeProvider {
         &self,
         git_entity: GitEntity,
         context: Option<String>,
+        prefix_types: String,
     ) -> Result<String, ProviderError> {
-        let prompt = AIPrompt::build_draft_prompt(&git_entity, context)?;
+        let prompt = AIPrompt::build_draft_prompt(&git_entity, context, prefix_types)?;
         self.complete(prompt).await
     }
 }

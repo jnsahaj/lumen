@@ -99,10 +99,14 @@ impl LumenCommand {
         self.explain(&git_entity).await
     }
 
-    pub async fn draft(&self, context: Option<String>) -> Result<(), LumenError> {
+    pub async fn draft(
+        &self,
+        context: Option<String>,
+        prefix_types: String,
+    ) -> Result<(), LumenError> {
         let result = self
             .provider
-            .draft(GitEntity::Diff(GitDiff::new(true)?), context)
+            .draft(GitEntity::Diff(GitDiff::new(true)?), context, prefix_types)
             .await?;
 
         // print without newline
