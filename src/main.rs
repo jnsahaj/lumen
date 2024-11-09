@@ -43,23 +43,29 @@ enum ProviderType {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Explain the changes in a commit, or the current diff
     Explain {
         /// The commit hash to use
         #[arg(group = "target")]
         sha: Option<String>,
 
-        /// Use staged diff
+        /// Explain current diff
         #[arg(long, group = "target")]
         diff: bool,
 
+        /// Use staged diff
         #[arg(long)]
         staged: bool,
 
+        /// Ask a question instead of summary
         #[arg(short, long)]
         query: Option<String>,
     },
+    /// List all commits in an interactive fuzzy-finder, and summarize the changes
     List,
+    /// Generate a commit message for the staged changes
     Draft {
+        /// Add context to communicate intent
         #[arg(short, long)]
         context: Option<String>,
     },
