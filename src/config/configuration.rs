@@ -1,12 +1,18 @@
+use crate::config::cli::ProviderType;
 use serde::{Deserialize, Deserializer};
 use std::collections::HashMap;
 use std::env;
 use std::fs;
 
+use crate::Cli;
+
 #[derive(Debug, Deserialize)]
 pub struct LumenConfig {
-    #[serde(default = "default_model_provider")]
-    pub ai_provider: String,
+    #[serde(
+        default = "default_ai_provider",
+        deserialize_with = "deserialize_ai_provider"
+    )]
+    pub ai_provider: ProviderType,
 
     #[serde(default = "default_model")]
     pub model: String,
@@ -21,8 +27,19 @@ pub struct LumenConfig {
     pub commit_types: String,
 }
 
-fn default_model_provider() -> String {
-    env::var("LUMEN_AI_PROVIDER").unwrap_or_else(|_| "phind".to_string())
+fn default_ai_provider() -> ProviderType {
+    env::var("LUMEN_AI_PROVIDER")
+        .unwrap_or_else(|_| "phind".to_string())
+        .parse()
+        .unwrap_or(ProviderType::Phind)
+}
+
+fn deserialize_ai_provider<'de, D>(deserializer: D) -> Result<ProviderType, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    s.parse().map_err(serde::de::Error::custom)
 }
 
 fn default_model() -> String {
@@ -59,6 +76,26 @@ where
 }
 
 impl LumenConfig {
+    pub fn Build(cli: &Cli) -> Self {
+        let config_path = "./lumen.config.json";
+        let config = LumenConfig::from_file(&config_path.to_string());
+
+        let ai_provider: ProviderType = cli
+            .provider
+            .or_else(|| Some(config.ai_provider))
+            .unwrap_or(default_ai_provider());
+
+        let api_key: String = cli.api_key.clone().unwrap_or(config.api_key);
+        let model: String = cli.model.clone().unwrap_or(config.model);
+
+        LumenConfig {
+            ai_provider,
+            model,
+            api_key,
+            commit_types: config.commit_types,
+        }
+    }
+
     pub fn from_file(file_path: &String) -> Self {
         let content = match fs::read_to_string(file_path) {
             Ok(content) => content,
@@ -78,7 +115,7 @@ impl LumenConfig {
 impl Default for LumenConfig {
     fn default() -> Self {
         LumenConfig {
-            ai_provider: default_model_provider(),
+            ai_provider: default_ai_provider(),
             model: default_model(),
             api_key: default_api_key(),
             commit_types: default_commit_prefix(),

@@ -1,9 +1,4 @@
 {
     "ai_provider": "ollama",
-    "model": "mistral",
-    "commit_types": {
-        "docs": "document changes", 
-        "feature": "new feature",
-        "refactor": "refactoring code in some way"
-    }
+    "model": "mistral"
 }
