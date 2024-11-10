@@ -12,6 +12,7 @@ mod provider;
 #[derive(Parser)]
 #[command(name = "lumen")]
 #[command(about = "AI-powered CLI tool for git commit summaries", long_about = None)]
+#[command(version)]
 struct Cli {
     #[arg(
         value_enum,
