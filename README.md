@@ -79,6 +79,25 @@ AI Provider can be configured by using CLI arguments or Environment variables.
 # eg: lumen -p="openai" -k="<your-api-key>" -m="gpt-4o" draft
 # eg: LUMEN_AI_PROVIDER="openai" LUMEN_API_KEY="<your-api-key>" LUMEN_AI_MODEL="gpt-4o" lumen list
 ```
+### Storage of the token forever
+
+If you do not want to define environment variables all the time, you can define them according to the shell you are using `(bash, zsh, etc...)`.
+For `bash(.bashrc)` or `zsh(.zshrc)` on macOS and Linux
+They are under this directory `~/`.
+```env
+nano ~/.zshrc
+```
+Then add the variables
+```env
+
+export LUMEN_AI_PROVIDER="openai’
+export LUMEN_API_KEY="<openai-api-key>’
+export LUMEN_AI_MODEL="gpt-4o’
+```
+Then run this command.
+```bash
+source ~/.zshrc # or ~/.bashrc
+```
 
 ### Supported providers
 
