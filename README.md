@@ -50,7 +50,7 @@ lumen draft
 lumen draft --context "match brand guidelines"
 # Output: "feat(button.tsx): Update button color to align with brand identity"
 ```
-To summarise a commit, pass in its SHA-1 
+To summarise a commit, pass in its SHA-1
 ```zsh
 lumen explain HEAD
 lumen explain cc50651f
@@ -72,7 +72,7 @@ lumen explain HEAD~2 --query "how can this be improved?"
 
 AI Provider can be configured by using CLI arguments or Environment variables (see also: [Advanced Configuration](#advanced-configuration)).
 ```sh
--p, --provider <PROVIDER>  [env: LUMEN_AI_PROVIDER] [default: phind] [possible values: openai, phind, groq, claude, ollama]
+-p, --provider <PROVIDER>  [env: LUMEN_AI_PROVIDER] [default: phind] [possible values: openai, phind, groq, claude, ollama, openrouter]
 -k, --api-key <API_KEY>    [env: LUMEN_API_KEY]
 -m, --model <MODEL>        [env: LUMEN_AI_MODEL]
 
@@ -90,6 +90,7 @@ AI Provider can be configured by using CLI arguments or Environment variables (s
 | [OpenAI](https://platform.openai.com/docs/guides/text-generation/chat-completions-api) `openai`                    | Yes             | `gpt-4o`, `gpt-4o-mini`, `gpt-4`, `gpt-3.5-turbo` (default: `gpt-4o-mini`)                  |
 | [Claude](https://claude.ai/new) `claude`                                                                     | Yes             | [see list](https://docs.anthropic.com/en/docs/about-claude/models#model-names) (default: `claude-3-5-sonnet-20241022`) |                                                                                |
 | [Ollama](https://github.com/ollama/ollama) `ollama`                                                                     | No (local)             | [see list](https://github.com/ollama/ollama/blob/main/docs/api.md#model-names) (required) |                                                                                |
+| [OpenRouter](https://openrouter.ai/) `openrouter`                                                                     | Yes             | `anthropic/claude-3.5-sonnet` (default), `anthropic/claude-3-5-haiku`, `openai/gpt-4o-mini` |                                                                                |
 
 
 # Installation 🔅
