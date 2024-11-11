@@ -4,6 +4,7 @@ use std::str::FromStr;
 #[derive(Parser)]
 #[command(name = "lumen")]
 #[command(about = "AI-powered CLI tool for git commit summaries", long_about = None)]
+#[command(version)]
 pub struct Cli {
     #[arg(value_enum, short = 'p', long = "provider")]
     pub provider: Option<ProviderType>,
