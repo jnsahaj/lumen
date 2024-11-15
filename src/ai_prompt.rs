@@ -2,6 +2,7 @@ use crate::{
     command::{draft::DraftCommand, explain::ExplainCommand},
     git_entity::GitEntity,
 };
+use indoc::{formatdoc, indoc};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -15,55 +16,71 @@ pub struct AIPrompt {
 
 impl AIPrompt {
     pub fn build_explain_prompt(command: &ExplainCommand) -> Result<Self, AIPromptError> {
-        let system_prompt = String::from(
-            "You are a helpful assistant that explains Git changes in a concise way. \
-        Focus only on the most significant changes and their direct impact. \
-        When answering specific questions, address them directly and precisely. \
-        Keep explanations brief but informative and don't ask for further explanations. \
-        Use markdown for clarity.",
-        );
+        let system_prompt = String::from(indoc! {"
+            You are a helpful assistant that explains Git changes in a concise way.
+            Focus only on the most significant changes and their direct impact.
+            When answering specific questions, address them directly and precisely.
+            Keep explanations brief but informative and don't ask for further explanations.
+            Use markdown for clarity.
+        "});
 
         let base_content = match &command.git_entity {
             GitEntity::Commit(commit) => {
-                format!(
-                    "Context - Commit:\n\
-                \nMessage: {}\
-                \nChanges:\n```diff\n{}\n```",
-                    commit.message, commit.diff
-                )
+                formatdoc! {"
+                    Context - Commit:
+
+                    Message: {msg}
+                    Changes:
+                    ```diff
+                    {diff}
+                    ```
+                    ",
+                    msg = commit.message,
+                    diff = commit.diff
+                }
             }
             GitEntity::Diff(diff) => {
-                format!(
-                    "Context - Changes:\n\
-                \n```diff\n{}\n```",
-                    diff.diff
-                )
+                formatdoc! {"
+                    Context - Changes:
+
+                    ```diff
+                    {diff}
+                    ```
+                    ",
+                    diff = diff.diff
+                }
             }
         };
 
         let user_prompt = match &command.query {
             Some(query) => {
-                format!(
-                    "{}\n\nQuestion: {}\
-                \nProvide a focused answer to the question based on the changes shown above.",
-                    base_content, query
-                )
+                formatdoc! {"
+                    {base_content}
+
+                    Question: {query}
+
+                    Provide a focused answer to the question based on the changes shown above.
+                    "
+                }
             }
-            None => {
-                let analysis_points = match &command.git_entity {
-                    GitEntity::Commit(_) => {
-                        "\n\nProvide a short explanation covering:\n\
-                    1. Core changes made\n\
-                    2. Direct impact"
-                    }
-                    GitEntity::Diff(_) => {
-                        "\n\nProvide:\n\
-                    1. Key changes\n\
-                    2. Notable concerns (if any)"
-                    }
-                };
-                format!("{}{}", base_content, analysis_points)
-            }
+            None => match &command.git_entity {
+                GitEntity::Commit(_) => formatdoc! {"
+                    {base_content}
+                    
+                    Provide a short explanation covering:
+                    1. Core changes made
+                    2. Direct impact
+                    "
+                },
+                GitEntity::Diff(_) => formatdoc! {"
+                    {base_content}
+                    
+                    Provide:
+                    1. Key changes
+                    2. Notable concerns (if any)
+                    "
+                },
+            },
         };
 
         Ok(AIPrompt {
@@ -77,33 +94,45 @@ impl AIPrompt {
             return Err(AIPromptError("`draft` is only supported for diffs".into()));
         };
 
-        let system_prompt = String::from(
-            "You are a commit message generator that follows these rules:\
-                        \n1. Write in present tense\
-                        \n2. Be concise and direct\
-                        \n3. Output only the commit message without any explanations\
-                        \n4. Follow the format: <type>(<optional scope>): <commit message>",
-        );
+        let system_prompt = String::from(indoc! {"
+            You are a commit message generator that follows these rules:
+            1. Write in present tense
+            2. Be concise and direct
+            3. Output only the commit message without any explanations
+            4. Follow the format: <type>(<optional scope>): <commit message>
+        "});
 
         let context = if let Some(context) = &command.context {
-            format!("Use the following context to understand intent:\n{context}")
+            formatdoc!(
+                "
+                Use the following context to understand intent:
+                {context}
+                "
+            )
         } else {
             "".to_string()
         };
 
-        let user_prompt = format!(
-                "Generate a concise git commit message written in present tense for the following code diff with the given specifications below:\n\
-                \nThe output response must be in format:\n<type>(<optional scope>): <commit message>\
-                \nChoose a type from the type-to-description JSON below that best describes the git diff:\n{}\
-                \nFocus on being accurate and concise.\
-                \n{}\
-                \nCommit message must be a maximum of 72 characters.\
-                \nExclude anything unnecessary such as translation. Your entire response will be passed directly into git commit.\
-                \n\nCode diff:\n```diff\n{}\n```",
-                command.draft_config.commit_types,
-                context,
-                diff.diff
-            );
+        let user_prompt = String::from(formatdoc! {"
+            Generate a concise git commit message written in present tense for the following code diff with the given specifications below:
+
+            The output response must be in format:
+            <type>(<optional scope>): <commit message>
+            Choose a type from the type-to-description JSON below that best describes the git diff:
+            {commit_types}
+            Focus on being accurate and concise.
+            {context}
+            Commit message must be a maximum of 72 characters.
+            Exclude anything unnecessary such as translation. Your entire response will be passed directly into git commit.
+
+            Code diff:
+            ```diff
+            {diff}
+            ```
+            ",
+            commit_types = command.draft_config.commit_types,
+            diff = diff.diff
+        });
 
         Ok(AIPrompt {
             system_prompt,
