@@ -35,16 +35,6 @@ pub struct DraftConfig {
     pub commit_types: String,
 }
 
-#[derive(Debug, Deserialize, Default)]
-pub struct ExplainConfig {
-    // Add explain-specific settings
-}
-
-#[derive(Debug, Deserialize, Default)]
-pub struct ListConfig {
-    // Add list-specific settings
-}
-
 fn default_ai_provider() -> ProviderType {
     std::env::var("LUMEN_AI_PROVIDER")
         .unwrap_or_else(|_| "phind".to_string())
@@ -101,15 +91,12 @@ fn default_draft_config() -> DraftConfig {
 
 impl LumenConfig {
     pub fn build(cli: &Cli) -> Result<Self, LumenError> {
-        let config_path = "./lumen.config.json";
-        let config = LumenConfig::from_file(config_path)?;
+        let config = cli.config.as_ref().map_or_else(
+            || Ok(LumenConfig::default()),
+            |path| LumenConfig::from_file(path),
+        )?;
 
-        let provider = if cli.provider.is_some() {
-            cli.provider.unwrap()
-        } else {
-            config.provider
-        };
-
+        let provider = cli.provider.as_ref().cloned().unwrap_or(config.provider);
         let api_key = cli.api_key.clone().or(config.api_key);
         let model = cli.model.clone().or(config.model);
 
@@ -122,11 +109,7 @@ impl LumenConfig {
     }
 
     pub fn from_file(file_path: &str) -> Result<Self, LumenError> {
-        let file = match File::open(file_path) {
-            Ok(file) => file,
-            Err(_) => return Ok(LumenConfig::default()),
-        };
-
+        let file = File::open(file_path)?;
         let reader = BufReader::new(file);
 
         // Deserialize JSON data into the LumenConfig struct

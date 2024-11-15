@@ -6,6 +6,10 @@ use std::str::FromStr;
 #[command(about = "AI-powered CLI tool for git commit summaries", long_about = None)]
 #[command(version)]
 pub struct Cli {
+    /// Path to configuration file eg: ./path/to/lumen.config.json
+    #[arg(long)]
+    pub config: Option<String>,
+
     #[arg(value_enum, short = 'p', long = "provider")]
     pub provider: Option<ProviderType>,
 
