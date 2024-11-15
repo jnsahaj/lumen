@@ -172,10 +172,14 @@ For example, if you want to use `Ollama` for a specific project, and `OpenAI` fo
 export LUMEN_AI_PROVIDER="openai"
 export LUMEN_API_KEY="sk-xxxxxxxxxxxxxxxxxxxxxxxx"
 ```
-The above will apply globally, and only for a specific project you can define a configuration file, which will override the Environment Variables.
+The above will apply globally. You can override this for a specific project by either specifying a configuration file or using CLI flags.
 ```json
 {
   "provider": "ollama",
   "model": "llama3.2"
 }
+```
+OR
+```sh
+lumen -p "ollama" -m "llama3.2" draft
 ```
