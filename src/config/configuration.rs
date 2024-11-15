@@ -1,5 +1,6 @@
 use crate::config::cli::ProviderType;
 use crate::error::LumenError;
+use indoc::indoc;
 use serde::{Deserialize, Deserializer};
 use serde_json::from_reader;
 use std::collections::HashMap;
@@ -51,7 +52,8 @@ where
 }
 
 fn default_commit_types() -> String {
-    r#"{
+    indoc! {r#"
+    {
         "docs": "Documentation only changes",
         "style": "Changes that do not affect the meaning of the code",
         "refactor": "A code change that neither fixes a bug nor adds a feature",
@@ -63,7 +65,8 @@ fn default_commit_types() -> String {
         "revert": "Reverts a previous commit",
         "feat": "A new feature",
         "fix": "A bug fix"
-    }"#
+    }
+    "#}
     .to_string()
 }
 
