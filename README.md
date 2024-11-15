@@ -11,7 +11,7 @@ lumen is a command-line tool that uses AI to generate commit messages, summarise
 
 ![demo](https://github.com/user-attachments/assets/0d029bdb-3b11-4b5c-bed6-f5a91d8529f2)
 
-# Features
+# Features 🔅
 - Generate commit message for staged changes
 - Generate summary for changes in a git commit by providing its [SHA-1](https://graphite.dev/guides/git-hash)
 - Generate summary for changes in git diff (staged/unstaged)
@@ -21,7 +21,7 @@ lumen is a command-line tool that uses AI to generate commit messages, summarise
 - Pretty output formatting enabled by Markdown
 - Supports multiple AI providers
 
-# Usage
+# Usage 🔅
 Try `lumen --help`
 
 To generate a commit message for staged changes.
@@ -92,7 +92,7 @@ AI Provider can be configured by using CLI arguments or Environment variables (s
 | [Ollama](https://github.com/ollama/ollama) `ollama`                                                                     | No (local)             | [see list](https://github.com/ollama/ollama/blob/main/docs/api.md#model-names) (required) |                                                                                |
 
 
-# Installation
+# Installation 🔅
 ### Using [Homebrew](https://brew.sh/) (MacOS and Linux)
 ```
 brew tap jnsahaj/lumen
@@ -108,13 +108,13 @@ brew install --formula lumen
 cargo install lumen
 ```
 
-# Prerequisites
+# Prerequisites 🔅
 1. git
 2. [fzf](https://github.com/junegunn/fzf) (optional): Required for `lumen list` command
 3. [mdcat](https://github.com/swsnr/mdcat) (optional): Required for pretty output formatting
 
 
-# Advanced Configuration
+# Advanced Configuration 🔅
 `lumen` can be configured using a configuration file. You can specify `lumen.config.json` at the root of your git-tracked project, or use `--config "./path/to/config.json`
 
 ```json
