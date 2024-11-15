@@ -24,7 +24,8 @@ lumen is a command-line tool that uses AI to generate commit messages, summarise
 # Usage
 Try `lumen --help`
 
-To generate a commit message for staged changes
+To generate a commit message for staged changes.
+See [Advanced Configuration](#advanced-configuration) to configure commit types
 ```zsh
 lumen draft
 ```
@@ -69,7 +70,7 @@ lumen explain --diff --query "how will this change affect performance?"
 lumen explain HEAD~2 --query "how can this be improved?"
 ```
 
-AI Provider can be configured by using CLI arguments or Environment variables.
+AI Provider can be configured by using CLI arguments or Environment variables (see also: [Advanced Configuration](#advanced-configuration)).
 ```sh
 -p, --provider <PROVIDER>  [env: LUMEN_AI_PROVIDER] [default: phind] [possible values: openai, phind, groq, claude, ollama]
 -k, --api-key <API_KEY>    [env: LUMEN_API_KEY]
@@ -111,3 +112,74 @@ cargo install lumen
 1. git
 2. [fzf](https://github.com/junegunn/fzf) (optional): Required for `lumen list` command
 3. [mdcat](https://github.com/swsnr/mdcat) (optional): Required for pretty output formatting
+
+
+# Advanced Configuration
+`lumen` can be configured using a configuration file. You can specify `lumen.config.json` at the root of your git-tracked project, or use `--config "./path/to/config.json`
+
+```json
+{
+  "provider": "...",
+  "model": "...",
+  "api_key": "...",
+}
+```
+You can also specify command-specific options (currently only `draft.commit_types` is supported)
+```json
+{
+  "draft": {
+    "commit_types": {
+      "<type>": "<description>"
+    }
+  }
+}
+```
+
+An example configuration file can look like
+```json
+{
+  "provider": "openai",
+  "model": "gpt-4o",
+  "api_key": "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "draft": {
+    "commit_types": {
+      "docs": "Documentation only changes",
+      "style": "Changes that do not affect the meaning of the code",
+      "refactor": "A code change that neither fixes a bug nor adds a feature",
+      "perf": "A code change that improves performance",
+      "test": "Adding missing tests or correcting existing tests",
+      "build": "Changes that affect the build system or external dependencies",
+      "ci": "Changes to our CI configuration files and scripts",
+      "chore": "Other changes that don't modify src or test files",
+      "revert": "Reverts a previous commit",
+      "feat": "A new feature",
+      "fix": "A bug fix"
+    }
+  }
+}
+```
+`lumen` uses the `commit_types` specified in the example above as defaults if none are provided
+
+### Precedence Order
+Since there are multiple ways of configuring options for `lumen`, there is a defined precedence order
+```
+CLI Flags > Configuration File > Environment Variables > Default options
+```
+This also allows for mixing different methods.
+For example, if you want to use `Ollama` for a specific project, and `OpenAI` for all others, you can do the following:
+```sh
+# .zshrc/.bashrc
+export LUMEN_AI_PROVIDER="openai"
+export LUMEN_API_KEY="sk-xxxxxxxxxxxxxxxxxxxxxxxx"
+```
+The above will apply globally. You can override this for a specific project by either specifying a configuration file or using CLI flags.
+```json
+{
+  "provider": "ollama",
+  "model": "llama3.2"
+}
+```
+OR
+```sh
+lumen -p "ollama" -m "llama3.2" draft
+```
