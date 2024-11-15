@@ -94,14 +94,14 @@ impl AIPrompt {
         let user_prompt = format!(
                 "Generate a concise git commit message written in present tense for the following code diff with the given specifications below:\n\
                 \nThe output response must be in format:\n<type>(<optional scope>): <commit message>\
+                \nChoose a type from the type-to-description JSON below that best describes the git diff:\n{}\
                 \nFocus on being accurate and concise.\
                 \n{}\
                 \nCommit message must be a maximum of 72 characters.\
-                \nChoose a type from the type-to-description JSON below that best describes the git diff:\n{}\
                 \nExclude anything unnecessary such as translation. Your entire response will be passed directly into git commit.\
                 \n\nCode diff:\n```diff\n{}\n```",
-                context,
                 command.draft_config.commit_types,
+                context,
                 diff.diff
             );
 

@@ -1,9 +1,10 @@
 use crate::config::cli::ProviderType;
 use crate::error::LumenError;
 use serde::{Deserialize, Deserializer};
+use serde_json::from_reader;
 use std::collections::HashMap;
-use std::env;
-use std::fs;
+use std::fs::File;
+use std::io::BufReader;
 
 use crate::Cli;
 
@@ -13,22 +14,16 @@ pub struct LumenConfig {
         default = "default_ai_provider",
         deserialize_with = "deserialize_ai_provider"
     )]
-    pub ai_provider: ProviderType,
+    pub provider: ProviderType,
 
     #[serde(default = "default_model")]
-    pub model: String,
+    pub model: Option<String>,
 
     #[serde(default = "default_api_key")]
-    pub api_key: String,
+    pub api_key: Option<String>,
 
     #[serde(default = "default_draft_config")]
     pub draft: DraftConfig,
-
-    #[serde(default)]
-    pub explain: Option<ExplainConfig>,
-
-    #[serde(default)]
-    pub list: Option<ListConfig>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -51,7 +46,7 @@ pub struct ListConfig {
 }
 
 fn default_ai_provider() -> ProviderType {
-    env::var("LUMEN_AI_PROVIDER")
+    std::env::var("LUMEN_AI_PROVIDER")
         .unwrap_or_else(|_| "phind".to_string())
         .parse()
         .unwrap_or(ProviderType::Phind)
@@ -63,14 +58,6 @@ where
 {
     let s = String::deserialize(deserializer)?;
     s.parse().map_err(serde::de::Error::custom)
-}
-
-fn default_model() -> String {
-    env::var("LUMEN_AI_MODEL").unwrap_or_else(|_| "".to_string())
-}
-
-fn default_api_key() -> String {
-    env::var("LUMEN_API_KEY").unwrap_or_else(|_| "".to_string())
 }
 
 fn default_commit_types() -> String {
@@ -90,6 +77,14 @@ fn default_commit_types() -> String {
     .to_string()
 }
 
+fn default_model() -> Option<String> {
+    std::env::var("LUMEN_AI_MODEL").ok()
+}
+
+fn default_api_key() -> Option<String> {
+    std::env::var("LUMEN_API_KEY").ok()
+}
+
 fn deserialize_commit_types<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
     D: Deserializer<'de>,
@@ -105,56 +100,52 @@ fn default_draft_config() -> DraftConfig {
 }
 
 impl LumenConfig {
-    pub fn Build(cli: &Cli) -> Result<Self, LumenError> {
+    pub fn build(cli: &Cli) -> Result<Self, LumenError> {
         let config_path = "./lumen.config.json";
-        let config = match LumenConfig::from_file(config_path) {
-            Ok(config) => config,
-            Err(e) => return Err(e),
+        let config = LumenConfig::from_file(config_path)?;
+
+        let provider = if cli.provider.is_some() {
+            cli.provider.unwrap()
+        } else {
+            config.provider
         };
 
-        let ai_provider: ProviderType = cli
-            .provider
-            .or_else(|| Some(config.ai_provider))
-            .unwrap_or(default_ai_provider());
-
-        let api_key: String = cli.api_key.clone().unwrap_or(config.api_key);
-        let model: String = cli.model.clone().unwrap_or(config.model);
+        let api_key = cli.api_key.clone().or(config.api_key);
+        let model = cli.model.clone().or(config.model);
 
         Ok(LumenConfig {
-            ai_provider,
+            provider,
             model,
             api_key,
             draft: config.draft,
-            explain: None,
-            list: None,
         })
     }
 
     pub fn from_file(file_path: &str) -> Result<Self, LumenError> {
-        let content = match fs::read_to_string(file_path) {
-            Ok(content) => content,
-            // FILE DOSENT EXIST
+        let file = match File::open(file_path) {
+            Ok(file) => file,
             Err(_) => return Ok(LumenConfig::default()),
         };
 
-        match serde_json::from_str::<LumenConfig>(&content) {
-            Ok(config) => Ok(config),
-            Err(e) => {
-                Err(LumenError::InvalidConfiguration(e.to_string()))
-            }
-        }
+        let reader = BufReader::new(file);
+
+        // Deserialize JSON data into the LumenConfig struct
+        let config: LumenConfig = match from_reader(reader) {
+            Ok(config) => config,
+            Err(e) => return Err(LumenError::InvalidConfiguration(e.to_string())),
+        };
+
+        Ok(config)
     }
 }
 
 impl Default for LumenConfig {
     fn default() -> Self {
         LumenConfig {
-            ai_provider: default_ai_provider(),
+            provider: default_ai_provider(),
             model: default_model(),
             api_key: default_api_key(),
-            draft: default_draft_config(), 
-            explain: None,
-            list: None,
+            draft: default_draft_config(),
         }
     }
 }
