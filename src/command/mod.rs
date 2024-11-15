@@ -4,9 +4,10 @@ use explain::ExplainCommand;
 use list::ListCommand;
 use std::process::Stdio;
 
+use crate::config::configuration::DraftConfig;
 use crate::error::LumenError;
 use crate::git_entity::git_diff::GitDiff;
-use crate::git_entity::{GitEntity};
+use crate::git_entity::GitEntity;
 use crate::provider::LumenProvider;
 
 pub mod draft;
@@ -20,7 +21,7 @@ pub enum CommandType {
         query: Option<String>,
     },
     List,
-    Draft(Option<String>),
+    Draft(Option<String>, DraftConfig),
 }
 
 #[async_trait]
@@ -35,9 +36,10 @@ impl CommandType {
                 Box::new(ExplainCommand { git_entity, query })
             }
             CommandType::List => Box::new(ListCommand),
-            CommandType::Draft(context) => Box::new(DraftCommand {
+            CommandType::Draft(context, draft_config) => Box::new(DraftCommand {
                 context,
                 git_entity: GitEntity::Diff(GitDiff::new(true)?),
+                draft_config
             }),
         })
     }

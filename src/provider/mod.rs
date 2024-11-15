@@ -5,12 +5,12 @@ use ollama::{OllamaConfig, OllamaProvider};
 use openai::{OpenAIConfig, OpenAIProvider};
 use phind::{PhindConfig, PhindProvider};
 use thiserror::Error;
+use crate::config::cli::ProviderType;
 
 use crate::{
     ai_prompt::{AIPrompt, AIPromptError},
     command::{draft::DraftCommand, explain::ExplainCommand},
     error::LumenError,
-    ProviderType,
 };
 
 pub mod claude;
