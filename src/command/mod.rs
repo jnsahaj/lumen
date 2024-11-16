@@ -6,7 +6,7 @@ use std::process::Stdio;
 
 use crate::config::configuration::DraftConfig;
 use crate::error::LumenError;
-use crate::git_entity::git_diff::GitDiff;
+use crate::git_entity::diff::Diff;
 use crate::git_entity::GitEntity;
 use crate::provider::LumenProvider;
 
@@ -37,7 +37,7 @@ impl CommandType {
             }
             CommandType::List => Box::new(ListCommand),
             CommandType::Draft(context, draft_config) => Box::new(DraftCommand {
-                git_entity: GitEntity::Diff(GitDiff::new(true)?),
+                git_entity: GitEntity::Diff(Diff::new(true)?),
                 draft_config,
                 context,
             }),

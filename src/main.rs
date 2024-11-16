@@ -2,7 +2,7 @@ use clap::Parser;
 use config::cli::{Cli, Commands};
 use config::LumenConfig;
 use error::LumenError;
-use git_entity::{commit::Commit, git_diff::GitDiff, GitEntity};
+use git_entity::{commit::Commit, diff::Diff, GitEntity};
 use std::process;
 
 mod ai_prompt;
@@ -41,7 +41,7 @@ async fn run() -> Result<(), LumenError> {
             query,
         } => {
             let git_entity = if diff {
-                GitEntity::Diff(GitDiff::new(staged)?)
+                GitEntity::Diff(Diff::new(staged)?)
             } else if let Some(sha) = sha {
                 GitEntity::Commit(Commit::new(sha)?)
             } else {

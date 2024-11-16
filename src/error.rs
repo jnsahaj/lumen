@@ -1,5 +1,5 @@
 use crate::{
-    git_entity::{commit::CommitError, git_diff::GitDiffError},
+    git_entity::{commit::CommitError, diff::DiffError},
     provider::ProviderError,
 };
 use std::io;
@@ -11,7 +11,7 @@ pub enum LumenError {
     GitCommitError(#[from] CommitError),
 
     #[error("{0}")]
-    GitDiffError(#[from] GitDiffError),
+    GitDiffError(#[from] DiffError),
 
     #[error("Missing API key for {0}, use --api-key or LUMEN_API_KEY env variable, or add \"api_key\": \"...\" to configuration file")]
     MissingApiKey(String),
