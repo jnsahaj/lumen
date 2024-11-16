@@ -90,7 +90,7 @@ AI Provider can be configured by using CLI arguments or Environment variables (s
 | [OpenAI](https://platform.openai.com/docs/guides/text-generation/chat-completions-api) `openai`                    | Yes             | `gpt-4o`, `gpt-4o-mini`, `gpt-4`, `gpt-3.5-turbo` (default: `gpt-4o-mini`)                  |
 | [Claude](https://claude.ai/new) `claude`                                                                     | Yes             | [see list](https://docs.anthropic.com/en/docs/about-claude/models#model-names) (default: `claude-3-5-sonnet-20241022`) |                                                                                |
 | [Ollama](https://github.com/ollama/ollama) `ollama`                                                                     | No (local)             | [see list](https://github.com/ollama/ollama/blob/main/docs/api.md#model-names) (required) |                                                                                |
-| [OpenRouter](https://openrouter.ai/) `openrouter`                                                                     | Yes             | `anthropic/claude-3.5-sonnet` (default), `anthropic/claude-3-5-haiku`, `openai/gpt-4o-mini` |                                                                                |
+| [OpenRouter](https://openrouter.ai/) `openrouter`                                                                     | Yes             | [see list](https://openrouter.ai/models?q=anthropic) (Anthropic models) (default: `anthropic/claude-3.5-sonnet`), [see list](https://openrouter.ai/models?q=openai) (OpenAI models) `anthropic/claude-3-5-haiku`, `openai/gpt-4o-mini` |                                                                                |
 
 
 # Installation 🔅
