@@ -1,13 +1,13 @@
-use git_commit::GitCommit;
+use commit::Commit;
 use git_diff::GitDiff;
 use indoc::formatdoc;
 
-pub mod git_commit;
+pub mod commit;
 pub mod git_diff;
 
 #[derive(Debug, Clone)]
 pub enum GitEntity {
-    Commit(GitCommit),
+    Commit(Commit),
     Diff(GitDiff),
 }
 
@@ -34,8 +34,8 @@ impl GitEntity {
     }
 }
 
-impl AsRef<GitCommit> for GitEntity {
-    fn as_ref(&self) -> &GitCommit {
+impl AsRef<Commit> for GitEntity {
+    fn as_ref(&self) -> &Commit {
         match self {
             GitEntity::Commit(commit) => commit,
             _ => panic!("Not a Commit"),

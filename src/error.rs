@@ -1,5 +1,5 @@
 use crate::{
-    git_entity::{git_commit::GitCommitError, git_diff::GitDiffError},
+    git_entity::{commit::CommitError, git_diff::GitDiffError},
     provider::ProviderError,
 };
 use std::io;
@@ -8,7 +8,7 @@ use thiserror::Error;
 #[derive(Error, Debug)]
 pub enum LumenError {
     #[error("{0}")]
-    GitCommitError(#[from] GitCommitError),
+    GitCommitError(#[from] CommitError),
 
     #[error("{0}")]
     GitDiffError(#[from] GitDiffError),

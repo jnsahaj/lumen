@@ -2,7 +2,7 @@ use clap::Parser;
 use config::cli::{Cli, Commands};
 use config::LumenConfig;
 use error::LumenError;
-use git_entity::{git_commit::GitCommit, git_diff::GitDiff, GitEntity};
+use git_entity::{commit::Commit, git_diff::GitDiff, GitEntity};
 use std::process;
 
 mod ai_prompt;
@@ -43,7 +43,7 @@ async fn run() -> Result<(), LumenError> {
             let git_entity = if diff {
                 GitEntity::Diff(GitDiff::new(staged)?)
             } else if let Some(sha) = sha {
-                GitEntity::Commit(GitCommit::new(sha)?)
+                GitEntity::Commit(Commit::new(sha)?)
             } else {
                 return Err(LumenError::InvalidArguments(
                     "`explain` expects SHA-1 or --diff to be present".into(),

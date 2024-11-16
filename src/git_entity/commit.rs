@@ -3,7 +3,7 @@ use std::process::Command;
 use thiserror::Error;
 
 #[derive(Error, Debug, Clone)]
-pub enum GitCommitError {
+pub enum CommitError {
     #[error("Commit '{0}' not found")]
     InvalidCommit(String),
 
@@ -12,7 +12,7 @@ pub enum GitCommitError {
 }
 
 #[derive(Clone, Debug)]
-pub struct GitCommit {
+pub struct Commit {
     pub full_hash: String,
     pub message: String,
     pub diff: String,
@@ -21,11 +21,11 @@ pub struct GitCommit {
     pub date: String,
 }
 
-impl GitCommit {
+impl Commit {
     pub fn new(sha: String) -> Result<Self, LumenError> {
         Self::is_valid_commit(&sha)?;
 
-        Ok(GitCommit {
+        Ok(Commit {
             full_hash: Self::get_full_hash(&sha)?,
             message: Self::get_message(&sha)?,
             diff: Self::get_diff(&sha)?,
@@ -43,7 +43,7 @@ impl GitCommit {
             return Ok(());
         }
 
-        Err(GitCommitError::InvalidCommit(sha.to_string()).into())
+        Err(CommitError::InvalidCommit(sha.to_string()).into())
     }
 
     fn get_full_hash(sha: &str) -> Result<String, LumenError> {
@@ -68,7 +68,7 @@ impl GitCommit {
 
         let diff = String::from_utf8(output.stdout)?;
         if diff.is_empty() {
-            return Err(GitCommitError::EmptyDiff(sha.to_string()).into());
+            return Err(CommitError::EmptyDiff(sha.to_string()).into());
         }
 
         Ok(diff)
