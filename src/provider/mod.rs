@@ -3,6 +3,7 @@ use claude::{ClaudeConfig, ClaudeProvider};
 use groq::{GroqConfig, GroqProvider};
 use ollama::{OllamaConfig, OllamaProvider};
 use openai::{OpenAIConfig, OpenAIProvider};
+use openrouter::{OpenRouterConfig, OpenRouterProvider};
 use phind::{PhindConfig, PhindProvider};
 use thiserror::Error;
 use crate::config::cli::ProviderType;
@@ -17,6 +18,7 @@ pub mod claude;
 pub mod groq;
 pub mod ollama;
 pub mod openai;
+pub mod openrouter;
 pub mod phind;
 
 #[async_trait]
@@ -48,6 +50,7 @@ pub enum LumenProvider {
     Groq(Box<GroqProvider>),
     Claude(Box<ClaudeProvider>),
     Ollama(Box<OllamaProvider>),
+    OpenRouter(Box<OpenRouterProvider>),
 }
 
 impl LumenProvider {
@@ -86,6 +89,13 @@ impl LumenProvider {
                 let provider = LumenProvider::Ollama(Box::new(OllamaProvider::new(client, config)));
                 Ok(provider)
             }
+            ProviderType::Openrouter => {
+                let api_key = api_key.ok_or(LumenError::MissingApiKey("OpenRouter".to_string()))?;
+                let config = OpenRouterConfig::new(api_key, model);
+                let provider =
+                    LumenProvider::OpenRouter(Box::new(OpenRouterProvider::new(client, config)));
+                Ok(provider)
+            }
         }
     }
 
@@ -97,8 +107,10 @@ impl LumenProvider {
             LumenProvider::Groq(provider) => provider.complete(prompt).await,
             LumenProvider::Claude(provider) => provider.complete(prompt).await,
             LumenProvider::Ollama(provider) => provider.complete(prompt).await,
+            LumenProvider::OpenRouter(provider) => provider.complete(prompt).await,
         }
     }
+
     pub async fn draft(&self, command: &DraftCommand) -> Result<String, ProviderError> {
         let prompt = AIPrompt::build_draft_prompt(command)?;
         match self {
@@ -107,6 +119,7 @@ impl LumenProvider {
             LumenProvider::Groq(provider) => provider.complete(prompt).await,
             LumenProvider::Claude(provider) => provider.complete(prompt).await,
             LumenProvider::Ollama(provider) => provider.complete(prompt).await,
+            LumenProvider::OpenRouter(provider) => provider.complete(prompt).await,
         }
     }
 }
