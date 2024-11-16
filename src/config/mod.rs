@@ -1,4 +1,4 @@
-pub mod configuration;
 pub mod cli;
+pub mod configuration;
 
 pub use configuration::LumenConfig;
