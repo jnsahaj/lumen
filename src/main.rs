@@ -41,7 +41,7 @@ async fn run() -> Result<(), LumenError> {
             query,
         } => {
             let git_entity = if diff {
-                GitEntity::Diff(Diff::new(staged)?)
+                GitEntity::Diff(Diff::from_working_tree(staged)?)
             } else if let Some(sha) = sha {
                 GitEntity::Commit(Commit::new(sha)?)
             } else {

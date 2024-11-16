@@ -37,7 +37,7 @@ impl CommandType {
             }
             CommandType::List => Box::new(ListCommand),
             CommandType::Draft(context, draft_config) => Box::new(DraftCommand {
-                git_entity: GitEntity::Diff(Diff::new(true)?),
+                git_entity: GitEntity::Diff(Diff::from_working_tree(true)?),
                 draft_config,
                 context,
             }),

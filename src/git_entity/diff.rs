@@ -14,14 +14,7 @@ pub struct Diff {
 }
 
 impl Diff {
-    pub fn new(staged: bool) -> Result<Self, LumenError> {
-        Ok(Diff {
-            staged,
-            diff: Self::get_diff(staged)?,
-        })
-    }
-
-    fn get_diff(staged: bool) -> Result<String, LumenError> {
+    pub fn from_working_tree(staged: bool) -> Result<Self, LumenError> {
         let args = if staged {
             vec!["diff", "--staged"]
         } else {
@@ -35,6 +28,6 @@ impl Diff {
             return Err(DiffError::EmptyDiff { staged }.into());
         }
 
-        Ok(diff)
+        Ok(Diff { staged, diff })
     }
 }
