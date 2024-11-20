@@ -167,10 +167,11 @@ Since there are multiple ways of configuring options for `lumen`, there is a def
 CLI Flags > Configuration File > Environment Variables > Default options
 ```
 This also allows for mixing different methods.
-For example, if you want to use `Ollama` for a specific project, and `OpenAI` for all others, you can do the following:
+For example, if you want to use `Ollama` for a specific project, and `OpenAI` with `gpt-4o` for all others, you can do the following:
 ```sh
 # .zshrc/.bashrc
 export LUMEN_AI_PROVIDER="openai"
+export LUMEN_AI_MODEL="gpt-4o"
 export LUMEN_API_KEY="sk-xxxxxxxxxxxxxxxxxxxxxxxx"
 ```
 The above will apply globally. You can override this for a specific project by either specifying a configuration file or using CLI flags.
