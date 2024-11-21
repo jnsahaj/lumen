@@ -1,6 +1,8 @@
 use crate::error::LumenError;
 use thiserror::Error;
 
+use super::commit::Commit;
+
 #[derive(Error, Debug)]
 pub enum DiffError {
     #[error("diff{} is empty", if *staged { " (staged)" } else { "" })]
@@ -39,11 +41,15 @@ impl Diff {
     }
 
     pub fn from_commits_range(from: &str, to: &str) -> Result<Self, LumenError> {
+        let _ = Commit::is_valid_commit(from)?;
+        let _ = Commit::is_valid_commit(to)?;
+
         let output = std::process::Command::new("git")
             .args(["diff", from, to])
             .output()?;
 
         let diff = String::from_utf8(output.stdout)?;
+
         if diff.is_empty() {
             return Err(DiffError::EmptyDiff { staged: false }.into());
         }
