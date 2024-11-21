@@ -71,12 +71,20 @@ impl AIPrompt {
                     2. Direct impact
                     "
                 },
-                GitEntity::Diff(_) => formatdoc! {"
+                GitEntity::Diff(Diff::WorkingTree { .. }) => formatdoc! {"
                     {base_content}
                     
                     Provide:
                     1. Key changes
                     2. Notable concerns (if any)
+                    "
+                },
+                GitEntity::Diff(Diff::CommitsRange { .. }) => formatdoc! {"
+                    {base_content}
+                    
+                    Provide:
+                    1. Core changes made
+                    2. Direct impact
                     "
                 },
             },
