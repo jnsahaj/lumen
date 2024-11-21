@@ -26,10 +26,14 @@ impl GitEntity {
                 date = commit.date,
                 message = commit.message,
             },
-            GitEntity::Diff(diff) => formatdoc! {"
-                # Entity: Diff{staged}",
-                staged = if diff.staged { " (staged)" } else { "" }
+            GitEntity::Diff(Diff::WorkingTree { staged, .. }) => formatdoc! {"
+                # Entity: Working Tree Diff{staged}",
+                staged = if *staged { " (staged)" } else { "" }
             },
+            GitEntity::Diff(Diff::CommitsRange { from, to, .. }) => formatdoc! {"
+                # Entity: Range
+                `{from}` -> `{to}`
+            "},
         }
     }
 }

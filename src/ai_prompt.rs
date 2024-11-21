@@ -1,6 +1,6 @@
 use crate::{
     command::{draft::DraftCommand, explain::ExplainCommand},
-    git_entity::GitEntity,
+    git_entity::{diff::Diff, GitEntity},
 };
 use indoc::{formatdoc, indoc};
 use thiserror::Error;
@@ -39,15 +39,14 @@ impl AIPrompt {
                     diff = commit.diff
                 }
             }
-            GitEntity::Diff(diff) => {
+            GitEntity::Diff(Diff::WorkingTree { diff, .. } | Diff::CommitsRange { diff, .. }) => {
                 formatdoc! {"
                     Context - Changes:
 
                     ```diff
                     {diff}
                     ```
-                    ",
-                    diff = diff.diff
+                    "
                 }
             }
         };
@@ -90,8 +89,10 @@ impl AIPrompt {
     }
 
     pub fn build_draft_prompt(command: &DraftCommand) -> Result<Self, AIPromptError> {
-        let GitEntity::Diff(diff) = &command.git_entity else {
-            return Err(AIPromptError("`draft` is only supported for diffs".into()));
+        let GitEntity::Diff(Diff::WorkingTree { diff, .. }) = &command.git_entity else {
+            return Err(AIPromptError(
+                "`draft` is only supported for working tree diffs".into(),
+            ));
         };
 
         let system_prompt = String::from(indoc! {"
@@ -131,7 +132,6 @@ impl AIPrompt {
             ```
             ",
             commit_types = command.draft_config.commit_types,
-            diff = diff.diff
         });
 
         Ok(AIPrompt {

@@ -8,9 +8,16 @@ pub enum DiffError {
 }
 
 #[derive(Clone, Debug)]
-pub struct Diff {
-    pub staged: bool,
-    pub diff: String,
+pub enum Diff {
+    WorkingTree {
+        staged: bool,
+        diff: String,
+    },
+    CommitsRange {
+        from: String,
+        to: String,
+        diff: String,
+    },
 }
 
 impl Diff {
@@ -28,7 +35,7 @@ impl Diff {
             return Err(DiffError::EmptyDiff { staged }.into());
         }
 
-        Ok(Diff { staged, diff })
+        Ok(Diff::WorkingTree { staged, diff })
     }
 
     pub fn from_commits_range(from: &str, to: &str) -> Result<Self, LumenError> {
@@ -41,8 +48,9 @@ impl Diff {
             return Err(DiffError::EmptyDiff { staged: false }.into());
         }
 
-        Ok(Diff {
-            staged: false,
+        Ok(Diff::CommitsRange {
+            from: from.to_string(),
+            to: to.to_string(),
             diff,
         })
     }
