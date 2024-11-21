@@ -1,6 +1,8 @@
 use clap::{command, Parser, Subcommand, ValueEnum};
 use std::str::FromStr;
 
+use crate::commit_reference::CommitReference;
+
 #[derive(Parser)]
 #[command(name = "lumen")]
 #[command(about = "AI-powered CLI tool for git commit summaries", long_about = None)]
@@ -30,7 +32,7 @@ pub enum ProviderType {
     Groq,
     Claude,
     Ollama,
-    Openrouter
+    Openrouter,
 }
 
 impl FromStr for ProviderType {
@@ -54,8 +56,8 @@ pub enum Commands {
     /// Explain the changes in a commit, or the current diff
     Explain {
         /// The commit hash to use
-        #[arg(group = "target")]
-        sha: Option<String>,
+        #[arg(group = "target", value_parser = clap::value_parser!(CommitReference))]
+        reference: Option<CommitReference>,
 
         /// Explain current diff
         #[arg(long, group = "target")]

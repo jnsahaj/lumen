@@ -1,4 +1,5 @@
 use clap::Parser;
+use commit_reference::CommitReference;
 use config::cli::{Cli, Commands};
 use config::LumenConfig;
 use error::LumenError;
@@ -7,6 +8,7 @@ use std::process;
 
 mod ai_prompt;
 mod command;
+mod commit_reference;
 mod config;
 mod error;
 mod git_entity;
@@ -35,15 +37,17 @@ async fn run() -> Result<(), LumenError> {
 
     match cli.command {
         Commands::Explain {
-            sha,
+            reference,
             diff,
             staged,
             query,
         } => {
             let git_entity = if diff {
                 GitEntity::Diff(Diff::from_working_tree(staged)?)
-            } else if let Some(sha) = sha {
+            } else if let Some(CommitReference::Single(sha)) = reference {
                 GitEntity::Commit(Commit::new(sha)?)
+            } else if let Some(CommitReference::Range { from, to }) = reference {
+                GitEntity::Diff(Diff::from_commits_range(&from, &to)?)
             } else {
                 return Err(LumenError::InvalidArguments(
                     "`explain` expects SHA-1 or --diff to be present".into(),
