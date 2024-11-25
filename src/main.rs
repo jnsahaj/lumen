@@ -42,10 +42,16 @@ async fn run() -> Result<(), LumenError> {
             staged,
             query,
         } => {
+
             let git_entity = if diff {
                 GitEntity::Diff(Diff::from_working_tree(staged)?)
             } else if let Some(CommitReference::Single(sha)) = reference {
-                GitEntity::Commit(Commit::new(sha)?)
+                if sha == "-" {
+                    // Pass `-` as an indicator to read from stdin
+                    GitEntity::Commit(Commit::new_from_stdin()?)
+                } else {
+                    GitEntity::Commit(Commit::new(sha)?)
+                }
             } else if let Some(CommitReference::Range { from, to }) = reference {
                 GitEntity::Diff(Diff::from_commits_range(&from, &to)?)
             } else {
