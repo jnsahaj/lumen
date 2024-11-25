@@ -1,3 +1,4 @@
+use std::io::Read;
 use clap::Parser;
 use commit_reference::CommitReference;
 use config::cli::{Cli, Commands};
@@ -47,7 +48,15 @@ async fn run() -> Result<(), LumenError> {
             } else if let Some(CommitReference::Single(sha)) = reference {
                 if sha == "-" {
                     // Pass `-` as an indicator to read from stdin
-                    GitEntity::Commit(Commit::new_from_stdin()?)
+                    let mut buffer = String::new();
+                    std::io::stdin()
+                        .read_to_string(&mut buffer)
+                        .map_err(LumenError::from)?;
+
+                    eprintln!("Reading commit SHA from stdin: '{}'", buffer.trim());
+
+                    // Assuming you want to create the commit based on the SHA read from stdin
+                    GitEntity::Commit(Commit::new(buffer.trim().to_string())?)
                 } else {
                     GitEntity::Commit(Commit::new(sha)?)
                 }
