@@ -1,5 +1,4 @@
 use crate::error::LumenError;
-use std::io::Read;
 use std::process::Command;
 use thiserror::Error;
 
@@ -34,18 +33,6 @@ impl Commit {
             author_email: Self::get_author_email(&sha)?,
             date: Self::get_date(&sha)?,
         })
-    }
-
-    pub fn new_from_stdin() -> Result<Self, LumenError> {
-        let mut buffer = String::new();
-        std::io::stdin()
-            .read_to_string(&mut buffer)
-            .map_err(LumenError::from)?;
-
-        eprintln!("Reading commit SHA from stdin: '{}'", buffer.trim());
-
-        // Assuming you want to create the commit based on the SHA read from stdin
-        Commit::new(buffer.trim().to_string())
     }
 
     pub fn is_valid_commit(sha: &str) -> Result<(), LumenError> {
