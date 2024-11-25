@@ -1,3 +1,4 @@
+use crate::config::cli::ProviderType;
 use async_trait::async_trait;
 use claude::{ClaudeConfig, ClaudeProvider};
 use groq::{GroqConfig, GroqProvider};
@@ -6,7 +7,6 @@ use openai::{OpenAIConfig, OpenAIProvider};
 use openrouter::{OpenRouterConfig, OpenRouterProvider};
 use phind::{PhindConfig, PhindProvider};
 use thiserror::Error;
-use crate::config::cli::ProviderType;
 
 use crate::{
     ai_prompt::{AIPrompt, AIPromptError},

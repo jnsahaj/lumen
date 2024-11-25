@@ -42,7 +42,6 @@ async fn run() -> Result<(), LumenError> {
             staged,
             query,
         } => {
-
             let git_entity = if diff {
                 GitEntity::Diff(Diff::from_working_tree(staged)?)
             } else if let Some(CommitReference::Single(sha)) = reference {

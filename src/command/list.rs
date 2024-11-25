@@ -17,8 +17,8 @@ impl Command for ListCommand {
         let git_entity = GitEntity::Commit(Commit::new(sha)?);
 
         // "new" to create ExplainCommand
-        ExplainCommand::new(git_entity,None)?
-        .execute(provider)
-        .await
+        ExplainCommand::new(git_entity, None)?
+            .execute(provider)
+            .await
     }
 }

@@ -1,5 +1,5 @@
-use std::io::Read;
 use crate::error::LumenError;
+use std::io::Read;
 use std::process::Command;
 use thiserror::Error;
 

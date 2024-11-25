@@ -2,10 +2,10 @@ use async_trait::async_trait;
 use spinoff::{spinners, Color, Spinner};
 use std::io::Read;
 
-use crate::{error::LumenError, git_entity::GitEntity, provider::LumenProvider};
+use super::{Command, LumenCommand};
 use crate::git_entity::commit::Commit;
 use crate::git_entity::diff::Diff;
-use super::{Command, LumenCommand};
+use crate::{error::LumenError, git_entity::GitEntity, provider::LumenProvider};
 
 pub struct ExplainCommand {
     pub git_entity: GitEntity,
@@ -36,7 +36,6 @@ impl Command for ExplainCommand {
 
 impl ExplainCommand {
     pub fn new(git_entity: GitEntity, query: Option<String>) -> Result<Self, LumenError> {
-
         let git_entity = match git_entity {
             GitEntity::Diff(Diff::WorkingTree { staged, diff }) if diff == "-" => {
                 // Handle Diff with "-" by reading from stdin
@@ -67,9 +66,6 @@ impl ExplainCommand {
             _ => git_entity,
         };
 
-        Ok(ExplainCommand {
-            git_entity,
-            query,
-        })
+        Ok(ExplainCommand { git_entity, query })
     }
 }
