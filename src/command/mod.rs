@@ -33,9 +33,8 @@ impl CommandType {
     pub fn create_command(self) -> Result<Box<dyn Command>, LumenError> {
         Ok(match self {
             CommandType::Explain { git_entity, query } => {
-                Box::new(ExplainCommand::new(git_entity, query)?)
+                Box::new(ExplainCommand { git_entity, query })
             }
-
             CommandType::List => Box::new(ListCommand),
             CommandType::Draft(context, draft_config) => Box::new(DraftCommand {
                 git_entity: GitEntity::Diff(Diff::from_working_tree(true)?),
