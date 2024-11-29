@@ -1,10 +1,10 @@
-use std::io::Read;
 use clap::Parser;
 use commit_reference::CommitReference;
 use config::cli::{Cli, Commands};
 use config::LumenConfig;
 use error::LumenError;
 use git_entity::{commit::Commit, diff::Diff, GitEntity};
+use std::io::Read;
 use std::process;
 
 mod ai_prompt;
@@ -45,21 +45,13 @@ async fn run() -> Result<(), LumenError> {
         } => {
             let git_entity = if diff {
                 GitEntity::Diff(Diff::from_working_tree(staged)?)
-            } else if let Some(CommitReference::Single(sha)) = reference {
-                if sha == "-" {
-                    // Pass `-` as an indicator to read from stdin
-                    let mut buffer = String::new();
-                    std::io::stdin()
-                        .read_to_string(&mut buffer)
-                        .map_err(LumenError::from)?;
-
-                    eprintln!("Reading commit SHA from stdin: '{}'", buffer.trim());
-
-                    // Assuming you want to create the commit based on the SHA read from stdin
-                    GitEntity::Commit(Commit::new(buffer.trim().to_string())?)
+            } else if let Some(CommitReference::Single(input)) = reference {
+                let sha = if input == "-" {
+                    read_from_stdin()?
                 } else {
-                    GitEntity::Commit(Commit::new(sha)?)
-                }
+                    input
+                };
+                GitEntity::Commit(Commit::new(sha)?)
             } else if let Some(CommitReference::Range { from, to }) = reference {
                 GitEntity::Diff(Diff::from_commits_range(&from, &to)?)
             } else {
@@ -81,4 +73,12 @@ async fn run() -> Result<(), LumenError> {
     }
 
     Ok(())
+}
+
+fn read_from_stdin() -> Result<String, LumenError> {
+    let mut buffer = String::new();
+    std::io::stdin().read_to_string(&mut buffer)?;
+
+    eprintln!("Reading commit SHA from stdin: '{}'", buffer.trim());
+    Ok(buffer)
 }
