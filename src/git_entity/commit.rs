@@ -121,8 +121,4 @@ impl Commit {
         date.pop(); // Remove trailing newline
         Ok(date)
     }
-
-    pub fn to_string(&self) -> String {
-        self.full_hash.clone()
-    }
 }

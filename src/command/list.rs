@@ -15,10 +15,11 @@ impl Command for ListCommand {
     async fn execute(&self, provider: &LumenProvider) -> Result<(), LumenError> {
         let sha = LumenCommand::get_sha_from_fzf()?;
         let git_entity = GitEntity::Commit(Commit::new(sha)?);
-
-        // "new" to create ExplainCommand
-        ExplainCommand::new(git_entity, None)?
-            .execute(provider)
-            .await
+        ExplainCommand {
+            git_entity,
+            query: None,
+        }
+        .execute(provider)
+        .await
     }
 }
