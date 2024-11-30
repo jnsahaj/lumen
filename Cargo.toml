@@ -18,6 +18,7 @@ async-trait = "0.1.83"
 spinoff = { version = "0.8.0", features = ["dots"] }
 thiserror = "1.0"
 indoc = "2.0.5"
+semver = "1.0.23"
 
 [profile.release]
 lto = true

@@ -3,6 +3,7 @@ use draft::DraftCommand;
 use explain::ExplainCommand;
 use list::ListCommand;
 use std::process::Stdio;
+use semver::Version;
 
 use crate::config::configuration::DraftConfig;
 use crate::error::LumenError;
@@ -59,7 +60,20 @@ impl LumenCommand {
     }
 
     fn get_sha_from_fzf() -> Result<String, LumenError> {
-        let command = "git log --color=always --format='%C(auto)%h%d %s %C(black)%C(bold)%cr' | fzf --ansi --reverse --bind='enter:become(echo {1})' --wrap";
+        let fzf_version = Version::parse(
+            String::from_utf8(std::process::Command::new("fzf").arg("--version").stdin(Stdio::null()).stdout(Stdio::null()).output()?.stdout)
+                .unwrap()
+                .split_whitespace()
+                .next()
+                .unwrap(),
+        )
+        .unwrap();
+    
+        let command = if fzf_version >= Version::new(0, 54, 0){
+            "git log --color=always --format='%C(auto)%h%d %s %C(black)%C(bold)%cr' | fzf --ansi --reverse --bind='enter:become(echo {1})' --wrap"
+        } else {
+            "git log --color=always --format='%C(auto)%h%d %s %C(black)%C(bold)%cr' | fzf --ansi --reverse --bind='enter:become(echo {1})'"     
+        };
 
         let output = std::process::Command::new("sh")
             .arg("-c")
