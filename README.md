@@ -104,7 +104,8 @@ lumen list
 ```bash
 # Copy commit message to clipboard
 lumen draft | pbcopy                  # macOS
-lumen draft | xclip -selection c      # Linux
+lumen draft | xclip -selection c      # Linux on X11
+lumen draft | wl-copy                 # Linux on Wayland
 
 # Open in your favorite editor
 lumen draft | code -      
