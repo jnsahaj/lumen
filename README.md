@@ -87,6 +87,7 @@ lumen explain HEAD                    # Latest commit
 lumen explain abc123f                 # Specific commit
 lumen explain HEAD~3..HEAD            # Last 3 commits
 lumen explain main..feature/A         # Branch comparison
+lumen explain main...feature/A        # Branch comparison (merge base)
 
 # Ask specific questions about changes
 lumen explain --diff --query "What's the performance impact of these changes?"

@@ -40,12 +40,15 @@ impl Diff {
         Ok(Diff::WorkingTree { staged, diff })
     }
 
-    pub fn from_commits_range(from: &str, to: &str) -> Result<Self, LumenError> {
+    pub fn from_commits_range(from: &str, to: &str, triple_dot: bool) -> Result<Self, LumenError> {
         let _ = Commit::is_valid_commit(from)?;
         let _ = Commit::is_valid_commit(to)?;
 
+        let separator = if triple_dot { "..." } else { ".." };
+        let range = format!("{}{}{}", from, separator, to);
+
         let output = std::process::Command::new("git")
-            .args(["diff", from, to])
+            .args(["diff", &range])
             .output()?;
 
         let diff = String::from_utf8(output.stdout)?;
