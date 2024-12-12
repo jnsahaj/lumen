@@ -5,6 +5,7 @@ use thiserror::Error;
 pub enum CommitReference {
     Single(String),
     Range { from: String, to: String },
+    TripleDots { from: String, to: String },
 }
 
 #[derive(Debug, Error)]
@@ -21,8 +22,16 @@ impl FromStr for CommitReference {
             return Err(ReferenceParseError::Empty);
         }
 
-        // Handle the .. cases
-        if let Some((from, to)) = s.split_once("..") {
+        // Handle the ... and .. cases
+        if let Some((from, to)) = s.split_once("...") {
+            let from = if from.is_empty() { "HEAD" } else { from };
+            let to = if to.is_empty() { "HEAD" } else { to };
+
+            Ok(CommitReference::TripleDots {
+                from: from.to_string(),
+                to: to.to_string(),
+            })
+        } else if let Some((from, to)) = s.split_once("..") {
             let from = if from.is_empty() { "HEAD" } else { from };
             let to = if to.is_empty() { "HEAD" } else { to };
 
