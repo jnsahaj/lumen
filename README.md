@@ -107,6 +107,9 @@ lumen list
 lumen draft | pbcopy                  # macOS
 lumen draft | xclip -selection c      # Linux
 
+# View the commit message and copy it
+lumen draft | tee >(pbcopy)
+
 # Open in your favorite editor
 lumen draft | code -      
 
