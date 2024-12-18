@@ -59,7 +59,7 @@ impl LumenCommand {
     }
 
     fn get_sha_from_fzf() -> Result<String, LumenError> {
-        let command = "git log --color=always --format='%C(auto)%h%d %s %C(black)%C(bold)%cr' | fzf --ansi --reverse --bind='enter:become(echo {1})' --wrap";
+        let command = "git log --color=always --format='%C(auto)%h%d %s %C(black)%C(bold)%cr' | fzf --ansi --reverse --bind='enter:become(echo {1})'";
 
         let output = std::process::Command::new("sh")
             .arg("-c")
