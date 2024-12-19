@@ -81,7 +81,6 @@ impl Commit {
 
         let mut message = String::from_utf8(output.stdout)?;
         message.pop(); // Remove trailing newline
-        message.pop();
         Ok(message)
     }
 
