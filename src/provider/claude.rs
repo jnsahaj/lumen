@@ -35,11 +35,8 @@ impl ClaudeProvider {
         let payload = json!({
             "model": self.config.model,
             "max_tokens": 4096,
+            "system": prompt.system_prompt,
             "messages": [
-                {
-                    "role": "system",
-                    "content": prompt.system_prompt
-                },
                 {
                     "role": "user",
                     "content": prompt.user_prompt
