@@ -81,7 +81,9 @@ impl Commit {
 
         let mut message = String::from_utf8(output.stdout)?;
         message.pop(); // Remove trailing newline
-        message.pop();
+        if message.ends_with('\n') {
+            message.pop();  // Remove the second trailing newline in commits where it exists (the ones not from github GUI)
+        }        
         Ok(message)
     }
 
