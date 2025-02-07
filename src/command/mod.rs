@@ -19,9 +19,10 @@ pub enum CommandType {
     Explain {
         git_entity: GitEntity,
         query: Option<String>,
+        instruction: Option<String>,
     },
     List,
-    Draft(Option<String>, DraftConfig),
+    Draft(Option<String>, DraftConfig, Option<String>),
 }
 
 #[async_trait]
@@ -32,14 +33,21 @@ pub trait Command {
 impl CommandType {
     pub fn create_command(self) -> Result<Box<dyn Command>, LumenError> {
         Ok(match self {
-            CommandType::Explain { git_entity, query } => {
-                Box::new(ExplainCommand { git_entity, query })
-            }
+            CommandType::Explain {
+                git_entity,
+                query,
+                instruction,
+            } => Box::new(ExplainCommand {
+                git_entity,
+                query,
+                instruction,
+            }),
             CommandType::List => Box::new(ListCommand),
-            CommandType::Draft(context, draft_config) => Box::new(DraftCommand {
+            CommandType::Draft(context, draft_config, instruction) => Box::new(DraftCommand {
                 git_entity: GitEntity::Diff(Diff::from_working_tree(true)?),
                 draft_config,
                 context,
+                instruction,
             }),
         })
     }

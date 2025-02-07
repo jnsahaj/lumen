@@ -16,13 +16,17 @@ pub struct AIPrompt {
 
 impl AIPrompt {
     pub fn build_explain_prompt(command: &ExplainCommand) -> Result<Self, AIPromptError> {
-        let system_prompt = String::from(indoc! {"
+        let mut system_prompt = String::from(formatdoc! {"
             You are a helpful assistant that explains Git changes in a concise way.
             Focus only on the most significant changes and their direct impact.
             When answering specific questions, address them directly and precisely.
             Keep explanations brief but informative and don't ask for further explanations.
             Use markdown for clarity.
         "});
+
+        if let Some(instruction) = &command.instruction {
+            system_prompt.push_str(&format!("\n\nInstruction: {}", instruction));
+        }
 
         let base_content = match &command.git_entity {
             GitEntity::Commit(commit) => {
@@ -103,13 +107,17 @@ impl AIPrompt {
             ));
         };
 
-        let system_prompt = String::from(indoc! {"
+        let mut system_prompt = String::from(indoc! {"
             You are a commit message generator that follows these rules:
             1. Write in present tense
             2. Be concise and direct
             3. Output only the commit message without any explanations
             4. Follow the format: <type>(<optional scope>): <commit message>
         "});
+
+        if let Some(instruction) = &command.instruction {
+            system_prompt.push_str(&format!("\n\n Instruction: {}", instruction));
+        }
 
         let context = if let Some(context) = &command.context {
             formatdoc!(

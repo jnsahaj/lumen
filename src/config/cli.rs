@@ -70,6 +70,10 @@ pub enum Commands {
         /// Ask a question instead of summary
         #[arg(short, long)]
         query: Option<String>,
+
+        /// Instruction to use for the AI
+        #[arg(short, long)]
+        instruction: Option<String>,
     },
     /// List all commits in an interactive fuzzy-finder, and summarize the changes
     List,
@@ -78,5 +82,9 @@ pub enum Commands {
         /// Add context to communicate intent
         #[arg(short, long)]
         context: Option<String>,
+
+        /// Instruction to use for the AI
+        #[arg(short, long)]
+        instruction: Option<String>,
     },
 }

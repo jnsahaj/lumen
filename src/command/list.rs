@@ -18,6 +18,7 @@ impl Command for ListCommand {
         ExplainCommand {
             git_entity,
             query: None,
+            instruction: None,
         }
         .execute(provider)
         .await

@@ -42,6 +42,7 @@ async fn run() -> Result<(), LumenError> {
             diff,
             staged,
             query,
+            instruction,
         } => {
             let git_entity = if diff {
                 GitEntity::Diff(Diff::from_working_tree(staged)?)
@@ -54,7 +55,7 @@ async fn run() -> Result<(), LumenError> {
                 GitEntity::Commit(Commit::new(sha)?)
             } else if let Some(CommitReference::Range { from, to }) = reference {
                 GitEntity::Diff(Diff::from_commits_range(&from, &to, false)?)
-            }  else if let Some(CommitReference::TripleDots { from, to }) = reference {
+            } else if let Some(CommitReference::TripleDots { from, to }) = reference {
                 GitEntity::Diff(Diff::from_commits_range(&from, &to, true)?)
             } else {
                 return Err(LumenError::InvalidArguments(
@@ -63,13 +64,24 @@ async fn run() -> Result<(), LumenError> {
             };
 
             command
-                .execute(command::CommandType::Explain { git_entity, query })
+                .execute(command::CommandType::Explain {
+                    git_entity,
+                    query,
+                    instruction,
+                })
                 .await?;
         }
         Commands::List => command.execute(command::CommandType::List).await?,
-        Commands::Draft { context } => {
+        Commands::Draft {
+            context,
+            instruction,
+        } => {
             command
-                .execute(command::CommandType::Draft(context, config.draft))
+                .execute(command::CommandType::Draft(
+                    context,
+                    config.draft,
+                    instruction,
+                ))
                 .await?
         }
     }

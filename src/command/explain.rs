@@ -8,6 +8,7 @@ use super::{Command, LumenCommand};
 pub struct ExplainCommand {
     pub git_entity: GitEntity,
     pub query: Option<String>,
+    pub instruction: Option<String>,
 }
 
 #[async_trait]
