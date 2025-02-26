@@ -117,6 +117,25 @@ lumen draft | code -
 lumen draft | git commit -F -           
 ```
 
+If you are using [lazygit](https://github.com/jesseduffield/lazygit), you can add this to the [user config](https://github.com/jesseduffield/lazygit/blob/master/docs/Config.md)
+```
+customCommands:
+  - key: '<c-l>'
+    context: 'files'
+    command: 'lumen draft | tee >(pbcopy)'
+    loadingText: 'Generating message...'
+    showOutput: true
+  - key: '<c-k>'
+    context: 'files'
+    command: 'lumen draft -c {{.Form.Context | quote}} | tee >(pbcopy)'
+    loadingText: 'Generating message...'
+    showOutput: true
+    prompts:
+          - type: 'input'
+            title: 'Context'
+            key: 'Context'
+```
+
 ## AI Providers 🔅
 
 Configure your preferred AI provider:
