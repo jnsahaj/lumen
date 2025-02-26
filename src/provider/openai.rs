@@ -91,4 +91,8 @@ impl AIProvider for OpenAIProvider {
     async fn complete(&self, prompt: AIPrompt) -> Result<String, ProviderError> {
         self.complete(prompt).await
     }
+
+    fn get_model(&self) -> String {
+        self.config.model.clone()
+    }
 }

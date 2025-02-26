@@ -24,6 +24,7 @@ pub mod phind;
 #[async_trait]
 pub trait AIProvider {
     async fn complete(&self, prompt: AIPrompt) -> Result<String, ProviderError>;
+    fn get_model(&self) -> String;
 }
 
 #[derive(Error, Debug)]
@@ -120,6 +121,19 @@ impl LumenProvider {
             LumenProvider::Claude(provider) => provider.complete(prompt).await,
             LumenProvider::Ollama(provider) => provider.complete(prompt).await,
             LumenProvider::OpenRouter(provider) => provider.complete(prompt).await,
+        }
+    }
+}
+
+impl std::fmt::Display for LumenProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LumenProvider::OpenAI(p) => write!(f, "OpenAI ({})", p.get_model()),
+            LumenProvider::Phind(p) => write!(f, "Phind ({})", p.get_model()),
+            LumenProvider::Groq(p) => write!(f, "Groq ({})", p.get_model()),
+            LumenProvider::Claude(p) => write!(f, "Claude ({})", p.get_model()),
+            LumenProvider::Ollama(p) => write!(f, "Ollama ({})", p.get_model()),
+            LumenProvider::OpenRouter(p) => write!(f, "OpenRouter ({})", p.get_model()),
         }
     }
 }

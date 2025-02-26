@@ -13,7 +13,7 @@ pub struct ExplainCommand {
 #[async_trait]
 impl Command for ExplainCommand {
     async fn execute(&self, provider: &LumenProvider) -> Result<(), LumenError> {
-        LumenCommand::print_with_mdcat(self.git_entity.format_static_details())?;
+        LumenCommand::print_with_mdcat(self.git_entity.format_static_details(provider))?;
         if let Some(query) = &self.query {
             LumenCommand::print_with_mdcat(format!("`query`: {query}"))?;
         }
