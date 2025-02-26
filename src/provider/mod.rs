@@ -146,6 +146,7 @@ impl std::fmt::Display for LumenProvider {
             LumenProvider::Claude(p) => write!(f, "Claude ({})", p.get_model()),
             LumenProvider::Ollama(p) => write!(f, "Ollama ({})", p.get_model()),
             LumenProvider::OpenRouter(p) => write!(f, "OpenRouter ({})", p.get_model()),
+            LumenProvider::DeepSeek(p) => write!(f, "DeepSeek ({})", p.get_model()),
         }
     }
 }
