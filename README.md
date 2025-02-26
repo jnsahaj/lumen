@@ -118,7 +118,7 @@ lumen draft | git commit -F -
 ```
 
 If you are using [lazygit](https://github.com/jesseduffield/lazygit), you can add this to the [user config](https://github.com/jesseduffield/lazygit/blob/master/docs/Config.md)
-```
+```yml
 customCommands:
   - key: '<c-l>'
     context: 'files'
