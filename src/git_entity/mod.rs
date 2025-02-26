@@ -2,6 +2,8 @@ use commit::Commit;
 use diff::Diff;
 use indoc::formatdoc;
 
+use crate::provider::LumenProvider;
+
 pub mod commit;
 pub mod diff;
 
@@ -12,10 +14,11 @@ pub enum GitEntity {
 }
 
 impl GitEntity {
-    pub fn format_static_details(&self) -> String {
+    pub fn format_static_details(&self, provider: &LumenProvider) -> String {
         match self {
             GitEntity::Commit(commit) => formatdoc! {"
                 # Entity: Commit
+                # Provider: {provider}
                 `commit {hash}` | {author} <{email}> | {date}
 
                 {message}
@@ -25,14 +28,17 @@ impl GitEntity {
                 email = commit.author_email,
                 date = commit.date,
                 message = commit.message,
+                provider = provider
             },
             GitEntity::Diff(Diff::WorkingTree { staged, .. }) => formatdoc! {"
-                # Entity: Working Tree Diff{staged}",
+                # Entity: Working Tree Diff{staged}
+                # Provider: {provider}",
                 staged = if *staged { " (staged)" } else { "" }
             },
             GitEntity::Diff(Diff::CommitsRange { from, to, .. }) => formatdoc! {"
                 # Entity: Range
                 `{from}` -> `{to}`
+                # Provider: {provider}
             "},
         }
     }
