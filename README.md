@@ -161,6 +161,7 @@ export LUMEN_AI_MODEL="gpt-4o"
 | [Claude](https://claude.ai/new) `claude` | Yes | [see list](https://docs.anthropic.com/en/docs/about-claude/models#model-names) (default: `claude-3-5-sonnet-20241022`) |
 | [Ollama](https://github.com/ollama/ollama) `ollama` | No (local) | [see list](https://github.com/ollama/ollama/blob/main/docs/api.md#model-names) (required) |
 | [OpenRouter](https://openrouter.ai/) `openrouter` | Yes | [see list](https://openrouter.ai/models) (default: `anthropic/claude-3.5-sonnet`) |
+| [DeepSeek](https://www.deepseek.com/) `deepseek` | Yes | `deepseek-chat`, `deepseek-reasoner` (default: `deepseek-reasoner`) |
 
 ## Advanced Configuration 🔅
 
