@@ -2,6 +2,8 @@ use crate::error::LumenError;
 use std::process::Command;
 use thiserror::Error;
 
+use super::GIT_DIFF_EXCLUSIONS;
+
 #[derive(Error, Debug, Clone)]
 pub enum CommitError {
     #[error("Commit '{0}' not found")]
@@ -64,6 +66,7 @@ impl Commit {
                 "--compact-summary",
                 sha,
             ])
+            .args(GIT_DIFF_EXCLUSIONS)
             .output()?;
 
         let diff = String::from_utf8(output.stdout)?;
@@ -82,8 +85,8 @@ impl Commit {
         let mut message = String::from_utf8(output.stdout)?;
         message.pop(); // Remove trailing newline
         if message.ends_with('\n') {
-            message.pop();  // Remove the second trailing newline in commits where it exists (the ones not from github GUI)
-        }        
+            message.pop(); // Remove the second trailing newline in commits where it exists (the ones not from github GUI)
+        }
         Ok(message)
     }
 
