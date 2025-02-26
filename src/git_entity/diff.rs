@@ -1,7 +1,7 @@
 use crate::error::LumenError;
 use thiserror::Error;
 
-use super::commit::Commit;
+use super::{commit::Commit, GIT_DIFF_EXCLUSIONS};
 
 #[derive(Error, Debug)]
 pub enum DiffError {
@@ -30,7 +30,10 @@ impl Diff {
             vec!["diff"]
         };
 
-        let output = std::process::Command::new("git").args(args).output()?;
+        let output = std::process::Command::new("git")
+            .args(args)
+            .args(GIT_DIFF_EXCLUSIONS)
+            .output()?;
 
         let diff = String::from_utf8(output.stdout)?;
         if diff.is_empty() {
@@ -49,6 +52,7 @@ impl Diff {
 
         let output = std::process::Command::new("git")
             .args(["diff", &range])
+            .args(GIT_DIFF_EXCLUSIONS)
             .output()?;
 
         let diff = String::from_utf8(output.stdout)?;
