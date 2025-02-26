@@ -1,6 +1,7 @@
 use crate::config::cli::ProviderType;
 use async_trait::async_trait;
 use claude::{ClaudeConfig, ClaudeProvider};
+use deepseek::{DeepSeekConfig, DeepSeekProvider};
 use groq::{GroqConfig, GroqProvider};
 use ollama::{OllamaConfig, OllamaProvider};
 use openai::{OpenAIConfig, OpenAIProvider};
@@ -15,6 +16,7 @@ use crate::{
 };
 
 pub mod claude;
+pub mod deepseek;
 pub mod groq;
 pub mod ollama;
 pub mod openai;
@@ -52,6 +54,7 @@ pub enum LumenProvider {
     Claude(Box<ClaudeProvider>),
     Ollama(Box<OllamaProvider>),
     OpenRouter(Box<OpenRouterProvider>),
+    DeepSeek(Box<DeepSeekProvider>),
 }
 
 impl LumenProvider {
@@ -97,6 +100,13 @@ impl LumenProvider {
                     LumenProvider::OpenRouter(Box::new(OpenRouterProvider::new(client, config)));
                 Ok(provider)
             }
+            ProviderType::Deepseek => {
+                let api_key = api_key.ok_or(LumenError::MissingApiKey("DeepSeek".to_string()))?;
+                let config = DeepSeekConfig::new(api_key, model);
+                let provider =
+                    LumenProvider::DeepSeek(Box::new(DeepSeekProvider::new(client, config)));
+                Ok(provider)
+            }
         }
     }
 
@@ -109,6 +119,7 @@ impl LumenProvider {
             LumenProvider::Claude(provider) => provider.complete(prompt).await,
             LumenProvider::Ollama(provider) => provider.complete(prompt).await,
             LumenProvider::OpenRouter(provider) => provider.complete(prompt).await,
+            LumenProvider::DeepSeek(provider) => provider.complete(prompt).await,
         }
     }
 
@@ -121,6 +132,7 @@ impl LumenProvider {
             LumenProvider::Claude(provider) => provider.complete(prompt).await,
             LumenProvider::Ollama(provider) => provider.complete(prompt).await,
             LumenProvider::OpenRouter(provider) => provider.complete(prompt).await,
+            LumenProvider::DeepSeek(provider) => provider.complete(prompt).await,
         }
     }
 }
@@ -134,6 +146,7 @@ impl std::fmt::Display for LumenProvider {
             LumenProvider::Claude(p) => write!(f, "Claude ({})", p.get_model()),
             LumenProvider::Ollama(p) => write!(f, "Ollama ({})", p.get_model()),
             LumenProvider::OpenRouter(p) => write!(f, "OpenRouter ({})", p.get_model()),
+            LumenProvider::DeepSeek(p) => write!(f, "DeepSeek ({})", p.get_model()),
         }
     }
 }
