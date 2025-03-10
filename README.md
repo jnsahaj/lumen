@@ -166,7 +166,20 @@ export LUMEN_AI_MODEL="gpt-4o"
 ## Advanced Configuration 🔅
 
 ### Configuration File
-Create a `lumen.config.json` at your project root or specify a custom path with `--config`:
+Lumen supports configuration through a JSON file. You can place the configuration file in one of the following locations:
+
+1. Project Root: Create a lumen.config.json file in your project's root directory.
+2. Custom Path: Specify a custom path using the --config CLI option.
+3. Global Configuration (Optional): Place a lumen.config.json file in your system's default configuration directory:
+    - Linux/macOS: `~/.config/lumen/lumen.config.json`
+    - Windows: `%USERPROFILE%\.config\lumen\lumen.config.json`
+
+Lumen will load configurations in the following order of priority:
+
+1. CLI arguments (highest priority)
+2. Configuration file specified by --config
+3. Project root lumen.config.json
+4. Global configuration file (lowest priority)
 
 ```json
 {

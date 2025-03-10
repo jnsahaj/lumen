@@ -1,5 +1,6 @@
 use crate::config::cli::ProviderType;
 use crate::error::LumenError;
+use dirs::home_dir;
 use indoc::indoc;
 use serde::{Deserialize, Deserializer};
 use serde_json::from_reader;
@@ -92,12 +93,25 @@ fn default_draft_config() -> DraftConfig {
     }
 }
 
+fn default_config_path() -> Option<String> {
+    home_dir().and_then(|mut path| {
+        path.push(".config/lumen/lumen.config.json");
+        path.exists()
+            .then(|| path)
+            .and_then(|p| p.to_str().map(|s| s.to_string()))
+    })
+}
+
 impl LumenConfig {
     pub fn build(cli: &Cli) -> Result<Self, LumenError> {
-        let config = cli.config.as_ref().map_or_else(
-            || Ok(LumenConfig::default()),
-            |path| LumenConfig::from_file(path),
-        )?;
+        let config = if let Some(config_path) = &cli.config {
+            LumenConfig::from_file(config_path)?
+        } else {
+            match default_config_path() {
+                Some(path) => LumenConfig::from_file(&path)?,
+                None => LumenConfig::default(),
+            }
+        };
 
         let provider = cli.provider.as_ref().cloned().unwrap_or(config.provider);
         let api_key = cli.api_key.clone().or(config.api_key);
