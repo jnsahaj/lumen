@@ -46,9 +46,7 @@ impl CommandType {
                 draft_config,
                 context,
             }),
-            CommandType::Operate { query } => {
-                Box::new(OperateCommand { query })
-            }
+            CommandType::Operate { query } => Box::new(OperateCommand { query }),
         })
     }
 }
@@ -124,5 +122,31 @@ impl LumenCommand {
             }
         }
         Ok(())
+    }
+
+    fn execute_bash_command(command: &str) -> Result<(), LumenError> {
+        let output = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(command)
+            .output()?;
+
+        if !output.status.success() {
+            let mut stderr = String::from_utf8(output.stderr)?;
+            stderr.pop();
+            return Err(LumenError::CommandError(stderr));
+        }
+        println!("{}", String::from_utf8(output.stdout)?);
+        Ok(())
+    }
+
+    // ask for (y/N) confirmation to execute the command
+    fn execute_bash_command_with_confirmation(command: &str) -> Result<(), LumenError> {
+        let mut input = String::new();
+        println!("{} (y/N)", command);
+        std::io::stdin().read_line(&mut input)?;
+        if input.trim().to_lowercase() != "y" {
+            return Err(LumenError::CommandError("Aborted".to_string()));
+        }
+        LumenCommand::execute_bash_command(command)
     }
 }

@@ -150,30 +150,19 @@ impl AIPrompt {
 
     pub fn build_operate_prompt(query: &str) -> Result<Self, AIPromptError> {
         let system_prompt = String::from(indoc! {"
-        You are a Git operations assistant that helps users execute the right Git commands.
-        When given a request:
-        1. Determine the precise Git command to accomplish the task
-        2. Provide a brief, clear explanation of what the command does
-        3. Include any warnings about potential data loss or destructive operations
-        4. Format your response using the specified XML tags
+        You're a Git assistant that provides commands with clear explanations.
+        - Include warnings ONLY for destructive commands (reset, push --force, clean, etc.)
+        - Omit warning tag completely for safe commands
     "});
-
         let user_prompt = formatdoc! {"
-        Generate the appropriate Git command for this request:
-
-        Request: {query}
-
-        Respond with:
-        <command>The exact Git command to execute</command>
-        <explanation>A brief explanation of what this command does and why it's appropriate</explanation>
-        <warning>Any warnings about potential data loss or side effects (if applicable)</warning>
-
-        Make sure the command works as expected. If the request is ambiguous, choose the most likely interpretation.
-        For time-based operations, use standard Git time formats.
+        Generate Git command for: {query}
+        
+        <command>Git command</command>
+        <explanation>Brief explanation</explanation>
+        <warning>Required for destructive commands only - omit for safe commands</warning>
         ",
             query = query
         };
-
         Ok(AIPrompt {
             system_prompt,
             user_prompt,
