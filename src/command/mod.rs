@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use draft::DraftCommand;
 use explain::ExplainCommand;
 use list::ListCommand;
+use operate::OperateCommand;
 use std::process::Stdio;
 
 use crate::config::configuration::DraftConfig;
@@ -13,6 +14,7 @@ use crate::provider::LumenProvider;
 pub mod draft;
 pub mod explain;
 pub mod list;
+pub mod operate;
 
 #[derive(Debug)]
 pub enum CommandType {
@@ -22,6 +24,9 @@ pub enum CommandType {
     },
     List,
     Draft(Option<String>, DraftConfig),
+    Operate {
+        query: String,
+    },
 }
 
 #[async_trait]
@@ -41,6 +46,9 @@ impl CommandType {
                 draft_config,
                 context,
             }),
+            CommandType::Operate { query } => {
+                Box::new(OperateCommand { query })
+            }
         })
     }
 }

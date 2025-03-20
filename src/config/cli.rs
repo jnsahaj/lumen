@@ -81,4 +81,9 @@ pub enum Commands {
         #[arg(short, long)]
         context: Option<String>,
     },
+
+    Operate {
+        #[arg()]
+        query: String,
+    },
 }
