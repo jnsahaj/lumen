@@ -73,6 +73,18 @@ lumen draft
 # Add context for more meaningful messages
 lumen draft --context "match brand guidelines"
 # Output: "feat(button.tsx): Update button color to align with brand identity guidelines"
+
+# Generate a structured commit message with bullet points
+lumen outline
+# Output:
+# feat(button.tsx): Update button color to align with brand identity guidelines
+#
+# - Update primary button color to match new brand color scheme
+# - Add hover state color transition for better user feedback
+# - Update color variables in theme configuration for consistency
+
+# Add context for more meaningful structured messages
+lumen outline --context "match brand guidelines"
 ```
 
 
@@ -127,6 +139,8 @@ lumen draft | code -
 
 # Directly commit using the generated message
 lumen draft | git commit -F -           
+# Directly commit using the generated message with bullet points
+lumen outline | git commit -F -
 ```
 
 If you are using [lazygit](https://github.com/jesseduffield/lazygit), you can add this to the [user config](https://github.com/jesseduffield/lazygit/blob/master/docs/Config.md)

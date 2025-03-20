@@ -81,7 +81,12 @@ pub enum Commands {
         #[arg(short, long)]
         context: Option<String>,
     },
-
+    /// Generate a structured commit message with bullet points for the staged changes
+    Outline {
+        /// Add context to communicate intent
+        #[arg(short, long)]
+        context: Option<String>,
+    },
     Operate {
         #[arg()]
         query: String,

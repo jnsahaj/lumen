@@ -1,4 +1,14 @@
-use crate::config::cli::ProviderType;
+use crate::{
+    ai_prompt::{AIPrompt, AIPromptError},
+    command::{
+        draft::DraftCommand, 
+        outline::OutlineCommand,
+        explain::ExplainCommand, 
+        operate::OperateCommand,
+    },
+    config::cli::ProviderType,
+    error::LumenError,
+};
 use async_trait::async_trait;
 use claude::{ClaudeConfig, ClaudeProvider};
 use deepseek::{DeepSeekConfig, DeepSeekProvider};
@@ -8,12 +18,6 @@ use openai::{OpenAIConfig, OpenAIProvider};
 use openrouter::{OpenRouterConfig, OpenRouterProvider};
 use phind::{PhindConfig, PhindProvider};
 use thiserror::Error;
-
-use crate::{
-    ai_prompt::{AIPrompt, AIPromptError},
-    command::{draft::DraftCommand, explain::ExplainCommand, operate::OperateCommand},
-    error::LumenError,
-};
 
 pub mod claude;
 pub mod deepseek;
@@ -125,6 +129,19 @@ impl LumenProvider {
 
     pub async fn draft(&self, command: &DraftCommand) -> Result<String, ProviderError> {
         let prompt = AIPrompt::build_draft_prompt(command)?;
+        match self {
+            LumenProvider::OpenAI(provider) => provider.complete(prompt).await,
+            LumenProvider::Phind(provider) => provider.complete(prompt).await,
+            LumenProvider::Groq(provider) => provider.complete(prompt).await,
+            LumenProvider::Claude(provider) => provider.complete(prompt).await,
+            LumenProvider::Ollama(provider) => provider.complete(prompt).await,
+            LumenProvider::OpenRouter(provider) => provider.complete(prompt).await,
+            LumenProvider::DeepSeek(provider) => provider.complete(prompt).await,
+        }
+    }
+
+    pub async fn outline(&self, command: &OutlineCommand) -> Result<String, ProviderError> {
+        let prompt = AIPrompt::build_outline_prompt(command)?;
         match self {
             LumenProvider::OpenAI(provider) => provider.complete(prompt).await,
             LumenProvider::Phind(provider) => provider.complete(prompt).await,

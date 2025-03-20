@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use draft::DraftCommand;
+use outline::OutlineCommand;
 use explain::ExplainCommand;
 use list::ListCommand;
 use operate::OperateCommand;
@@ -12,6 +13,7 @@ use crate::git_entity::GitEntity;
 use crate::provider::LumenProvider;
 
 pub mod draft;
+pub mod outline;
 pub mod explain;
 pub mod list;
 pub mod operate;
@@ -24,6 +26,7 @@ pub enum CommandType {
     },
     List,
     Draft(Option<String>, DraftConfig),
+    Outline(Option<String>, DraftConfig),
     Operate {
         query: String,
     },
@@ -42,6 +45,11 @@ impl CommandType {
             }
             CommandType::List => Box::new(ListCommand),
             CommandType::Draft(context, draft_config) => Box::new(DraftCommand {
+                git_entity: GitEntity::Diff(Diff::from_working_tree(true)?),
+                draft_config,
+                context,
+            }),
+            CommandType::Outline(context, draft_config) => Box::new(OutlineCommand {
                 git_entity: GitEntity::Diff(Diff::from_working_tree(true)?),
                 draft_config,
                 context,
