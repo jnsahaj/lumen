@@ -147,4 +147,25 @@ impl AIPrompt {
             user_prompt,
         })
     }
+
+    pub fn build_operate_prompt(query: &str) -> Result<Self, AIPromptError> {
+        let system_prompt = String::from(indoc! {"
+        You're a Git assistant that provides commands with clear explanations.
+        - Include warnings ONLY for destructive commands (reset, push --force, clean, etc.)
+        - Omit warning tag completely for safe commands
+    "});
+        let user_prompt = formatdoc! {"
+        Generate Git command for: {query}
+        
+        <command>Git command</command>
+        <explanation>Brief explanation</explanation>
+        <warning>Required for destructive commands only - omit for safe commands</warning>
+        ",
+            query = query
+        };
+        Ok(AIPrompt {
+            system_prompt,
+            user_prompt,
+        })
+    }
 }

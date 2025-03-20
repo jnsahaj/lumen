@@ -11,7 +11,7 @@ use thiserror::Error;
 
 use crate::{
     ai_prompt::{AIPrompt, AIPromptError},
-    command::{draft::DraftCommand, explain::ExplainCommand},
+    command::{draft::DraftCommand, explain::ExplainCommand, operate::OperateCommand},
     error::LumenError,
 };
 
@@ -125,6 +125,19 @@ impl LumenProvider {
 
     pub async fn draft(&self, command: &DraftCommand) -> Result<String, ProviderError> {
         let prompt = AIPrompt::build_draft_prompt(command)?;
+        match self {
+            LumenProvider::OpenAI(provider) => provider.complete(prompt).await,
+            LumenProvider::Phind(provider) => provider.complete(prompt).await,
+            LumenProvider::Groq(provider) => provider.complete(prompt).await,
+            LumenProvider::Claude(provider) => provider.complete(prompt).await,
+            LumenProvider::Ollama(provider) => provider.complete(prompt).await,
+            LumenProvider::OpenRouter(provider) => provider.complete(prompt).await,
+            LumenProvider::DeepSeek(provider) => provider.complete(prompt).await,
+        }
+    }
+
+    pub async fn operate(&self, command: &OperateCommand) -> Result<String, ProviderError> {
+        let prompt = AIPrompt::build_operate_prompt(command.query.as_str())?;
         match self {
             LumenProvider::OpenAI(provider) => provider.complete(prompt).await,
             LumenProvider::Phind(provider) => provider.complete(prompt).await,

@@ -72,6 +72,11 @@ async fn run() -> Result<(), LumenError> {
                 .execute(command::CommandType::Draft(context, config.draft))
                 .await?
         }
+        Commands::Operate { query } => {
+            command
+                .execute(command::CommandType::Operate { query })
+                .await?;
+        }
     }
 
     Ok(())
