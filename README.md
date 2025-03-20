@@ -16,6 +16,7 @@ A command-line tool that uses AI to streamline your git workflow - from generati
   - [Installation](#installation)
 - [Usage](#usage-)
   - [Generate Commit Messages](#generate-commit-messages)
+  - [Generate Git Commands](#generate-git-commands)
   - [Explain Changes](#explain-changes)
   - [Interactive Mode](#interactive-mode)
   - [Tips & Tricks](#tips--tricks)
@@ -72,6 +73,16 @@ lumen draft
 # Add context for more meaningful messages
 lumen draft --context "match brand guidelines"
 # Output: "feat(button.tsx): Update button color to align with brand identity guidelines"
+```
+
+
+### Generate Git Commands
+
+Ask Lumen to generate Git commands based on a natural language query:
+
+```bash
+lumen operate "squash the last 3 commits into 1 with the message 'squashed commit'"
+# Output: git reset --soft HEAD~3 && git commit -m "squashed commit" [y/N]
 ```
 
 ### Explain Changes
