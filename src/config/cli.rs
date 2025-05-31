@@ -34,6 +34,9 @@ pub struct Cli {
     #[arg(value_enum, long = "vcs")]
     pub vcs: Option<VcsOverride>,
 
+    #[arg(short = 'u', long = "base-url")]
+    pub base_url: Option<String>,
+
     #[command(subcommand)]
     pub command: Commands,
 }

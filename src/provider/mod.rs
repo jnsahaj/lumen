@@ -46,6 +46,7 @@ impl LumenProvider {
         provider_type: ProviderType,
         api_key: Option<String>,
         model: Option<String>,
+        base_url: Option<String>,
     ) -> Result<Self, LumenError> {
         let (backend, provider_name) = match provider_type {
             // Custom endpoint providers (OpenRouter, Vercel) - use ServiceTargetResolver
@@ -60,6 +61,14 @@ impl LumenProvider {
                     ProviderType::Vercel => CustomProviderConfig {
                         // Trailing slash is required for URL joining to work correctly
                         endpoint: "https://ai-gateway.vercel.sh/v1/",
+                        env_key: defaults.env_key,
+                        adapter_kind: AdapterKind::OpenAI,
+                    },
+                    ProviderType::OpenAI => CustomProviderConfig {
+                        // Trailing slash is required for URL joining to work correctly
+                        endpoint: base_url
+                            .as_deref()
+                            .unwrap_or("https://api.openai.com/v1/"),
                         env_key: defaults.env_key,
                         adapter_kind: AdapterKind::OpenAI,
                     },
@@ -100,7 +109,6 @@ impl LumenProvider {
                     },
                     defaults.display_name.to_string(),
                 )
-            }
             // Native genai providers
             _ => {
                 let defaults = ProviderInfo::for_provider(provider_type);
