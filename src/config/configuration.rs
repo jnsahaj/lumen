@@ -24,6 +24,9 @@ pub struct LumenConfig {
     #[serde(default = "default_api_key")]
     pub api_key: Option<String>,
 
+    #[serde(default = "default_base_url")]
+    pub base_url: Option<String>,
+
     #[serde(default = "default_draft_config")]
     pub draft: DraftConfig,
 }
@@ -79,6 +82,10 @@ fn default_api_key() -> Option<String> {
     std::env::var("LUMEN_API_KEY").ok()
 }
 
+fn default_base_url() -> Option<String> {
+    std::env::var("LUMEN_BASE_URL").ok()
+}
+
 fn deserialize_commit_types<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
     D: Deserializer<'de>,
@@ -116,11 +123,13 @@ impl LumenConfig {
         let provider = cli.provider.as_ref().cloned().unwrap_or(config.provider);
         let api_key = cli.api_key.clone().or(config.api_key);
         let model = cli.model.clone().or(config.model);
+        let base_url = cli.base_url.clone().or(config.base_url);
 
         Ok(LumenConfig {
             provider,
             model,
             api_key,
+            base_url,
             draft: config.draft,
         })
     }
@@ -146,6 +155,7 @@ impl Default for LumenConfig {
             model: default_model(),
             api_key: default_api_key(),
             draft: default_draft_config(),
+            base_url: default_base_url(),
         }
     }
 }

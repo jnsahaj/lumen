@@ -12,11 +12,11 @@ pub struct OpenAIConfig {
 }
 
 impl OpenAIConfig {
-    pub fn new(api_key: String, model: Option<String>) -> Self {
+    pub fn new(api_key: String, model: Option<String>, base_url: Option<String>) -> Self {
         Self {
             api_key,
             model: model.unwrap_or_else(|| "gpt-4o-mini".to_string()),
-            api_base_url: "https://api.openai.com/v1/chat/completions".to_string(),
+            api_base_url: base_url.unwrap_or_else(|| "https://api.openai.com/v1/chat/completions".to_string()),
         }
     }
 }

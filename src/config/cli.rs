@@ -21,6 +21,9 @@ pub struct Cli {
     #[arg(short = 'm', long = "model")]
     pub model: Option<String>,
 
+    #[arg(short = 'u', long = "base-url")]
+    pub base_url: Option<String>,
+
     #[command(subcommand)]
     pub command: Commands,
 }
