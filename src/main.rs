@@ -33,7 +33,7 @@ async fn run() -> Result<(), LumenError> {
     };
 
     let provider =
-        provider::LumenProvider::new(client, config.provider, config.api_key, config.model)?;
+        provider::LumenProvider::new(client, config.provider, config.api_key, config.model, config.base_url)?;
     let command = command::LumenCommand::new(provider);
 
     match cli.command {

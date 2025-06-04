@@ -63,11 +63,12 @@ impl LumenProvider {
         provider_type: ProviderType,
         api_key: Option<String>,
         model: Option<String>,
+        base_url: Option<String>,
     ) -> Result<Self, LumenError> {
         match provider_type {
             ProviderType::Openai => {
                 let api_key = api_key.ok_or(LumenError::MissingApiKey("OpenAI".to_string()))?;
-                let config = OpenAIConfig::new(api_key, model);
+                let config = OpenAIConfig::new(api_key, model, base_url);
                 let provider = LumenProvider::OpenAI(Box::new(OpenAIProvider::new(client, config)));
                 Ok(provider)
             }
