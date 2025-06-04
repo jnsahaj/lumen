@@ -238,3 +238,4 @@ export LUMEN_API_KEY="sk-xxxxxxxxxxxxxxxxxxxxxxxx"
 # Or override using CLI flags
 lumen -p "ollama" -m "llama3.2" draft
 ```
+<!-- GitAds-Verify: OE99H8YHI6ACIS31OJLLV19T6QOB4J3P -->
