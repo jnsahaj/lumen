@@ -1,5 +1,5 @@
 use crate::{
-    command::{draft::DraftCommand, explain::ExplainCommand},
+    command::{draft::DraftCommand, outline::OutlineCommand, explain::ExplainCommand},
     git_entity::{diff::Diff, GitEntity},
 };
 use indoc::{formatdoc, indoc};
@@ -132,6 +132,69 @@ impl AIPrompt {
             Focus on being accurate and concise.
             {context}
             Commit message must be a maximum of 72 characters.
+            Exclude anything unnecessary such as translation. Your entire response will be passed directly into git commit.
+
+            Code diff:
+            ```diff
+            {diff}
+            ```
+            ",
+            commit_types = command.draft_config.commit_types,
+        });
+
+        Ok(AIPrompt {
+            system_prompt,
+            user_prompt,
+        })
+    }
+
+    pub fn build_outline_prompt(command: &OutlineCommand) -> Result<Self, AIPromptError> {
+        let GitEntity::Diff(Diff::WorkingTree { diff, .. }) = &command.git_entity else {
+            return Err(AIPromptError(
+                "`outline` is only supported for working tree diffs".into(),
+            ));
+        };
+
+        let system_prompt = String::from(indoc! {"
+            You are a commit message generator that follows these rules:
+            1. IMPORTANT: Each line must be no more than 65 characters (including title and bullet points)
+            2. Write in present tense
+            3. Be concise and direct
+            4. Output only the commit message without any explanations
+            5. Follow the format:
+               <type>(<optional scope>): <commit message>
+               
+               - <bullet point describing a key change>
+               - <bullet point describing another key change>
+        "});
+
+        let context = if let Some(context) = &command.context {
+            formatdoc!(
+                "
+                Use the following context to understand intent:
+                {context}
+                "
+            )
+        } else {
+            "".to_string()
+        };
+
+        let user_prompt = String::from(formatdoc! {"
+            Generate a structured git commit message written in present tense for the following code diff with the given specifications below:
+
+            The output response must be in format:
+            <type>(<optional scope>): <commit message>
+
+            - <bullet point describing a key change>
+            - <bullet point describing another key change>
+
+            Choose a type from the type-to-description JSON below that best describes the git diff:
+            {commit_types}
+            Focus on being accurate and concise.
+            {context}
+            First line must be a maximum of 72 characters.
+            Each bullet point must be a maximum of 78 characters.
+            If a bullet point exceeds 78 characters, wrap it with 2 spaces at the start of the next line.
             Exclude anything unnecessary such as translation. Your entire response will be passed directly into git commit.
 
             Code diff:
