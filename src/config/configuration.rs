@@ -35,6 +35,8 @@ pub struct DraftConfig {
         deserialize_with = "deserialize_commit_types"
     )]
     pub commit_types: String,
+    #[serde(default)]
+    pub trim_thinking_tags: bool,
 }
 
 fn default_ai_provider() -> ProviderType {
@@ -90,6 +92,7 @@ where
 fn default_draft_config() -> DraftConfig {
     DraftConfig {
         commit_types: default_commit_types(),
+        trim_thinking_tags: false,
     }
 }
 
