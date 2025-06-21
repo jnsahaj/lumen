@@ -32,9 +32,10 @@ pub struct LumenConfig {
 pub struct DraftConfig {
     #[serde(
         default = "default_commit_types",
-        deserialize_with = "deserialize_commit_types"
     )]
-    pub commit_types: String,
+    pub commit_types: HashMap<String,String>,
+    #[serde(default)]
+    pub trim_thinking_tags: bool,
 }
 
 fn default_ai_provider() -> ProviderType {
@@ -52,23 +53,20 @@ where
     s.parse().map_err(serde::de::Error::custom)
 }
 
-fn default_commit_types() -> String {
-    indoc! {r#"
-    {
-        "docs": "Documentation only changes",
-        "style": "Changes that do not affect the meaning of the code",
-        "refactor": "A code change that neither fixes a bug nor adds a feature",
-        "perf": "A code change that improves performance",
-        "test": "Adding missing tests or correcting existing tests",
-        "build": "Changes that affect the build system or external dependencies",
-        "ci": "Changes to our CI configuration files and scripts",
-        "chore": "Other changes that don't modify src or test files",
-        "revert": "Reverts a previous commit",
-        "feat": "A new feature",
-        "fix": "A bug fix"
-    }
-    "#}
-    .to_string()
+fn default_commit_types() -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    map.insert("docs".to_string(), "Documentation only changes".to_string());
+    map.insert("style".to_string(), "Changes that do not affect the meaning of the code".to_string());
+    map.insert("refactor".to_string(), "A code change that neither fixes a bug nor adds a feature".to_string());
+    map.insert("perf".to_string(), "A code change that improves performance".to_string());
+    map.insert("test".to_string(), "Adding missing tests or correcting existing tests".to_string());
+    map.insert("build".to_string(), "Changes that affect the build system or external dependencies".to_string());
+    map.insert("ci".to_string(), "Changes to our CI configuration files and scripts".to_string());
+    map.insert("chore".to_string(), "Other changes that don't modify src or test files".to_string());
+    map.insert("revert".to_string(), "Reverts a previous commit".to_string());
+    map.insert("feat".to_string(), "A new feature".to_string());
+    map.insert("fix".to_string(), "A bug fix".to_string());
+    map
 }
 
 fn default_model() -> Option<String> {
@@ -79,17 +77,18 @@ fn default_api_key() -> Option<String> {
     std::env::var("LUMEN_API_KEY").ok()
 }
 
-fn deserialize_commit_types<'de, D>(deserializer: D) -> Result<String, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let commit_types_map: HashMap<String, String> = HashMap::deserialize(deserializer)?;
-    serde_json::to_string(&commit_types_map).map_err(serde::de::Error::custom)
-}
+// fn deserialize_commit_types<'de, D>(deserializer: D) -> Result<String, D::Error>
+// where
+//     D: Deserializer<'de>,
+// {
+//     let commit_types_map: HashMap<String, String> = HashMap::deserialize(deserializer)?;
+//     serde_json::to_string(&commit_types_map).map_err(serde::de::Error::custom)
+// }
 
 fn default_draft_config() -> DraftConfig {
     DraftConfig {
         commit_types: default_commit_types(),
+        trim_thinking_tags: false,
     }
 }
 

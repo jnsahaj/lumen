@@ -31,7 +31,6 @@ async fn run() -> Result<(), LumenError> {
         Ok(config) => config,
         Err(e) => return Err(e),
     };
-
     let provider =
         provider::LumenProvider::new(client, config.provider, config.api_key, config.model)?;
     let command = command::LumenCommand::new(provider);

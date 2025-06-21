@@ -4,6 +4,7 @@ use crate::{
 };
 use indoc::{formatdoc, indoc};
 use thiserror::Error;
+use serde_json;
 
 #[derive(Error, Debug)]
 #[error("{0}")]
@@ -65,7 +66,7 @@ impl AIPrompt {
             None => match &command.git_entity {
                 GitEntity::Commit(_) => formatdoc! {"
                     {base_content}
-                    
+
                     Provide a short explanation covering:
                     1. Core changes made
                     2. Direct impact
@@ -73,7 +74,7 @@ impl AIPrompt {
                 },
                 GitEntity::Diff(Diff::WorkingTree { .. }) => formatdoc! {"
                     {base_content}
-                    
+
                     Provide:
                     1. Key changes
                     2. Notable concerns (if any)
@@ -81,7 +82,7 @@ impl AIPrompt {
                 },
                 GitEntity::Diff(Diff::CommitsRange { .. }) => formatdoc! {"
                     {base_content}
-                    
+
                     Provide:
                     1. Core changes made
                     2. Direct impact
@@ -122,6 +123,9 @@ impl AIPrompt {
             "".to_string()
         };
 
+        let commit_types_json = serde_json::to_string(&command.draft_config.commit_types)
+            .map_err(|e| AIPromptError(format!("Failed to serialize commit types: {}", e)))?;
+
         let user_prompt = String::from(formatdoc! {"
             Generate a concise git commit message written in present tense for the following code diff with the given specifications below:
 
@@ -139,7 +143,8 @@ impl AIPrompt {
             {diff}
             ```
             ",
-            commit_types = command.draft_config.commit_types,
+            commit_types = commit_types_json,
+            diff = diff,
         });
 
         Ok(AIPrompt {
@@ -156,7 +161,7 @@ impl AIPrompt {
     "});
         let user_prompt = formatdoc! {"
         Generate Git command for: {query}
-        
+
         <command>Git command</command>
         <explanation>Brief explanation</explanation>
         <warning>Required for destructive commands only - omit for safe commands</warning>

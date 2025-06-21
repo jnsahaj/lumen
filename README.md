@@ -10,9 +10,11 @@ A command-line tool that uses AI to streamline your git workflow - from generati
 ![demo](https://github.com/user-attachments/assets/0d029bdb-3b11-4b5c-bed6-f5a91d8529f2)
 
 ## GitAds Sponsored
+
 [![Sponsored by GitAds](https://gitads.dev/v1/ad-serve?source=jnsahaj/lumen@github)](https://gitads.dev/v1/ad-track?source=jnsahaj/lumen@github)
 
 ## Table of Contents
+
 - [Features](#features-)
 - [Getting Started](#getting-started-)
   - [Prerequisites](#prerequisites)
@@ -41,7 +43,9 @@ A command-line tool that uses AI to streamline your git workflow - from generati
 ## Getting Started 🔅
 
 ### Prerequisites
+
 Before you begin, ensure you have:
+
 1. `git` installed on your system
 2. [fzf](https://github.com/junegunn/fzf) (optional) - Required for `lumen list` command
 3. [mdcat](https://github.com/swsnr/mdcat) (optional) - Required for pretty output formatting
@@ -49,15 +53,17 @@ Before you begin, ensure you have:
 ### Installation
 
 #### Using Homebrew (MacOS and Linux)
+
 ```bash
 brew install jnsahaj/lumen/lumen
 ```
 
 #### Using Cargo
-> [!IMPORTANT]
-> `cargo` is a package manager for `rust`,
+
+> [!IMPORTANT] > `cargo` is a package manager for `rust`,
 > and is installed automatically when you install `rust`.
 > See [installation guide](https://doc.rust-lang.org/cargo/getting-started/installation.html)
+
 ```bash
 cargo install lumen
 ```
@@ -77,7 +83,6 @@ lumen draft
 lumen draft --context "match brand guidelines"
 # Output: "feat(button.tsx): Update button color to align with brand identity guidelines"
 ```
-
 
 ### Generate Git Commands
 
@@ -110,6 +115,7 @@ lumen explain HEAD --query "What are the potential side effects?"
 ```
 
 ### Interactive Mode
+
 ```bash
 # Launch interactive fuzzy finder to search through commits (requires: fzf)
 lumen list
@@ -126,29 +132,30 @@ lumen draft | xclip -selection c      # Linux
 lumen draft | tee >(pbcopy)
 
 # Open in your favorite editor
-lumen draft | code -      
+lumen draft | code -
 
 # Directly commit using the generated message
-lumen draft | git commit -F -           
+lumen draft | git commit -F -
 ```
 
 If you are using [lazygit](https://github.com/jesseduffield/lazygit), you can add this to the [user config](https://github.com/jesseduffield/lazygit/blob/master/docs/Config.md)
+
 ```yml
 customCommands:
-  - key: '<c-l>'
-    context: 'files'
-    command: 'lumen draft | tee >(pbcopy)'
-    loadingText: 'Generating message...'
+  - key: "<c-l>"
+    context: "files"
+    command: "lumen draft | tee >(pbcopy)"
+    loadingText: "Generating message..."
     showOutput: true
-  - key: '<c-k>'
-    context: 'files'
-    command: 'lumen draft -c {{.Form.Context | quote}} | tee >(pbcopy)'
-    loadingText: 'Generating message...'
+  - key: "<c-k>"
+    context: "files"
+    command: "lumen draft -c {{.Form.Context | quote}} | tee >(pbcopy)"
+    loadingText: "Generating message..."
     showOutput: true
     prompts:
-          - type: 'input'
-            title: 'Context'
-            key: 'Context'
+      - type: "input"
+        title: "Context"
+        key: "Context"
 ```
 
 ## AI Providers 🔅
@@ -167,26 +174,27 @@ export LUMEN_AI_MODEL="gpt-4o"
 
 ### Supported Providers
 
-| Provider | API Key Required | Models |
-|----------|-----------------|---------|
-| [Phind](https://www.phind.com/agent) `phind` (Default) | No | `Phind-70B` |
-| [Groq](https://groq.com/) `groq` | Yes (free) | `llama2-70b-4096`, `mixtral-8x7b-32768` (default: `mixtral-8x7b-32768`) |
-| [OpenAI](https://platform.openai.com/docs/guides/text-generation/chat-completions-api) `openai` | Yes | `gpt-4o`, `gpt-4o-mini`, `gpt-4`, `gpt-3.5-turbo` (default: `gpt-4o-mini`) |
-| [Claude](https://claude.ai/new) `claude` | Yes | [see list](https://docs.anthropic.com/en/docs/about-claude/models#model-names) (default: `claude-3-5-sonnet-20241022`) |
-| [Ollama](https://github.com/ollama/ollama) `ollama` | No (local) | [see list](https://github.com/ollama/ollama/blob/main/docs/api.md#model-names) (required) |
-| [OpenRouter](https://openrouter.ai/) `openrouter` | Yes | [see list](https://openrouter.ai/models) (default: `anthropic/claude-3.5-sonnet`) |
-| [DeepSeek](https://www.deepseek.com/) `deepseek` | Yes | `deepseek-chat`, `deepseek-reasoner` (default: `deepseek-reasoner`) |
+| Provider                                                                                        | API Key Required | Models                                                                                                                 |
+| ----------------------------------------------------------------------------------------------- | ---------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| [Phind](https://www.phind.com/agent) `phind` (Default)                                          | No               | `Phind-70B`                                                                                                            |
+| [Groq](https://groq.com/) `groq`                                                                | Yes (free)       | `llama2-70b-4096`, `mixtral-8x7b-32768` (default: `mixtral-8x7b-32768`)                                                |
+| [OpenAI](https://platform.openai.com/docs/guides/text-generation/chat-completions-api) `openai` | Yes              | `gpt-4o`, `gpt-4o-mini`, `gpt-4`, `gpt-3.5-turbo` (default: `gpt-4o-mini`)                                             |
+| [Claude](https://claude.ai/new) `claude`                                                        | Yes              | [see list](https://docs.anthropic.com/en/docs/about-claude/models#model-names) (default: `claude-3-5-sonnet-20241022`) |
+| [Ollama](https://github.com/ollama/ollama) `ollama`                                             | No (local)       | [see list](https://github.com/ollama/ollama/blob/main/docs/api.md#model-names) (required)                              |
+| [OpenRouter](https://openrouter.ai/) `openrouter`                                               | Yes              | [see list](https://openrouter.ai/models) (default: `anthropic/claude-3.5-sonnet`)                                      |
+| [DeepSeek](https://www.deepseek.com/) `deepseek`                                                | Yes              | `deepseek-chat`, `deepseek-reasoner` (default: `deepseek-reasoner`)                                                    |
 
 ## Advanced Configuration 🔅
 
 ### Configuration File
+
 Lumen supports configuration through a JSON file. You can place the configuration file in one of the following locations:
 
 1. Project Root: Create a lumen.config.json file in your project's root directory.
 2. Custom Path: Specify a custom path using the --config CLI option.
 3. Global Configuration (Optional): Place a lumen.config.json file in your system's default configuration directory:
-    - Linux/macOS: `~/.config/lumen/lumen.config.json`
-    - Windows: `%USERPROFILE%\.config\lumen\lumen.config.json`
+   - Linux/macOS: `~/.config/lumen/lumen.config.json`
+   - Windows: `%USERPROFILE%\.config\lumen\lumen.config.json`
 
 Lumen will load configurations in the following order of priority:
 
@@ -213,19 +221,23 @@ Lumen will load configurations in the following order of priority:
       "revert": "Reverts a previous commit",
       "feat": "A new feature",
       "fix": "A bug fix"
-    }
+    },
+    "trim_thinking_tags": false // Set to true to automatically remove <think>...</think> blocks from AI output.
   }
 }
 ```
 
 ### Configuration Precedence
+
 Options are applied in the following order (highest to lowest priority):
+
 1. CLI Flags
 2. Configuration File
 3. Environment Variables
 4. Default options
 
 Example: Using different providers for different projects:
+
 ```bash
 # Set global defaults in .zshrc/.bashrc
 export LUMEN_AI_PROVIDER="openai"
@@ -241,4 +253,5 @@ export LUMEN_API_KEY="sk-xxxxxxxxxxxxxxxxxxxxxxxx"
 # Or override using CLI flags
 lumen -p "ollama" -m "llama3.2" draft
 ```
+
 <!-- GitAds-Verify: OE99H8YHI6ACIS31OJLLV19T6QOB4J3P -->
