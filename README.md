@@ -52,7 +52,7 @@ Before you begin, ensure you have:
 
 ### Installation
 
-#### Using Homebrew (MacOS and Linux)
+#### Using Homebrew (macOS and Linux)
 
 ```bash
 brew install jnsahaj/lumen/lumen
@@ -247,7 +247,7 @@ Lumen allows you to customize the AI prompts for all three main commands (`expla
 #### Key Features
 
 - **Fallback Support**: If a custom prompt is empty or not provided, Lumen automatically uses the built-in default prompts
-- **Template Variables**: Use placeholders like `{query}`, `{diff}`, etc., that get replaced with actual content
+- **Template Variables**: Use placeholders like `{query}`, `{diff}`, etc., that are replaced with actual content
 - **Full Customization**: Completely override the default behavior to match your team's standards
 
 #### Example Use Cases
