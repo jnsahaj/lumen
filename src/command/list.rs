@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 
 use crate::{
+    config::configuration::LumenConfig,
     error::LumenError,
     git_entity::{commit::Commit, GitEntity},
     provider::LumenProvider,
@@ -12,14 +13,18 @@ pub struct ListCommand;
 
 #[async_trait]
 impl Command for ListCommand {
-    async fn execute(&self, provider: &LumenProvider) -> Result<(), LumenError> {
+    async fn execute(
+        &self,
+        provider: &LumenProvider,
+        config: &LumenConfig,
+    ) -> Result<(), LumenError> {
         let sha = LumenCommand::get_sha_from_fzf()?;
         let git_entity = GitEntity::Commit(Commit::new(sha)?);
         ExplainCommand {
             git_entity,
             query: None,
         }
-        .execute(provider)
+        .execute(provider, config)
         .await
     }
 }
