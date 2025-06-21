@@ -5,7 +5,7 @@ use list::ListCommand;
 use operate::OperateCommand;
 use std::process::Stdio;
 
-use crate::config::configuration::DraftConfig;
+use crate::config::configuration::{DraftConfig, LumenConfig};
 use crate::error::LumenError;
 use crate::git_entity::diff::Diff;
 use crate::git_entity::GitEntity;
@@ -31,7 +31,11 @@ pub enum CommandType {
 
 #[async_trait]
 pub trait Command {
-    async fn execute(&self, provider: &LumenProvider) -> Result<(), LumenError>;
+    async fn execute(
+        &self,
+        provider: &LumenProvider,
+        config: &LumenConfig,
+    ) -> Result<(), LumenError>;
 }
 
 impl CommandType {
@@ -60,8 +64,15 @@ impl LumenCommand {
         LumenCommand { provider }
     }
 
-    pub async fn execute(&self, command_type: CommandType) -> Result<(), LumenError> {
-        command_type.create_command()?.execute(&self.provider).await
+    pub async fn execute(
+        &self,
+        command_type: CommandType,
+        config: &LumenConfig,
+    ) -> Result<(), LumenError> {
+        command_type
+            .create_command()?
+            .execute(&self.provider, config)
+            .await
     }
 
     fn get_sha_from_fzf() -> Result<String, LumenError> {

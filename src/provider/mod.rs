@@ -110,8 +110,12 @@ impl LumenProvider {
         }
     }
 
-    pub async fn explain(&self, command: &ExplainCommand) -> Result<String, ProviderError> {
-        let prompt = AIPrompt::build_explain_prompt(command)?;
+    pub async fn explain(
+        &self,
+        command: &ExplainCommand,
+        config: &crate::config::configuration::ExplainConfig,
+    ) -> Result<String, ProviderError> {
+        let prompt = AIPrompt::build_explain_prompt(command, config)?;
         match self {
             LumenProvider::OpenAI(provider) => provider.complete(prompt).await,
             LumenProvider::Phind(provider) => provider.complete(prompt).await,
@@ -123,8 +127,12 @@ impl LumenProvider {
         }
     }
 
-    pub async fn draft(&self, command: &DraftCommand) -> Result<String, ProviderError> {
-        let prompt = AIPrompt::build_draft_prompt(command)?;
+    pub async fn draft(
+        &self,
+        command: &DraftCommand,
+        config: &crate::config::configuration::DraftConfig,
+    ) -> Result<String, ProviderError> {
+        let prompt = AIPrompt::build_draft_prompt(command, config)?;
         match self {
             LumenProvider::OpenAI(provider) => provider.complete(prompt).await,
             LumenProvider::Phind(provider) => provider.complete(prompt).await,
@@ -136,8 +144,12 @@ impl LumenProvider {
         }
     }
 
-    pub async fn operate(&self, command: &OperateCommand) -> Result<String, ProviderError> {
-        let prompt = AIPrompt::build_operate_prompt(command.query.as_str())?;
+    pub async fn operate(
+        &self,
+        command: &OperateCommand,
+        config: &crate::config::configuration::OperateConfig,
+    ) -> Result<String, ProviderError> {
+        let prompt = AIPrompt::build_operate_prompt(command.query.as_str(), config)?;
         match self {
             LumenProvider::OpenAI(provider) => provider.complete(prompt).await,
             LumenProvider::Phind(provider) => provider.complete(prompt).await,

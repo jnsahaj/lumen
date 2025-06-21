@@ -32,8 +32,12 @@ async fn run() -> Result<(), LumenError> {
         Err(e) => return Err(e),
     };
 
-    let provider =
-        provider::LumenProvider::new(client, config.provider, config.api_key, config.model)?;
+    let provider = provider::LumenProvider::new(
+        client,
+        config.provider,
+        config.api_key.clone(),
+        config.model.clone(),
+    )?;
     let command = command::LumenCommand::new(provider);
 
     match cli.command {
@@ -54,7 +58,7 @@ async fn run() -> Result<(), LumenError> {
                 GitEntity::Commit(Commit::new(sha)?)
             } else if let Some(CommitReference::Range { from, to }) = reference {
                 GitEntity::Diff(Diff::from_commits_range(&from, &to, false)?)
-            }  else if let Some(CommitReference::TripleDots { from, to }) = reference {
+            } else if let Some(CommitReference::TripleDots { from, to }) = reference {
                 GitEntity::Diff(Diff::from_commits_range(&from, &to, true)?)
             } else {
                 return Err(LumenError::InvalidArguments(
@@ -63,18 +67,21 @@ async fn run() -> Result<(), LumenError> {
             };
 
             command
-                .execute(command::CommandType::Explain { git_entity, query })
+                .execute(command::CommandType::Explain { git_entity, query }, &config)
                 .await?;
         }
-        Commands::List => command.execute(command::CommandType::List).await?,
+        Commands::List => command.execute(command::CommandType::List, &config).await?,
         Commands::Draft { context } => {
             command
-                .execute(command::CommandType::Draft(context, config.draft))
+                .execute(
+                    command::CommandType::Draft(context, config.draft.clone()),
+                    &config,
+                )
                 .await?
         }
         Commands::Operate { query } => {
             command
-                .execute(command::CommandType::Operate { query })
+                .execute(command::CommandType::Operate { query }, &config)
                 .await?;
         }
     }

@@ -26,15 +26,35 @@ pub struct LumenConfig {
 
     #[serde(default = "default_draft_config")]
     pub draft: DraftConfig,
+
+    #[serde(default = "default_explain_config")]
+    pub explain: ExplainConfig,
+
+    #[serde(default = "default_operate_config")]
+    pub operate: OperateConfig,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Default, Clone)]
 pub struct DraftConfig {
     #[serde(
         default = "default_commit_types",
         deserialize_with = "deserialize_commit_types"
     )]
     pub commit_types: String,
+    pub system_prompt: Option<String>,
+    pub user_prompt: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct ExplainConfig {
+    pub system_prompt: Option<String>,
+    pub user_prompt: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct OperateConfig {
+    pub system_prompt: Option<String>,
+    pub user_prompt: Option<String>,
 }
 
 fn default_ai_provider() -> ProviderType {
@@ -90,6 +110,22 @@ where
 fn default_draft_config() -> DraftConfig {
     DraftConfig {
         commit_types: default_commit_types(),
+        system_prompt: None,
+        user_prompt: None,
+    }
+}
+
+fn default_explain_config() -> ExplainConfig {
+    ExplainConfig {
+        system_prompt: None,
+        user_prompt: None,
+    }
+}
+
+fn default_operate_config() -> OperateConfig {
+    OperateConfig {
+        system_prompt: None,
+        user_prompt: None,
     }
 }
 
@@ -122,6 +158,8 @@ impl LumenConfig {
             model,
             api_key,
             draft: config.draft,
+            explain: config.explain,
+            operate: config.operate,
         })
     }
 
@@ -146,6 +184,8 @@ impl Default for LumenConfig {
             model: default_model(),
             api_key: default_api_key(),
             draft: default_draft_config(),
+            explain: default_explain_config(),
+            operate: default_operate_config(),
         }
     }
 }

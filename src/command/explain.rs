@@ -1,7 +1,10 @@
 use async_trait::async_trait;
 use spinoff::{spinners, Color, Spinner};
 
-use crate::{error::LumenError, git_entity::GitEntity, provider::LumenProvider};
+use crate::{
+    config::configuration::LumenConfig, error::LumenError, git_entity::GitEntity,
+    provider::LumenProvider,
+};
 
 use super::{Command, LumenCommand};
 
@@ -12,7 +15,11 @@ pub struct ExplainCommand {
 
 #[async_trait]
 impl Command for ExplainCommand {
-    async fn execute(&self, provider: &LumenProvider) -> Result<(), LumenError> {
+    async fn execute(
+        &self,
+        provider: &LumenProvider,
+        config: &LumenConfig,
+    ) -> Result<(), LumenError> {
         LumenCommand::print_with_mdcat(self.git_entity.format_static_details(provider))?;
         if let Some(query) = &self.query {
             LumenCommand::print_with_mdcat(format!("`query`: {query}"))?;
@@ -24,7 +31,7 @@ impl Command for ExplainCommand {
         };
 
         let mut spinner = Spinner::new(spinners::Dots, spinner_text, Color::Blue);
-        let result = provider.explain(self).await?;
+        let result = provider.explain(self, &config.explain).await?;
         spinner.success("Done");
 
         LumenCommand::print_with_mdcat(result)?;

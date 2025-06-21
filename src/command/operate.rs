@@ -17,7 +17,7 @@ pub struct ExtractError {
     message: String,
 }
 
-use crate::{error::LumenError, provider::LumenProvider};
+use crate::{config::configuration::LumenConfig, error::LumenError, provider::LumenProvider};
 
 use super::{Command, LumenCommand};
 
@@ -120,13 +120,17 @@ pub fn process_operation(result: OperateResult) -> Result<(), io::Error> {
 
 #[async_trait]
 impl Command for OperateCommand {
-    async fn execute(&self, provider: &LumenProvider) -> Result<(), LumenError> {
+    async fn execute(
+        &self,
+        provider: &LumenProvider,
+        config: &LumenConfig,
+    ) -> Result<(), LumenError> {
         LumenCommand::print_with_mdcat(format!("`query`: {}", &self.query))?;
 
         let spinner_text = "Generating answer...".to_string();
 
         let mut spinner = Spinner::new(spinners::Dots, spinner_text, Color::Blue);
-        let result = provider.operate(self).await?;
+        let result = provider.operate(self, &config.operate).await?;
         let operate_result = extract_operate_response(&result)
             .map_err(|e| LumenError::CommandError(e.to_string()))?;
         spinner.success("Done");

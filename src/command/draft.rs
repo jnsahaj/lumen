@@ -3,7 +3,9 @@ use std::io::Write;
 use async_trait::async_trait;
 
 use crate::{
-    config::configuration::DraftConfig, error::LumenError, git_entity::GitEntity,
+    config::configuration::{DraftConfig, LumenConfig},
+    error::LumenError,
+    git_entity::GitEntity,
     provider::LumenProvider,
 };
 
@@ -17,8 +19,12 @@ pub struct DraftCommand {
 
 #[async_trait]
 impl Command for DraftCommand {
-    async fn execute(&self, provider: &LumenProvider) -> Result<(), LumenError> {
-        let result = provider.draft(self).await?;
+    async fn execute(
+        &self,
+        provider: &LumenProvider,
+        config: &LumenConfig,
+    ) -> Result<(), LumenError> {
+        let result = provider.draft(self, &config.draft).await?;
 
         print!("{result}");
         std::io::stdout().flush()?;
