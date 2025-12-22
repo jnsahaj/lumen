@@ -12,7 +12,10 @@ use std::sync::mpsc::TryRecvError;
 use std::time::Duration;
 
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, MouseEventKind},
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind,
+        KeyModifiers, MouseEventKind,
+    },
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     ExecutableCommand,
 };
@@ -67,6 +70,8 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
         .iter()
         .position(|item| matches!(item, SidebarItem::File { .. }))
         .unwrap_or(0);
+    let mut sidebar_scroll: usize = 0;
+    let mut h_scroll: u16 = 0;
     let settings = DiffViewSettings::default();
 
     loop {
@@ -110,6 +115,7 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                     .first()
                     .map(|&h| (h as u16).saturating_sub(5))
                     .unwrap_or(0);
+                h_scroll = 0;
             }
             needs_reload = false;
         }
@@ -120,6 +126,8 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
             })?;
         } else {
             let diff = &file_diffs[current_file];
+            let side_by_side = compute_side_by_side(&diff.old_content, &diff.new_content);
+            let hunk_count = find_hunk_starts(&side_by_side).len();
             terminal.draw(|frame| {
                 ui::render_diff(
                     frame,
@@ -128,12 +136,15 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                     &sidebar_items,
                     current_file,
                     scroll,
+                    h_scroll,
                     options.watch,
                     show_sidebar,
                     focused_panel,
                     sidebar_selected,
+                    sidebar_scroll,
                     &viewed_files,
                     &settings,
+                    hunk_count,
                 );
             })?;
         }
@@ -160,11 +171,12 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                                 && mouse.column < sidebar_width
                                 && mouse.row >= header_height
                             {
-                                let clicked_row = (mouse.row - header_height - 1) as usize;
+                                let clicked_row =
+                                    (mouse.row - header_height - 1) as usize + sidebar_scroll;
                                 if clicked_row < sidebar_items.len() {
                                     if matches!(sidebar_items[clicked_row], SidebarItem::File { .. }) {
                                         sidebar_selected = clicked_row;
-                                        focused_panel = FocusedPanel::Sidebar;
+                                        focused_panel = FocusedPanel::DiffView;
                                         if let SidebarItem::File { file_index, .. } =
                                             &sidebar_items[sidebar_selected]
                                         {
@@ -179,6 +191,7 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                                                 .first()
                                                 .map(|&h| (h as u16).saturating_sub(5))
                                                 .unwrap_or(0);
+                                            h_scroll = 0;
                                         }
                                     }
                                 }
@@ -187,7 +200,14 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                             }
                         }
                         MouseEventKind::ScrollDown => {
-                            if mouse.column >= sidebar_width
+                            if show_sidebar
+                                && mouse.column < sidebar_width
+                                && mouse.row >= header_height
+                            {
+                                let max_sidebar_scroll =
+                                    sidebar_items.len().saturating_sub(1);
+                                sidebar_scroll = (sidebar_scroll + 3).min(max_sidebar_scroll);
+                            } else if mouse.column >= sidebar_width
                                 && mouse.row >= header_height
                                 && mouse.row < term_size.height
                             {
@@ -195,7 +215,12 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                             }
                         }
                         MouseEventKind::ScrollUp => {
-                            if mouse.column >= sidebar_width
+                            if show_sidebar
+                                && mouse.column < sidebar_width
+                                && mouse.row >= header_height
+                            {
+                                sidebar_scroll = sidebar_scroll.saturating_sub(3);
+                            } else if mouse.column >= sidebar_width
                                 && mouse.row >= header_height
                                 && mouse.row < term_size.height
                             {
@@ -232,6 +257,63 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                                 focused_panel = FocusedPanel::DiffView;
                             }
                         }
+                        KeyCode::Char('j')
+                            if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
+                            // Ctrl+j: next file
+                            if !file_diffs.is_empty() && current_file < file_diffs.len() - 1 {
+                                current_file += 1;
+                                if let Some(idx) = sidebar_items.iter().position(|item| {
+                                    matches!(item, SidebarItem::File { file_index, .. } if *file_index == current_file)
+                                }) {
+                                    sidebar_selected = idx;
+                                    // Auto-scroll sidebar
+                                    let visible_height =
+                                        terminal.size()?.height.saturating_sub(5) as usize;
+                                    if sidebar_selected >= sidebar_scroll + visible_height {
+                                        sidebar_scroll =
+                                            sidebar_selected.saturating_sub(visible_height) + 1;
+                                    } else if sidebar_selected < sidebar_scroll {
+                                        sidebar_scroll = sidebar_selected;
+                                    }
+                                }
+                                let diff = &file_diffs[current_file];
+                                let side_by_side =
+                                    compute_side_by_side(&diff.old_content, &diff.new_content);
+                                let hunks = find_hunk_starts(&side_by_side);
+                                scroll = hunks
+                                    .first()
+                                    .map(|&h| (h as u16).saturating_sub(5))
+                                    .unwrap_or(0);
+                                h_scroll = 0;
+                            }
+                        }
+                        KeyCode::Char('k')
+                            if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
+                            // Ctrl+k: previous file
+                            if current_file > 0 {
+                                current_file -= 1;
+                                if let Some(idx) = sidebar_items.iter().position(|item| {
+                                    matches!(item, SidebarItem::File { file_index, .. } if *file_index == current_file)
+                                }) {
+                                    sidebar_selected = idx;
+                                    // Auto-scroll sidebar
+                                    if sidebar_selected < sidebar_scroll {
+                                        sidebar_scroll = sidebar_selected;
+                                    }
+                                }
+                                let diff = &file_diffs[current_file];
+                                let side_by_side =
+                                    compute_side_by_side(&diff.old_content, &diff.new_content);
+                                let hunks = find_hunk_starts(&side_by_side);
+                                scroll = hunks
+                                    .first()
+                                    .map(|&h| (h as u16).saturating_sub(5))
+                                    .unwrap_or(0);
+                                h_scroll = 0;
+                            }
+                        }
                         KeyCode::Down | KeyCode::Char('j') => {
                             if focused_panel == FocusedPanel::Sidebar {
                                 let mut next = sidebar_selected + 1;
@@ -241,6 +323,13 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                                         break;
                                     }
                                     next += 1;
+                                }
+                                // Auto-scroll sidebar to keep selection visible
+                                let visible_height =
+                                    terminal.size()?.height.saturating_sub(5) as usize;
+                                if sidebar_selected >= sidebar_scroll + visible_height {
+                                    sidebar_scroll =
+                                        sidebar_selected.saturating_sub(visible_height) + 1;
                                 }
                             } else {
                                 scroll = (scroll + 1).min(max_scroll as u16);
@@ -261,8 +350,22 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                                         prev -= 1;
                                     }
                                 }
+                                // Auto-scroll sidebar to keep selection visible
+                                if sidebar_selected < sidebar_scroll {
+                                    sidebar_scroll = sidebar_selected;
+                                }
                             } else {
                                 scroll = scroll.saturating_sub(1);
+                            }
+                        }
+                        KeyCode::Char('h') | KeyCode::Left => {
+                            if focused_panel == FocusedPanel::DiffView {
+                                h_scroll = h_scroll.saturating_sub(4);
+                            }
+                        }
+                        KeyCode::Char('l') | KeyCode::Right => {
+                            if focused_panel == FocusedPanel::DiffView {
+                                h_scroll = h_scroll.saturating_add(4);
                             }
                         }
                         KeyCode::Enter => {
@@ -281,6 +384,8 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                                         .first()
                                         .map(|&h| (h as u16).saturating_sub(5))
                                         .unwrap_or(0);
+                                    h_scroll = 0;
+                                    focused_panel = FocusedPanel::DiffView;
                                 }
                             }
                         }
@@ -328,6 +433,38 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                                         }
                                     }
                                 }
+                            } else if focused_panel == FocusedPanel::DiffView {
+                                // Toggle viewed status; if marking as viewed, move to next
+                                if viewed_files.contains(&current_file) {
+                                    viewed_files.remove(&current_file);
+                                } else {
+                                    viewed_files.insert(current_file);
+                                    if current_file < file_diffs.len() - 1 {
+                                        current_file += 1;
+                                        if let Some(idx) = sidebar_items.iter().position(|item| {
+                                            matches!(item, SidebarItem::File { file_index, .. } if *file_index == current_file)
+                                        }) {
+                                            sidebar_selected = idx;
+                                            // Auto-scroll sidebar
+                                            let visible_height =
+                                                terminal.size()?.height.saturating_sub(5) as usize;
+                                            if sidebar_selected >= sidebar_scroll + visible_height {
+                                                sidebar_scroll =
+                                                    sidebar_selected.saturating_sub(visible_height)
+                                                        + 1;
+                                            }
+                                        }
+                                        let diff = &file_diffs[current_file];
+                                        let side_by_side =
+                                            compute_side_by_side(&diff.old_content, &diff.new_content);
+                                        let hunks = find_hunk_starts(&side_by_side);
+                                        scroll = hunks
+                                            .first()
+                                            .map(|&h| (h as u16).saturating_sub(5))
+                                            .unwrap_or(0);
+                                        h_scroll = 0;
+                                    }
+                                }
                             }
                         }
                         KeyCode::PageDown => {
@@ -361,46 +498,6 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                                     .find(|&&h| (h as u16) < scroll.saturating_sub(5))
                                 {
                                     scroll = (prev as u16).saturating_sub(5);
-                                }
-                            }
-                        }
-                        KeyCode::Char('l') | KeyCode::Right => {
-                            if focused_panel == FocusedPanel::DiffView {
-                                if !file_diffs.is_empty() && current_file < file_diffs.len() - 1 {
-                                    current_file += 1;
-                                    if let Some(idx) = sidebar_items.iter().position(|item| {
-                                        matches!(item, SidebarItem::File { file_index, .. } if *file_index == current_file)
-                                    }) {
-                                        sidebar_selected = idx;
-                                    }
-                                    let diff = &file_diffs[current_file];
-                                    let side_by_side =
-                                        compute_side_by_side(&diff.old_content, &diff.new_content);
-                                    let hunks = find_hunk_starts(&side_by_side);
-                                    scroll = hunks
-                                        .first()
-                                        .map(|&h| (h as u16).saturating_sub(5))
-                                        .unwrap_or(0);
-                                }
-                            }
-                        }
-                        KeyCode::Char('h') | KeyCode::Left => {
-                            if focused_panel == FocusedPanel::DiffView {
-                                if current_file > 0 {
-                                    current_file -= 1;
-                                    if let Some(idx) = sidebar_items.iter().position(|item| {
-                                        matches!(item, SidebarItem::File { file_index, .. } if *file_index == current_file)
-                                    }) {
-                                        sidebar_selected = idx;
-                                    }
-                                    let diff = &file_diffs[current_file];
-                                    let side_by_side =
-                                        compute_side_by_side(&diff.old_content, &diff.new_content);
-                                    let hunks = find_hunk_starts(&side_by_side);
-                                    scroll = hunks
-                                        .first()
-                                        .map(|&h| (h as u16).saturating_sub(5))
-                                        .unwrap_or(0);
                                 }
                             }
                         }

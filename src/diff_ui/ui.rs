@@ -24,6 +24,19 @@ pub fn render_empty_state(frame: &mut Frame, watching: bool) {
     frame.render_widget(msg, frame.area());
 }
 
+fn truncate_middle(s: &str, max_len: usize) -> String {
+    if s.len() <= max_len {
+        return s.to_string();
+    }
+    if max_len < 5 {
+        return s.chars().take(max_len).collect();
+    }
+    let half = (max_len - 3) / 2;
+    let start: String = s.chars().take(half).collect();
+    let end: String = s.chars().skip(s.len() - half).collect();
+    format!("{}...{}", start, end)
+}
+
 pub fn render_diff(
     frame: &mut Frame,
     diff: &FileDiff,
@@ -31,12 +44,15 @@ pub fn render_diff(
     sidebar_items: &[SidebarItem],
     current_file: usize,
     scroll: u16,
+    h_scroll: u16,
     watching: bool,
     show_sidebar: bool,
     focused_panel: FocusedPanel,
     sidebar_selected: usize,
+    sidebar_scroll: usize,
     viewed_files: &HashSet<usize>,
     settings: &DiffViewSettings,
+    hunk_count: usize,
 ) {
     let area = frame.area();
     let side_by_side = compute_side_by_side(&diff.old_content, &diff.new_content);
@@ -47,11 +63,16 @@ pub fn render_diff(
         .split(area);
 
     let watch_indicator = if watching { " [watching]" } else { "" };
+    let max_filename_len = 40;
+    let truncated_filename = truncate_middle(&diff.filename, max_filename_len);
+    let hunks_text = if hunk_count == 1 { "hunk" } else { "hunks" };
     let header = Paragraph::new(format!(
-        " File {}/{}: {}{}  |  [1] sidebar  [2] diff  [j/k] nav  [Space] viewed  [q] quit",
+        " File {}/{}: {} ({} {}){}  |  [j/k] scroll  [C-j/k] files  [Space] viewed  [q] quit",
         current_file + 1,
         file_diffs.len(),
-        diff.filename,
+        truncated_filename,
+        hunk_count,
+        hunks_text,
         watch_indicator
     ))
     .block(
@@ -73,6 +94,7 @@ pub fn render_diff(
             sidebar_items,
             current_file,
             sidebar_selected,
+            sidebar_scroll,
             viewed_files,
             focused_panel == FocusedPanel::Sidebar,
         );
@@ -167,18 +189,27 @@ pub fn render_diff(
         new_lines.push(Line::from(new_spans));
     }
 
-    let old_para = Paragraph::new(old_lines).block(
-        Block::default()
-            .title(" Old ")
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Red)),
-    );
-    let new_para = Paragraph::new(new_lines).block(
-        Block::default()
-            .title(" New ")
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Green)),
-    );
+    let diff_title_style = if focused_panel == FocusedPanel::DiffView {
+        Style::default().fg(Color::Cyan)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    let old_para = Paragraph::new(old_lines)
+        .scroll((0, h_scroll))
+        .block(
+            Block::default()
+                .title(" [2] Old ")
+                .borders(Borders::ALL)
+                .border_style(diff_title_style.patch(Style::default().fg(Color::Red))),
+        );
+    let new_para = Paragraph::new(new_lines)
+        .scroll((0, h_scroll))
+        .block(
+            Block::default()
+                .title(" New ")
+                .borders(Borders::ALL)
+                .border_style(diff_title_style.patch(Style::default().fg(Color::Green))),
+        );
 
     frame.render_widget(old_para, content_chunks[0]);
     frame.render_widget(new_para, content_chunks[1]);
@@ -217,9 +248,11 @@ fn render_sidebar(
     sidebar_items: &[SidebarItem],
     current_file: usize,
     sidebar_selected: usize,
+    sidebar_scroll: usize,
     viewed_files: &HashSet<usize>,
     is_focused: bool,
 ) {
+    let visible_height = area.height.saturating_sub(2) as usize;
     let items: Vec<ListItem> = sidebar_items
         .iter()
         .enumerate()
@@ -297,9 +330,15 @@ fn render_sidebar(
         Color::DarkGray
     };
 
-    let list = List::new(items).block(
+    let visible_items: Vec<ListItem> = items
+        .into_iter()
+        .skip(sidebar_scroll)
+        .take(visible_height)
+        .collect();
+
+    let list = List::new(visible_items).block(
         Block::default()
-            .title(" Files ")
+            .title(" [1] Files ")
             .borders(Borders::ALL)
             .border_style(Style::default().fg(border_color)),
     );
