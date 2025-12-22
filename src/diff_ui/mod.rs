@@ -27,9 +27,8 @@ use types::{build_file_tree, DiffViewSettings, FocusedPanel, SidebarItem};
 use watcher::setup_watcher;
 
 pub struct DiffOptions {
-    pub base: String,
+    pub sha: String,
     pub file: Option<Vec<String>>,
-    pub staged: bool,
     pub watch: bool,
 }
 

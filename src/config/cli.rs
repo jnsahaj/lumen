@@ -88,17 +88,13 @@ pub enum Commands {
     },
     /// Launch interactive side-by-side diff viewer
     Diff {
-        /// Base ref to compare against (default: HEAD)
-        #[arg(short, long, default_value = "HEAD")]
-        base: String,
+        /// Commit SHA to show diff at (default: HEAD)
+        #[arg(default_value = "HEAD")]
+        sha: String,
 
         /// Filter to specific files
         #[arg(short, long)]
         file: Option<Vec<String>>,
-
-        /// Compare staged changes only
-        #[arg(short, long)]
-        staged: bool,
 
         /// Watch for file changes and auto-reload
         #[arg(short, long)]

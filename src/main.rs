@@ -79,15 +79,13 @@ async fn run() -> Result<(), LumenError> {
                 .await?;
         }
         Commands::Diff {
-            base,
+            sha,
             file,
-            staged,
             watch,
         } => {
             let options = diff_ui::DiffOptions {
-                base,
+                sha,
                 file,
-                staged,
                 watch,
             };
             diff_ui::run_diff_ui(options)?;

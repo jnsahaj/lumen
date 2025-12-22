@@ -1,45 +1,20 @@
-use std::fs;
 use std::process::Command;
 
 use super::DiffOptions;
 use crate::diff_ui::types::FileDiff;
 
+/// Get the list of files changed in a specific commit (SHA vs SHA^)
 pub fn get_changed_files(options: &DiffOptions) -> Vec<String> {
-    let mut files = Vec::new();
-
-    let mut args = vec!["diff", "--name-only"];
-    if options.staged {
-        args.push("--cached");
-    }
-    if options.base != "HEAD" {
-        args.push(&options.base);
-    }
-
     let output = Command::new("git")
-        .args(&args)
+        .args(["diff-tree", "--no-commit-id", "--name-only", "-r", &options.sha])
         .output()
         .expect("Failed to run git");
 
-    files.extend(
-        String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .filter(|s| !s.is_empty())
-            .map(String::from),
-    );
-
-    if !options.staged && options.base == "HEAD" {
-        let output = Command::new("git")
-            .args(["ls-files", "--others", "--exclude-standard"])
-            .output()
-            .expect("Failed to run git");
-
-        files.extend(
-            String::from_utf8_lossy(&output.stdout)
-                .lines()
-                .filter(|s| !s.is_empty())
-                .map(String::from),
-        );
-    }
+    let files: Vec<String> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .collect();
 
     if let Some(ref filter) = options.file {
         files.into_iter().filter(|f| filter.contains(f)).collect()
@@ -48,9 +23,10 @@ pub fn get_changed_files(options: &DiffOptions) -> Vec<String> {
     }
 }
 
-pub fn get_old_content(filename: &str, base: &str) -> String {
+/// Get content of a file at the parent of the given SHA
+pub fn get_old_content(filename: &str, sha: &str) -> String {
     let output = Command::new("git")
-        .args(["show", &format!("{}:{}", base, filename)])
+        .args(["show", &format!("{}^:{}", sha, filename)])
         .output();
 
     match output {
@@ -59,16 +35,24 @@ pub fn get_old_content(filename: &str, base: &str) -> String {
     }
 }
 
-pub fn get_new_content(filename: &str) -> String {
-    fs::read_to_string(filename).unwrap_or_default()
+/// Get content of a file at the given SHA
+pub fn get_new_content(filename: &str, sha: &str) -> String {
+    let output = Command::new("git")
+        .args(["show", &format!("{}:{}", sha, filename)])
+        .output();
+
+    match output {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
+        _ => String::new(),
+    }
 }
 
 pub fn load_file_diffs(options: &DiffOptions) -> Vec<FileDiff> {
     get_changed_files(options)
         .into_iter()
         .map(|filename| {
-            let old_content = get_old_content(&filename, &options.base);
-            let new_content = get_new_content(&filename);
+            let old_content = get_old_content(&filename, &options.sha);
+            let new_content = get_new_content(&filename, &options.sha);
             FileDiff {
                 filename,
                 old_content,
