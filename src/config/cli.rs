@@ -88,9 +88,9 @@ pub enum Commands {
     },
     /// Launch interactive side-by-side diff viewer
     Diff {
-        /// Commit SHA to show diff at (default: HEAD)
-        #[arg(default_value = "HEAD")]
-        sha: String,
+        /// Commit SHA to show diff at (shows uncommitted changes if not provided)
+        #[arg()]
+        sha: Option<String>,
 
         /// Filter to specific files
         #[arg(short, long)]
