@@ -9,9 +9,6 @@ A command-line tool that uses AI to streamline your git workflow - from generati
 
 ![demo](https://github.com/user-attachments/assets/0d029bdb-3b11-4b5c-bed6-f5a91d8529f2)
 
-## GitAds Sponsored
-[![Sponsored by GitAds](https://gitads.dev/v1/ad-serve?source=jnsahaj/lumen@github)](https://gitads.dev/v1/ad-track?source=jnsahaj/lumen@github)
-
 ## Table of Contents
 - [Features](#features-)
 - [Getting Started](#getting-started-)
@@ -241,4 +238,3 @@ export LUMEN_API_KEY="sk-xxxxxxxxxxxxxxxxxxxxxxxx"
 # Or override using CLI flags
 lumen -p "ollama" -m "llama3.2" draft
 ```
-<!-- GitAds-Verify: OE99H8YHI6ACIS31OJLLV19T6QOB4J3P -->
