@@ -51,8 +51,7 @@ impl Commit {
     fn get_full_hash(sha: &str) -> Result<String, LumenError> {
         let output = Command::new("git").args(["rev-parse", sha]).output()?;
 
-        let mut full_hash = String::from_utf8(output.stdout)?;
-        full_hash.pop(); // Remove trailing newline
+        let full_hash = String::from_utf8(output.stdout)?.trim_end().to_string();
         Ok(full_hash)
     }
 
@@ -82,11 +81,7 @@ impl Commit {
             .args(["log", "--format=%B", "-n", "1", sha])
             .output()?;
 
-        let mut message = String::from_utf8(output.stdout)?;
-        message.pop(); // Remove trailing newline
-        if message.ends_with('\n') {
-            message.pop(); // Remove the second trailing newline in commits where it exists (the ones not from github GUI)
-        }
+        let message = String::from_utf8(output.stdout)?.trim_end_matches('\n').to_string();
         Ok(message)
     }
 
@@ -95,8 +90,7 @@ impl Commit {
             .args(["log", "--format=%an", "-n", "1", sha])
             .output()?;
 
-        let mut name = String::from_utf8(output.stdout)?;
-        name.pop(); // Remove trailing newline
+        let name = String::from_utf8(output.stdout)?.trim_end().to_string();
         Ok(name)
     }
 
@@ -105,8 +99,7 @@ impl Commit {
             .args(["log", "--format=%ae", "-n", "1", sha])
             .output()?;
 
-        let mut email = String::from_utf8(output.stdout)?;
-        email.pop(); // Remove trailing newline
+        let email = String::from_utf8(output.stdout)?.trim_end().to_string();
         Ok(email)
     }
 
@@ -122,8 +115,7 @@ impl Commit {
             ])
             .output()?;
 
-        let mut date = String::from_utf8(output.stdout)?;
-        date.pop(); // Remove trailing newline
+        let date = String::from_utf8(output.stdout)?.trim_end().to_string();
         Ok(date)
     }
 }
