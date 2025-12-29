@@ -91,6 +91,7 @@ The command will display an explanation of what the generated command does, show
 ### Visual Diff Viewer
 
 Launch an interactive side-by-side diff viewer in your terminal:
+<img width="1725" height="1079" alt="image" src="https://github.com/user-attachments/assets/e846b8a6-d839-4e69-926c-b7ce42ce3f4c" />
 
 ```bash
 # View uncommitted changes
