@@ -36,6 +36,7 @@ pub enum ProviderType {
     Deepseek,
     Gemini,
     Xai,
+    Vercel,
 }
 
 impl FromStr for ProviderType {
@@ -52,6 +53,7 @@ impl FromStr for ProviderType {
             "deepseek" => Ok(ProviderType::Deepseek),
             "gemini" => Ok(ProviderType::Gemini),
             "xai" => Ok(ProviderType::Xai),
+            "vercel" => Ok(ProviderType::Vercel),
             _ => Err(format!("Unknown provider: {}", s)),
         }
     }
