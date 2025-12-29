@@ -195,6 +195,35 @@ calculate_sha256() {
     echo "$sha256"
 }
 
+# Generate release notes from commits since last tag
+generate_release_notes() {
+    local version="$1"
+    local last_tag
+    local notes="## What's Changed\n\n"
+    
+    # Get the last tag (most recent tag before HEAD)
+    last_tag=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+    
+    if [[ -z "$last_tag" ]]; then
+        # No previous tag, get all commits
+        info "No previous tag found, including all commits"
+        while IFS= read -r line; do
+            local hash=$(echo "$line" | cut -d' ' -f1)
+            local message=$(echo "$line" | cut -d' ' -f2-)
+            notes+="* $message ([${hash:0:7}](https://github.com/jnsahaj/lumen/commit/$hash))\n"
+        done < <(git log --oneline --format="%H %s")
+    else
+        info "Generating changelog since $last_tag"
+        while IFS= read -r line; do
+            local hash=$(echo "$line" | cut -d' ' -f1)
+            local message=$(echo "$line" | cut -d' ' -f2-)
+            notes+="* $message ([${hash:0:7}](https://github.com/jnsahaj/lumen/commit/$hash))\n"
+        done < <(git log --oneline --format="%H %s" "$last_tag"..HEAD)
+    fi
+    
+    echo -e "$notes"
+}
+
 # Step 7: Create GitHub release and upload
 create_github_release() {
     local version="$1"
@@ -215,10 +244,14 @@ create_github_release() {
     git tag "$tag"
     git push origin "$tag"
     
+    # Generate release notes
+    local release_notes
+    release_notes=$(generate_release_notes "$version")
+    
     # Create release with gh CLI
     gh release create "$tag" \
         --title "v$version" \
-        --notes "Release v$version" \
+        --notes "$release_notes" \
         target/release/lumen.tar.gz
     
     success "GitHub release created and tarball uploaded"
