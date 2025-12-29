@@ -17,6 +17,7 @@ A command-line tool that uses AI to streamline your git workflow - from generati
 - [Usage](#usage-)
   - [Generate Commit Messages](#generate-commit-messages)
   - [Generate Git Commands](#generate-git-commands)
+  - [Visual Diff Viewer](#visual-diff-viewer)
   - [Explain Changes](#explain-changes)
   - [Interactive Mode](#interactive-mode)
   - [Tips & Tricks](#tips--tricks)
@@ -84,6 +85,37 @@ Ask Lumen to generate Git commands based on a natural language query:
 lumen operate "squash the last 3 commits into 1 with the message 'squashed commit'"
 # Output: git reset --soft HEAD~3 && git commit -m "squashed commit" [y/N]
 ```
+
+The command will display an explanation of what the generated command does, show any warnings for potentially dangerous operations, and prompt for confirmation before execution.
+
+### Visual Diff Viewer
+
+Launch an interactive side-by-side diff viewer in your terminal:
+
+```bash
+# View uncommitted changes
+lumen diff
+
+# View changes for a specific commit
+lumen diff HEAD~1
+
+# View changes between branches
+lumen diff main..feature/A
+
+# Filter to specific files
+lumen diff --file src/main.rs --file src/lib.rs
+
+# Watch mode - auto-refresh on file changes
+lumen diff --watch
+```
+
+Keybindings in the diff viewer:
+- `j/k` or arrow keys: Navigate
+- `{/}`: Jump between hunks
+- `tab`: Toggle sidebar
+- `space`: Mark file as viewed
+- `e`: Open file in editor
+- `?`: Show all keybindings
 
 ### Explain Changes
 
