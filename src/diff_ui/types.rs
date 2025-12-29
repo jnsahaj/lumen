@@ -1,9 +1,27 @@
 use crate::diff_ui::sticky_lines::StickyLinesConfig;
 
+#[derive(Clone, Copy, PartialEq)]
+pub enum FileStatus {
+    Added,
+    Modified,
+    Deleted,
+}
+
+impl FileStatus {
+    pub fn symbol(&self) -> &'static str {
+        match self {
+            FileStatus::Added => "A",
+            FileStatus::Modified => "M",
+            FileStatus::Deleted => "D",
+        }
+    }
+}
+
 pub struct FileDiff {
     pub filename: String,
     pub old_content: String,
     pub new_content: String,
+    pub status: FileStatus,
 }
 
 /// Settings for the diff view UI. Designed to be easily extended
@@ -50,6 +68,7 @@ pub enum SidebarItem {
         path: String,
         file_index: usize,
         depth: usize,
+        status: FileStatus,
     },
 }
 
@@ -60,10 +79,10 @@ pub fn build_file_tree(file_diffs: &[FileDiff]) -> Vec<SidebarItem> {
         return Vec::new();
     }
 
-    let mut file_paths: Vec<(String, usize)> = file_diffs
+    let mut file_paths: Vec<(String, usize, FileStatus)> = file_diffs
         .iter()
         .enumerate()
-        .map(|(idx, diff)| (diff.filename.clone(), idx))
+        .map(|(idx, diff)| (diff.filename.clone(), idx, diff.status))
         .collect();
     file_paths.sort_by(|a, b| a.0.cmp(&b.0));
 
@@ -71,7 +90,7 @@ pub fn build_file_tree(file_diffs: &[FileDiff]) -> Vec<SidebarItem> {
     let mut dir_children: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     dir_children.insert(String::new(), BTreeSet::new()); // root
 
-    for (path, _) in &file_paths {
+    for (path, _, _) in &file_paths {
         let parts: Vec<&str> = path.split('/').collect();
 
         // Add file as child of its parent directory
@@ -131,7 +150,7 @@ pub fn build_file_tree(file_diffs: &[FileDiff]) -> Vec<SidebarItem> {
         current
     }
 
-    let file_paths_set: BTreeSet<String> = file_paths.iter().map(|(p, _)| p.clone()).collect();
+    let file_paths_set: BTreeSet<String> = file_paths.iter().map(|(p, _, _)| p.clone()).collect();
 
     let mut items: Vec<SidebarItem> = Vec::new();
     let mut added_dirs: BTreeSet<String> = BTreeSet::new();
@@ -140,7 +159,7 @@ pub fn build_file_tree(file_diffs: &[FileDiff]) -> Vec<SidebarItem> {
     // Maps collapsed path to its depth
     let mut collapsed_depth: BTreeMap<String, usize> = BTreeMap::new();
 
-    for (path, file_idx) in &file_paths {
+    for (path, file_idx, status) in &file_paths {
         let parts: Vec<&str> = path.split('/').collect();
         let file_name = parts.last().unwrap_or(&"").to_string();
 
@@ -227,6 +246,7 @@ pub fn build_file_tree(file_diffs: &[FileDiff]) -> Vec<SidebarItem> {
             path: path.clone(),
             file_index: *file_idx,
             depth: file_depth,
+            status: *status,
         });
     }
 

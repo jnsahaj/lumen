@@ -85,7 +85,7 @@ pub fn render_diff(
     let main_area = if show_sidebar {
         let main_chunks = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Length(40), Constraint::Min(0)])
+            .constraints([Constraint::Length(45), Constraint::Min(0)])
             .split(chunks[1]);
 
         render_sidebar(
@@ -104,115 +104,213 @@ pub fn render_diff(
         chunks[1]
     };
 
-    let content_chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(main_area);
-
-    // Extract old and new content lines for sticky computation
-    let old_content_lines: Vec<(usize, String)> = side_by_side
-        .iter()
-        .filter_map(|dl| dl.old_line.clone())
-        .collect();
-    let new_content_lines: Vec<(usize, String)> = side_by_side
-        .iter()
-        .filter_map(|dl| dl.new_line.clone())
-        .collect();
-
-    // Compute sticky lines for old and new panels
-    let old_sticky = compute_sticky_lines(&old_content_lines, scroll as usize, &settings.sticky_lines);
-    let new_sticky = compute_sticky_lines(&new_content_lines, scroll as usize, &settings.sticky_lines);
-    let sticky_count = old_sticky.len().max(new_sticky.len());
-
-    let visible_height = content_chunks[0].height.saturating_sub(2) as usize;
-    let scroll_usize = scroll as usize;
-    
-    // Adjust visible lines to account for sticky lines
-    let content_height = visible_height.saturating_sub(sticky_count);
-    let visible_lines: Vec<&DiffLine> = side_by_side
-        .iter()
-        .skip(scroll_usize)
-        .take(content_height)
-        .collect();
-
-    let mut old_lines: Vec<Line> = Vec::new();
-    let mut new_lines: Vec<Line> = Vec::new();
-
-    // Render sticky lines first (if enabled)
-    if settings.sticky_lines.enabled && sticky_count > 0 {
-        render_sticky_lines(&old_sticky, sticky_count, &mut old_lines, &diff.filename);
-        render_sticky_lines(&new_sticky, sticky_count, &mut new_lines, &diff.filename);
-    }
-
-    for diff_line in &visible_lines {
-        let (old_bg, new_bg) = match diff_line.change_type {
-            ChangeType::Equal => (None, None),
-            ChangeType::Delete => (Some(Color::Rgb(60, 30, 30)), None),
-            ChangeType::Insert => (None, Some(Color::Rgb(30, 60, 30))),
-        };
-
-        let mut old_spans: Vec<Span> = Vec::new();
-        match &diff_line.old_line {
-            Some((num, text)) => {
-                let prefix = format!("{:4} | ", num);
-                old_spans.push(Span::styled(
-                    prefix,
-                    Style::default()
-                        .fg(Color::DarkGray)
-                        .bg(old_bg.unwrap_or(Color::Reset)),
-                ));
-                old_spans.extend(highlight_line_spans(text, &diff.filename, old_bg));
-            }
-            None => {
-                old_spans.push(Span::styled("     |", Style::default().fg(Color::DarkGray)));
-            }
-        }
-
-        let mut new_spans: Vec<Span> = Vec::new();
-        match &diff_line.new_line {
-            Some((num, text)) => {
-                let prefix = format!("{:4} | ", num);
-                new_spans.push(Span::styled(
-                    prefix,
-                    Style::default()
-                        .fg(Color::DarkGray)
-                        .bg(new_bg.unwrap_or(Color::Reset)),
-                ));
-                new_spans.extend(highlight_line_spans(text, &diff.filename, new_bg));
-            }
-            None => {
-                new_spans.push(Span::styled("     |", Style::default().fg(Color::DarkGray)));
-            }
-        }
-
-        old_lines.push(Line::from(old_spans));
-        new_lines.push(Line::from(new_spans));
-    }
+    // Determine if this is a new file (no old content) or deleted file (no new content)
+    let is_new_file = diff.old_content.is_empty() && !diff.new_content.is_empty();
+    let is_deleted_file = !diff.old_content.is_empty() && diff.new_content.is_empty();
 
     let diff_title_style = if focused_panel == FocusedPanel::DiffView {
         Style::default().fg(Color::Cyan)
     } else {
         Style::default().fg(Color::DarkGray)
     };
-    let old_para = Paragraph::new(old_lines)
-        .scroll((0, h_scroll))
-        .block(
-            Block::default()
-                .title(" [2] Old ")
-                .borders(Borders::ALL)
-                .border_style(diff_title_style.patch(Style::default().fg(Color::Red))),
-        );
-    let new_para = Paragraph::new(new_lines)
-        .scroll((0, h_scroll))
-        .block(
-            Block::default()
-                .title(" New ")
-                .borders(Borders::ALL)
-                .border_style(diff_title_style.patch(Style::default().fg(Color::Green))),
-        );
 
-    frame.render_widget(old_para, content_chunks[0]);
-    frame.render_widget(new_para, content_chunks[1]);
+    if is_new_file {
+        // Show only the new file panel
+        let visible_height = main_area.height.saturating_sub(2) as usize;
+        let new_content_lines: Vec<(usize, String)> = side_by_side
+            .iter()
+            .filter_map(|dl| dl.new_line.clone())
+            .collect();
+        let new_sticky = compute_sticky_lines(&new_content_lines, scroll as usize, &settings.sticky_lines);
+        let sticky_count = new_sticky.len();
+        let content_height = visible_height.saturating_sub(sticky_count);
+
+        let visible_lines: Vec<&DiffLine> = side_by_side
+            .iter()
+            .skip(scroll as usize)
+            .take(content_height)
+            .collect();
+
+        let mut new_lines: Vec<Line> = Vec::new();
+        if settings.sticky_lines.enabled && sticky_count > 0 {
+            render_sticky_lines(&new_sticky, sticky_count, &mut new_lines, &diff.filename);
+        }
+
+        for diff_line in &visible_lines {
+            if let Some((num, text)) = &diff_line.new_line {
+                let prefix = format!("{:4} | ", num);
+                let mut spans: Vec<Span> = vec![Span::styled(
+                    prefix,
+                    Style::default()
+                        .fg(Color::DarkGray)
+                        .bg(Color::Rgb(30, 60, 30)),
+                )];
+                spans.extend(highlight_line_spans(text, &diff.filename, Some(Color::Rgb(30, 60, 30))));
+                new_lines.push(Line::from(spans));
+            }
+        }
+
+        let new_para = Paragraph::new(new_lines)
+            .scroll((0, h_scroll))
+            .block(
+                Block::default()
+                    .title(" [2] New File ")
+                    .borders(Borders::ALL)
+                    .border_style(diff_title_style.patch(Style::default().fg(Color::Green))),
+            );
+        frame.render_widget(new_para, main_area);
+    } else if is_deleted_file {
+        // Show only the old file panel
+        let visible_height = main_area.height.saturating_sub(2) as usize;
+        let old_content_lines: Vec<(usize, String)> = side_by_side
+            .iter()
+            .filter_map(|dl| dl.old_line.clone())
+            .collect();
+        let old_sticky = compute_sticky_lines(&old_content_lines, scroll as usize, &settings.sticky_lines);
+        let sticky_count = old_sticky.len();
+        let content_height = visible_height.saturating_sub(sticky_count);
+
+        let visible_lines: Vec<&DiffLine> = side_by_side
+            .iter()
+            .skip(scroll as usize)
+            .take(content_height)
+            .collect();
+
+        let mut old_lines: Vec<Line> = Vec::new();
+        if settings.sticky_lines.enabled && sticky_count > 0 {
+            render_sticky_lines(&old_sticky, sticky_count, &mut old_lines, &diff.filename);
+        }
+
+        for diff_line in &visible_lines {
+            if let Some((num, text)) = &diff_line.old_line {
+                let prefix = format!("{:4} | ", num);
+                let mut spans: Vec<Span> = vec![Span::styled(
+                    prefix,
+                    Style::default()
+                        .fg(Color::DarkGray)
+                        .bg(Color::Rgb(60, 30, 30)),
+                )];
+                spans.extend(highlight_line_spans(text, &diff.filename, Some(Color::Rgb(60, 30, 30))));
+                old_lines.push(Line::from(spans));
+            }
+        }
+
+        let old_para = Paragraph::new(old_lines)
+            .scroll((0, h_scroll))
+            .block(
+                Block::default()
+                    .title(" [2] Deleted File ")
+                    .borders(Borders::ALL)
+                    .border_style(diff_title_style.patch(Style::default().fg(Color::Red))),
+            );
+        frame.render_widget(old_para, main_area);
+    } else {
+        // Standard side-by-side view
+        let content_chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(main_area);
+
+        // Extract old and new content lines for sticky computation
+        let old_content_lines: Vec<(usize, String)> = side_by_side
+            .iter()
+            .filter_map(|dl| dl.old_line.clone())
+            .collect();
+        let new_content_lines: Vec<(usize, String)> = side_by_side
+            .iter()
+            .filter_map(|dl| dl.new_line.clone())
+            .collect();
+
+        // Compute sticky lines for old and new panels
+        let old_sticky = compute_sticky_lines(&old_content_lines, scroll as usize, &settings.sticky_lines);
+        let new_sticky = compute_sticky_lines(&new_content_lines, scroll as usize, &settings.sticky_lines);
+        let sticky_count = old_sticky.len().max(new_sticky.len());
+
+        let visible_height = content_chunks[0].height.saturating_sub(2) as usize;
+        let scroll_usize = scroll as usize;
+
+        // Adjust visible lines to account for sticky lines
+        let content_height = visible_height.saturating_sub(sticky_count);
+        let visible_lines: Vec<&DiffLine> = side_by_side
+            .iter()
+            .skip(scroll_usize)
+            .take(content_height)
+            .collect();
+
+        let mut old_lines: Vec<Line> = Vec::new();
+        let mut new_lines: Vec<Line> = Vec::new();
+
+        // Render sticky lines first (if enabled)
+        if settings.sticky_lines.enabled && sticky_count > 0 {
+            render_sticky_lines(&old_sticky, sticky_count, &mut old_lines, &diff.filename);
+            render_sticky_lines(&new_sticky, sticky_count, &mut new_lines, &diff.filename);
+        }
+
+        for diff_line in &visible_lines {
+            let (old_bg, new_bg) = match diff_line.change_type {
+                ChangeType::Equal => (None, None),
+                ChangeType::Delete => (Some(Color::Rgb(60, 30, 30)), None),
+                ChangeType::Insert => (None, Some(Color::Rgb(30, 60, 30))),
+            };
+
+            let mut old_spans: Vec<Span> = Vec::new();
+            match &diff_line.old_line {
+                Some((num, text)) => {
+                    let prefix = format!("{:4} | ", num);
+                    old_spans.push(Span::styled(
+                        prefix,
+                        Style::default()
+                            .fg(Color::DarkGray)
+                            .bg(old_bg.unwrap_or(Color::Reset)),
+                    ));
+                    old_spans.extend(highlight_line_spans(text, &diff.filename, old_bg));
+                }
+                None => {
+                    old_spans.push(Span::styled("     |", Style::default().fg(Color::DarkGray)));
+                }
+            }
+
+            let mut new_spans: Vec<Span> = Vec::new();
+            match &diff_line.new_line {
+                Some((num, text)) => {
+                    let prefix = format!("{:4} | ", num);
+                    new_spans.push(Span::styled(
+                        prefix,
+                        Style::default()
+                            .fg(Color::DarkGray)
+                            .bg(new_bg.unwrap_or(Color::Reset)),
+                    ));
+                    new_spans.extend(highlight_line_spans(text, &diff.filename, new_bg));
+                }
+                None => {
+                    new_spans.push(Span::styled("     |", Style::default().fg(Color::DarkGray)));
+                }
+            }
+
+            old_lines.push(Line::from(old_spans));
+            new_lines.push(Line::from(new_spans));
+        }
+
+        let old_para = Paragraph::new(old_lines)
+            .scroll((0, h_scroll))
+            .block(
+                Block::default()
+                    .title(" [2] Old ")
+                    .borders(Borders::ALL)
+                    .border_style(diff_title_style.patch(Style::default().fg(Color::Red))),
+            );
+        let new_para = Paragraph::new(new_lines)
+            .scroll((0, h_scroll))
+            .block(
+                Block::default()
+                    .title(" New ")
+                    .borders(Borders::ALL)
+                    .border_style(diff_title_style.patch(Style::default().fg(Color::Green))),
+            );
+
+        frame.render_widget(old_para, content_chunks[0]);
+        frame.render_widget(new_para, content_chunks[1]);
+    }
 }
 
 fn render_sticky_lines(
@@ -257,7 +355,7 @@ fn render_sidebar(
         .iter()
         .enumerate()
         .map(|(i, item)| {
-            let (display, is_current_file, is_viewed) = match item {
+            let (prefix, status_symbol, status_color, name, is_current_file, is_viewed) = match item {
                 SidebarItem::Directory { name, path, depth, .. } => {
                     let indent = "  ".repeat(*depth);
                     let all_children_viewed = sidebar_items.iter().all(|child| {
@@ -285,26 +383,37 @@ fn render_sidebar(
                     } else {
                         "  "
                     };
-                    (format!("{}{}▸ {}", marker, indent, name), false, all_children_viewed && has_children)
+                    (format!("{}{}", indent, marker), "▼".to_string(), None, format!(" {}", name), false, all_children_viewed && has_children)
                 }
                 SidebarItem::File {
                     name,
                     file_index,
                     depth,
+                    status,
                     ..
                 } => {
                     let indent = "  ".repeat(*depth);
                     let viewed = viewed_files.contains(file_index);
                     let marker = if viewed { "✓ " } else { "  " };
+                    let status_color = match status {
+                        crate::diff_ui::types::FileStatus::Modified => Some(Color::Yellow),
+                        crate::diff_ui::types::FileStatus::Added => Some(Color::Green),
+                        crate::diff_ui::types::FileStatus::Deleted => Some(Color::Red),
+                    };
+                    let status_symbol = status.symbol().to_string();
                     (
-                        format!("{}{}  {}", marker, indent, name),
+                        format!("{}{}", indent, marker),
+                        status_symbol,
+                        status_color,
+                        format!(" {}", name),
                         *file_index == current_file,
                         viewed,
                     )
                 }
             };
 
-            let style = if i == sidebar_selected {
+            let is_selected = i == sidebar_selected;
+            let base_style = if is_selected {
                 Style::default()
                     .fg(Color::Black)
                     .bg(if is_focused {
@@ -320,7 +429,21 @@ fn render_sidebar(
                 Style::default()
             };
 
-            ListItem::new(display).style(style)
+            let status_style = if is_selected {
+                base_style
+            } else if let Some(color) = status_color {
+                Style::default().fg(color)
+            } else {
+                base_style
+            };
+
+            let line = Line::from(vec![
+                Span::styled(prefix, base_style),
+                Span::styled(status_symbol, status_style),
+                Span::styled(name, base_style),
+            ]);
+
+            ListItem::new(line)
         })
         .collect();
 
