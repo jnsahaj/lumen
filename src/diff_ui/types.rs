@@ -1,5 +1,26 @@
 use crate::diff_ui::context::ContextConfig;
 
+pub fn expand_tabs(s: &str, tab_width: usize) -> String {
+    if tab_width == 0 {
+        return s.replace('\t', "");
+    }
+    let mut result = String::with_capacity(s.len());
+    let mut col = 0;
+    for c in s.chars() {
+        if c == '\t' {
+            let spaces = tab_width - (col % tab_width);
+            for _ in 0..spaces {
+                result.push(' ');
+            }
+            col += spaces;
+        } else {
+            result.push(c);
+            col += 1;
+        }
+    }
+    result
+}
+
 #[derive(Clone, Copy, PartialEq)]
 pub enum FileStatus {
     Added,
@@ -26,9 +47,19 @@ pub struct FileDiff {
 
 /// Settings for the diff view UI. Designed to be easily extended
 /// with additional configuration options in the future.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct DiffViewSettings {
     pub context: ContextConfig,
+    pub tab_width: usize,
+}
+
+impl Default for DiffViewSettings {
+    fn default() -> Self {
+        Self {
+            context: ContextConfig::default(),
+            tab_width: 4,
+        }
+    }
 }
 
 pub struct DiffLine {

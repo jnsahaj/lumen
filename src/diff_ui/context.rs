@@ -209,7 +209,10 @@ pub fn compute_context_lines(
     filename: &str,
     scroll_position: usize,
     config: &ContextConfig,
+    tab_width: usize,
 ) -> Vec<ContextLine> {
+    use crate::diff_ui::types::expand_tabs;
+
     if !config.enabled || source.is_empty() || scroll_position == 0 {
         return Vec::new();
     }
@@ -246,7 +249,7 @@ pub fn compute_context_lines(
             // 2. End at or after the scroll position (still contains current view)
             if start_line < scroll_position && end_line >= scroll_position {
                 if let Some(line_content) = lines.get(start_line) {
-                    context_nodes.push((start_line, end_line, line_content.to_string()));
+                    context_nodes.push((start_line, end_line, expand_tabs(line_content, tab_width)));
                 }
             }
         }
@@ -278,7 +281,7 @@ mod tests {
     #[test]
     fn test_empty_source() {
         let config = ContextConfig::default();
-        let result = compute_context_lines("", "test.rs", 5, &config);
+        let result = compute_context_lines("", "test.rs", 5, &config, 4);
         assert!(result.is_empty());
     }
 
@@ -286,7 +289,7 @@ mod tests {
     fn test_scroll_at_zero() {
         let config = ContextConfig::default();
         let source = "fn main() {\n    println!(\"hello\");\n}";
-        let result = compute_context_lines(source, "test.rs", 0, &config);
+        let result = compute_context_lines(source, "test.rs", 0, &config, 4);
         assert!(result.is_empty());
     }
 
@@ -299,7 +302,7 @@ mod tests {
     let z = 3;
     println!("{}", x + y + z);
 }"#;
-        let result = compute_context_lines(source, "test.rs", 3, &config);
+        let result = compute_context_lines(source, "test.rs", 3, &config, 4);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].content, "fn main() {");
         assert_eq!(result[0].line_number, 1);
@@ -315,7 +318,7 @@ mod tests {
         }
     }
 }"#;
-        let result = compute_context_lines(source, "test.rs", 3, &config);
+        let result = compute_context_lines(source, "test.rs", 3, &config, 4);
         // Should show impl, fn, and if
         assert!(result.len() >= 2);
         assert!(result[0].content.contains("impl Foo"));
@@ -325,7 +328,7 @@ mod tests {
     fn test_unsupported_language() {
         let config = ContextConfig::default();
         let source = "some content\nmore content\neven more";
-        let result = compute_context_lines(source, "test.xyz", 2, &config);
+        let result = compute_context_lines(source, "test.xyz", 2, &config, 4);
         assert!(result.is_empty());
     }
 
@@ -336,7 +339,7 @@ mod tests {
             max_lines: 5,
         };
         let source = "fn main() {\n    let x = 1;\n}";
-        let result = compute_context_lines(source, "test.rs", 1, &config);
+        let result = compute_context_lines(source, "test.rs", 1, &config, 4);
         assert!(result.is_empty());
     }
 }

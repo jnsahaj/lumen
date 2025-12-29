@@ -78,9 +78,10 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
             }
         })
         .unwrap_or(0);
+    let settings = DiffViewSettings::default();
     let mut scroll: u16 = if !file_diffs.is_empty() && current_file < file_diffs.len() {
         let diff = &file_diffs[current_file];
-        let side_by_side = compute_side_by_side(&diff.old_content, &diff.new_content);
+        let side_by_side = compute_side_by_side(&diff.old_content, &diff.new_content, settings.tab_width);
         let hunks = find_hunk_starts(&side_by_side);
         hunks
             .first()
@@ -91,7 +92,6 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
     };
     let mut sidebar_scroll: usize = 0;
     let mut h_scroll: u16 = 0;
-    let settings = DiffViewSettings::default();
     let mut active_modal: Option<Modal> = None;
     let mut pending_key = PendingKey::default();
 
@@ -130,7 +130,7 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
             }
             if !file_diffs.is_empty() {
                 let diff = &file_diffs[current_file];
-                let side_by_side = compute_side_by_side(&diff.old_content, &diff.new_content);
+                let side_by_side = compute_side_by_side(&diff.old_content, &diff.new_content, settings.tab_width);
                 let hunks = find_hunk_starts(&side_by_side);
                 scroll = hunks
                     .first()
@@ -150,7 +150,7 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
             })?;
         } else {
             let diff = &file_diffs[current_file];
-            let side_by_side = compute_side_by_side(&diff.old_content, &diff.new_content);
+            let side_by_side = compute_side_by_side(&diff.old_content, &diff.new_content, settings.tab_width);
             let hunk_count = find_hunk_starts(&side_by_side).len();
             terminal.draw(|frame| {
                 ui::render_diff(
@@ -181,7 +181,7 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
             let bottom_padding = 5;
             let max_scroll = if !file_diffs.is_empty() {
                 let diff = &file_diffs[current_file];
-                let total_lines = compute_side_by_side(&diff.old_content, &diff.new_content).len();
+                let total_lines = compute_side_by_side(&diff.old_content, &diff.new_content, settings.tab_width).len();
                 total_lines.saturating_sub(visible_height.saturating_sub(bottom_padding))
             } else {
                 0
@@ -220,6 +220,7 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                                             let side_by_side = compute_side_by_side(
                                                 &diff.old_content,
                                                 &diff.new_content,
+                                                settings.tab_width,
                                             );
                                             let hunks = find_hunk_starts(&side_by_side);
                                             scroll = hunks
@@ -316,7 +317,7 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                                         }
                                         let diff = &file_diffs[current_file];
                                         let side_by_side =
-                                            compute_side_by_side(&diff.old_content, &diff.new_content);
+                                            compute_side_by_side(&diff.old_content, &diff.new_content, settings.tab_width);
                                         let hunks = find_hunk_starts(&side_by_side);
                                         scroll = hunks
                                             .first()
@@ -346,7 +347,7 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                                         }
                                         let diff = &file_diffs[current_file];
                                         let side_by_side =
-                                            compute_side_by_side(&diff.old_content, &diff.new_content);
+                                            compute_side_by_side(&diff.old_content, &diff.new_content, settings.tab_width);
                                         let hunks = find_hunk_starts(&side_by_side);
                                         scroll = hunks
                                             .first()
@@ -426,7 +427,7 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                                     current_file = *file_index;
                                     let diff = &file_diffs[current_file];
                                     let side_by_side =
-                                        compute_side_by_side(&diff.old_content, &diff.new_content);
+                                        compute_side_by_side(&diff.old_content, &diff.new_content, settings.tab_width);
                                     let hunks = find_hunk_starts(&side_by_side);
                                     scroll = hunks
                                         .first()
@@ -504,7 +505,7 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                                         }
                                         let diff = &file_diffs[current_file];
                                         let side_by_side =
-                                            compute_side_by_side(&diff.old_content, &diff.new_content);
+                                            compute_side_by_side(&diff.old_content, &diff.new_content, settings.tab_width);
                                         let hunks = find_hunk_starts(&side_by_side);
                                         scroll = hunks
                                             .first()
@@ -525,7 +526,7 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                             if !file_diffs.is_empty() {
                                 let diff = &file_diffs[current_file];
                                 let side_by_side =
-                                    compute_side_by_side(&diff.old_content, &diff.new_content);
+                                    compute_side_by_side(&diff.old_content, &diff.new_content, settings.tab_width);
                                 let hunks = find_hunk_starts(&side_by_side);
                                 if let Some(&next) =
                                     hunks.iter().find(|&&h| h > scroll as usize + 5)
@@ -538,7 +539,7 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                             if !file_diffs.is_empty() {
                                 let diff = &file_diffs[current_file];
                                 let side_by_side =
-                                    compute_side_by_side(&diff.old_content, &diff.new_content);
+                                    compute_side_by_side(&diff.old_content, &diff.new_content, settings.tab_width);
                                 let hunks = find_hunk_starts(&side_by_side);
                                 if let Some(&prev) = hunks
                                     .iter()

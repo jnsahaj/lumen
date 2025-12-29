@@ -74,7 +74,7 @@ pub fn render_diff(
     hunk_count: usize,
 ) {
     let area = frame.area();
-    let side_by_side = compute_side_by_side(&diff.old_content, &diff.new_content);
+    let side_by_side = compute_side_by_side(&diff.old_content, &diff.new_content, settings.tab_width);
     let line_stats = compute_line_stats(&side_by_side);
     let branch = get_current_branch();
 
@@ -118,7 +118,7 @@ pub fn render_diff(
     if is_new_file {
         // Show only the new file panel
         let visible_height = main_area.height.saturating_sub(2) as usize;
-        let new_context = compute_context_lines(&diff.new_content, &diff.filename, scroll as usize, &settings.context);
+        let new_context = compute_context_lines(&diff.new_content, &diff.filename, scroll as usize, &settings.context, settings.tab_width);
         let context_count = new_context.len();
         let content_height = visible_height.saturating_sub(context_count);
 
@@ -159,7 +159,7 @@ pub fn render_diff(
     } else if is_deleted_file {
         // Show only the old file panel
         let visible_height = main_area.height.saturating_sub(2) as usize;
-        let old_context = compute_context_lines(&diff.old_content, &diff.filename, scroll as usize, &settings.context);
+        let old_context = compute_context_lines(&diff.old_content, &diff.filename, scroll as usize, &settings.context, settings.tab_width);
         let context_count = old_context.len();
         let content_height = visible_height.saturating_sub(context_count);
 
@@ -205,8 +205,8 @@ pub fn render_diff(
             .split(main_area);
 
         // Compute context lines for old and new panels using tree-sitter
-        let old_context = compute_context_lines(&diff.old_content, &diff.filename, scroll as usize, &settings.context);
-        let new_context = compute_context_lines(&diff.new_content, &diff.filename, scroll as usize, &settings.context);
+        let old_context = compute_context_lines(&diff.old_content, &diff.filename, scroll as usize, &settings.context, settings.tab_width);
+        let new_context = compute_context_lines(&diff.new_content, &diff.filename, scroll as usize, &settings.context, settings.tab_width);
         let context_count = old_context.len().max(new_context.len());
 
         let visible_height = content_chunks[0].height.saturating_sub(2) as usize;

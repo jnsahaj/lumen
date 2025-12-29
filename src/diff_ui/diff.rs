@@ -1,8 +1,8 @@
 use similar::{ChangeTag, TextDiff};
 
-use crate::diff_ui::types::{ChangeType, DiffLine};
+use crate::diff_ui::types::{expand_tabs, ChangeType, DiffLine};
 
-pub fn compute_side_by_side(old: &str, new: &str) -> Vec<DiffLine> {
+pub fn compute_side_by_side(old: &str, new: &str, tab_width: usize) -> Vec<DiffLine> {
     let diff = TextDiff::from_lines(old, new);
     let mut lines = Vec::new();
     let mut old_num = 1usize;
@@ -11,9 +11,10 @@ pub fn compute_side_by_side(old: &str, new: &str) -> Vec<DiffLine> {
     for change in diff.iter_all_changes() {
         match change.tag() {
             ChangeTag::Equal => {
+                let text = expand_tabs(change.value().trim_end(), tab_width);
                 lines.push(DiffLine {
-                    old_line: Some((old_num, change.value().trim_end().to_string())),
-                    new_line: Some((new_num, change.value().trim_end().to_string())),
+                    old_line: Some((old_num, text.clone())),
+                    new_line: Some((new_num, text)),
                     change_type: ChangeType::Equal,
                 });
                 old_num += 1;
@@ -21,7 +22,7 @@ pub fn compute_side_by_side(old: &str, new: &str) -> Vec<DiffLine> {
             }
             ChangeTag::Delete => {
                 lines.push(DiffLine {
-                    old_line: Some((old_num, change.value().trim_end().to_string())),
+                    old_line: Some((old_num, expand_tabs(change.value().trim_end(), tab_width))),
                     new_line: None,
                     change_type: ChangeType::Delete,
                 });
@@ -30,7 +31,7 @@ pub fn compute_side_by_side(old: &str, new: &str) -> Vec<DiffLine> {
             ChangeTag::Insert => {
                 lines.push(DiffLine {
                     old_line: None,
-                    new_line: Some((new_num, change.value().trim_end().to_string())),
+                    new_line: Some((new_num, expand_tabs(change.value().trim_end(), tab_width))),
                     change_type: ChangeType::Insert,
                 });
                 new_num += 1;
