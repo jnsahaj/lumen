@@ -15,7 +15,7 @@ impl DraftCommand {
     pub async fn execute(&self, provider: &LumenProvider) -> Result<(), LumenError> {
         let result = provider.draft(self).await?;
 
-        print!("{result}");
+        println!("{result}");
         std::io::stdout().flush()?;
         Ok(())
     }
