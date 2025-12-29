@@ -123,8 +123,8 @@ Understand what changed and why:
 
 ```bash
 # Explain current changes in your working directory
-lumen explain --diff                  # All changes
-lumen explain --diff --staged         # Only staged changes
+lumen explain                         # All changes
+lumen explain --staged                # Only staged changes
 
 # Explain specific commits
 lumen explain HEAD                    # Latest commit
@@ -134,7 +134,7 @@ lumen explain main..feature/A         # Branch comparison
 lumen explain main...feature/A        # Branch comparison (merge base)
 
 # Ask specific questions about changes
-lumen explain --diff --query "What's the performance impact of these changes?"
+lumen explain --query "What's the performance impact of these changes?"
 lumen explain HEAD --query "What are the potential side effects?"
 ```
 
