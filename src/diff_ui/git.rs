@@ -93,6 +93,12 @@ pub fn get_changed_files(options: &DiffOptions) -> Vec<String> {
                 .output()
                 .expect("Failed to run git");
 
+            // Get untracked files (new files not yet added to git)
+            let untracked = Command::new("git")
+                .args(["ls-files", "--others", "--exclude-standard"])
+                .output()
+                .expect("Failed to run git");
+
             let mut all_files: std::collections::HashSet<String> = std::collections::HashSet::new();
 
             for line in String::from_utf8_lossy(&unstaged.stdout).lines() {
@@ -101,6 +107,11 @@ pub fn get_changed_files(options: &DiffOptions) -> Vec<String> {
                 }
             }
             for line in String::from_utf8_lossy(&staged.stdout).lines() {
+                if !line.is_empty() {
+                    all_files.insert(line.to_string());
+                }
+            }
+            for line in String::from_utf8_lossy(&untracked.stdout).lines() {
                 if !line.is_empty() {
                     all_files.insert(line.to_string());
                 }
