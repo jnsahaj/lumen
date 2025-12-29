@@ -483,25 +483,44 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                                     }
                                 }
                             } else if focused_panel == FocusedPanel::DiffView {
-                                // Toggle viewed status; if marking as viewed, move to next
+                                // Toggle viewed status; if marking as viewed, move to next non-viewed file
                                 if viewed_files.contains(&current_file) {
                                     viewed_files.remove(&current_file);
                                 } else {
                                     viewed_files.insert(current_file);
-                                    if current_file < file_diffs.len() - 1 {
-                                        current_file += 1;
-                                        if let Some(idx) = sidebar_items.iter().position(|item| {
-                                            matches!(item, SidebarItem::File { file_index, .. } if *file_index == current_file)
-                                        }) {
-                                            sidebar_selected = idx;
-                                            // Auto-scroll sidebar
-                                            let visible_height =
-                                                terminal.size()?.height.saturating_sub(5) as usize;
-                                            if sidebar_selected >= sidebar_scroll + visible_height {
-                                                sidebar_scroll =
-                                                    sidebar_selected.saturating_sub(visible_height)
-                                                        + 1;
+                                    // Find next non-viewed file in sidebar order, wrapping around if needed
+                                    // First, try files after current position
+                                    let mut next_file: Option<(usize, usize)> = None;
+                                    for (idx, item) in sidebar_items.iter().enumerate().skip(sidebar_selected + 1) {
+                                        if let SidebarItem::File { file_index, .. } = item {
+                                            if !viewed_files.contains(file_index) {
+                                                next_file = Some((idx, *file_index));
+                                                break;
                                             }
+                                        }
+                                    }
+                                    // If not found, wrap around and search from beginning
+                                    if next_file.is_none() {
+                                        for (idx, item) in sidebar_items.iter().enumerate().take(sidebar_selected) {
+                                            if let SidebarItem::File { file_index, .. } = item {
+                                                if !viewed_files.contains(file_index) {
+                                                    next_file = Some((idx, *file_index));
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if let Some((idx, file_idx)) = next_file {
+                                        sidebar_selected = idx;
+                                        current_file = file_idx;
+                                        // Auto-scroll sidebar
+                                        let visible_height =
+                                            terminal.size()?.height.saturating_sub(5) as usize;
+                                        if sidebar_selected >= sidebar_scroll + visible_height {
+                                            sidebar_scroll =
+                                                sidebar_selected.saturating_sub(visible_height) + 1;
+                                        } else if sidebar_selected < sidebar_scroll {
+                                            sidebar_scroll = sidebar_selected;
                                         }
                                         let diff = &file_diffs[current_file];
                                         let side_by_side =

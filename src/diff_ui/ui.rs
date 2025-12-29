@@ -301,7 +301,8 @@ pub fn render_diff(
     let truncated_filename = truncate_middle(&diff.filename, max_filename_len);
     let bg = Color::Rgb(30, 30, 40);
 
-    // Left section: branch + filename + watch
+    // Left section: branch + filename + viewed + watch
+    let viewed_indicator = if viewed_files.contains(&current_file) { " ✓" } else { "" };
     let left_spans = vec![
         Span::styled(" ", Style::default().bg(bg)),
         Span::styled(
@@ -310,6 +311,7 @@ pub fn render_diff(
         ),
         Span::styled(" ", Style::default().bg(bg)),
         Span::styled(truncated_filename, Style::default().fg(Color::Rgb(200, 200, 200)).bg(bg)),
+        Span::styled(viewed_indicator, Style::default().fg(Color::Green).bg(bg)),
         Span::styled(watch_indicator, Style::default().fg(Color::Yellow).bg(bg)),
     ];
 
