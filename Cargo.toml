@@ -10,11 +10,11 @@ repository = "https://github.com/jnsahaj/lumen"
 
 [dependencies]
 clap = { version = "4.4", features = ["derive", "env"] }
-reqwest = { version = "0.11", features = ["json"] }
+reqwest = { version = "0.12", features = ["json"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "1.0", features = ["full"] }
-async-trait = "0.1.83"
+genai = "0.1"
 spinoff = { version = "0.8.0", features = ["dots"] }
 thiserror = "1.0"
 indoc = "2.0.5"

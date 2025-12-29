@@ -26,7 +26,6 @@ async fn main() {
 
 async fn run() -> Result<(), LumenError> {
     let cli = Cli::parse();
-    let client = reqwest::Client::new();
 
     let config = match LumenConfig::build(&cli) {
         Ok(config) => config,
@@ -34,7 +33,7 @@ async fn run() -> Result<(), LumenError> {
     };
 
     let provider =
-        provider::LumenProvider::new(client, config.provider, config.api_key, config.model)?;
+        provider::LumenProvider::new(config.provider, config.api_key, config.model)?;
     let command = command::LumenCommand::new(provider);
 
     match cli.command {

@@ -1,6 +1,5 @@
-use super::{AIProvider, ProviderError};
+use super::ProviderError;
 use crate::ai_prompt::AIPrompt;
-use async_trait::async_trait;
 use reqwest::{
     header::{HeaderMap, HeaderValue},
     StatusCode,
@@ -42,7 +41,7 @@ impl PhindProvider {
     }
 
     fn parse_line(line: &str) -> Option<String> {
-        let data = line.strip_prefix("data: ")?; // Extract data after "data: " prefix
+        let data = line.strip_prefix("data: ")?;
         let json_value: Value = serde_json::from_str(data).ok()?;
 
         json_value
@@ -62,7 +61,7 @@ impl PhindProvider {
             .collect()
     }
 
-    async fn complete(&self, prompt: AIPrompt) -> Result<String, ProviderError> {
+    pub async fn complete(&self, prompt: AIPrompt) -> Result<String, ProviderError> {
         let payload = json!({
             "additional_extension_context": "",
             "allow_magic_buttons": true,
@@ -110,15 +109,8 @@ impl PhindProvider {
             }
         }
     }
-}
 
-#[async_trait]
-impl AIProvider for PhindProvider {
-    async fn complete(&self, prompt: AIPrompt) -> Result<String, ProviderError> {
-        self.complete(prompt).await
-    }
-
-    fn get_model(&self) -> String {
+    pub fn get_model(&self) -> String {
         self.config.model.clone()
     }
 }

@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use draft::DraftCommand;
 use explain::ExplainCommand;
 use list::ListCommand;
@@ -29,28 +28,6 @@ pub enum CommandType {
     },
 }
 
-#[async_trait]
-pub trait Command {
-    async fn execute(&self, provider: &LumenProvider) -> Result<(), LumenError>;
-}
-
-impl CommandType {
-    pub fn create_command(self) -> Result<Box<dyn Command>, LumenError> {
-        Ok(match self {
-            CommandType::Explain { git_entity, query } => {
-                Box::new(ExplainCommand { git_entity, query })
-            }
-            CommandType::List => Box::new(ListCommand),
-            CommandType::Draft(context, draft_config) => Box::new(DraftCommand {
-                git_entity: GitEntity::Diff(Diff::from_working_tree(true)?),
-                draft_config,
-                context,
-            }),
-            CommandType::Operate { query } => Box::new(OperateCommand { query }),
-        })
-    }
-}
-
 pub struct LumenCommand {
     provider: LumenProvider,
 }
@@ -61,7 +38,24 @@ impl LumenCommand {
     }
 
     pub async fn execute(&self, command_type: CommandType) -> Result<(), LumenError> {
-        command_type.create_command()?.execute(&self.provider).await
+        match command_type {
+            CommandType::Explain { git_entity, query } => {
+                ExplainCommand { git_entity, query }.execute(&self.provider).await
+            }
+            CommandType::List => ListCommand.execute(&self.provider).await,
+            CommandType::Draft(context, draft_config) => {
+                DraftCommand {
+                    git_entity: GitEntity::Diff(Diff::from_working_tree(true)?),
+                    draft_config,
+                    context,
+                }
+                .execute(&self.provider)
+                .await
+            }
+            CommandType::Operate { query } => {
+                OperateCommand { query }.execute(&self.provider).await
+            }
+        }
     }
 
     fn get_sha_from_fzf() -> Result<String, LumenError> {

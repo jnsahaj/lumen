@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use spinoff::{spinners, Color, Spinner};
 use std::io::{self, Write};
 use thiserror::Error;
@@ -19,7 +18,7 @@ pub struct ExtractError {
 
 use crate::{error::LumenError, provider::LumenProvider};
 
-use super::{Command, LumenCommand};
+use super::LumenCommand;
 
 pub struct OperateCommand {
     pub query: String,
@@ -118,9 +117,8 @@ pub fn process_operation(result: OperateResult) -> Result<(), io::Error> {
     Ok(())
 }
 
-#[async_trait]
-impl Command for OperateCommand {
-    async fn execute(&self, provider: &LumenProvider) -> Result<(), LumenError> {
+impl OperateCommand {
+    pub async fn execute(&self, provider: &LumenProvider) -> Result<(), LumenError> {
         LumenCommand::print_with_mdcat(format!("`query`: {}", &self.query))?;
 
         let spinner_text = "Generating answer...".to_string();
