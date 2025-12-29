@@ -5,9 +5,8 @@
 ![GitHub License](https://img.shields.io/github/license/jnsahaj/lumen)
 ![Crates.io Size](https://img.shields.io/crates/size/lumen)
 
-A command-line tool that uses AI to streamline your git workflow - from generating commit messages to explaining complex changes, all without requiring an API key.
-
-![demo](https://github.com/user-attachments/assets/0d029bdb-3b11-4b5c-bed6-f5a91d8529f2)
+A command-line tool that uses AI to streamline your git workflow - generate commit messages, view diff and explain changes, all without requiring an API key.
+![CleanShot 2025-12-30 at 02 47 04](https://github.com/user-attachments/assets/21e9d32a-de8a-40b2-b79b-3e87c9cbb9eb)
 
 ## Table of Contents
 - [Features](#features-)
@@ -15,9 +14,9 @@ A command-line tool that uses AI to streamline your git workflow - from generati
   - [Prerequisites](#prerequisites)
   - [Installation](#installation)
 - [Usage](#usage-)
+  - [Visual Diff Viewer](#visual-diff-viewer)
   - [Generate Commit Messages](#generate-commit-messages)
   - [Generate Git Commands](#generate-git-commands)
-  - [Visual Diff Viewer](#visual-diff-viewer)
   - [Explain Changes](#explain-changes)
   - [Interactive Mode](#interactive-mode)
   - [Tips & Tricks](#tips--tricks)
@@ -28,6 +27,7 @@ A command-line tool that uses AI to streamline your git workflow - from generati
 
 ## Features 🔅
 
+- **Beautiful & Ergonomic Diff Viewer**: Review your code with minimal effort
 - **Smart Commit Messages**: Generate conventional commit messages for your staged changes
 - **Git History Insights**: Understand what changed in any commit, branch, or your current work
 - **Interactive Search**: Find and explore commits using fuzzy search
@@ -187,12 +187,12 @@ Configure your preferred AI provider:
 
 ```bash
 # Using CLI arguments
-lumen -p openai -k "your-api-key" -m "gpt-4o" draft
+lumen -p openai -k "your-api-key" -m "gpt-5-mini" draft
 
 # Using environment variables
 export LUMEN_AI_PROVIDER="openai"
 export LUMEN_API_KEY="your-api-key"
-export LUMEN_AI_MODEL="gpt-4o"
+export LUMEN_AI_MODEL="gpt-5-mini"
 ```
 
 ### Supported Providers
@@ -200,14 +200,15 @@ export LUMEN_AI_MODEL="gpt-4o"
 | Provider | API Key Required | Models |
 |----------|-----------------|---------|
 | [Phind](https://www.phind.com/agent) `phind` (Default) | No | `Phind-70B` |
-| [OpenAI](https://platform.openai.com/docs/guides/text-generation/chat-completions-api) `openai` | Yes | `gpt-4.1`, `gpt-4.1-mini`, `gpt-4.1-nano`, `gpt-4o`, `o1`, `o3-mini` (default: `gpt-4.1-mini`) |
-| [Claude](https://claude.ai/new) `claude` | Yes | `claude-sonnet-4-20250514`, `claude-opus-4-20250514`, `claude-3-5-haiku-20241022` (default: `claude-sonnet-4-20250514`) |
-| [Gemini](https://ai.google.dev/) `gemini` | Yes (free tier) | `gemini-2.5-flash`, `gemini-2.5-pro`, `gemini-2.0-flash` (default: `gemini-2.5-flash`) |
-| [Groq](https://groq.com/) `groq` | Yes (free) | `llama-3.3-70b-versatile`, `llama-3.1-8b-instant`, `mixtral-8x7b-32768` (default: `llama-3.3-70b-versatile`) |
-| [DeepSeek](https://www.deepseek.com/) `deepseek` | Yes | `deepseek-chat`, `deepseek-reasoner` (default: `deepseek-chat`) |
-| [xAI](https://x.ai/) `xai` | Yes | `grok-3`, `grok-3-fast`, `grok-3-mini`, `grok-3-mini-fast` (default: `grok-3-mini-fast`) |
+| [OpenAI](https://platform.openai.com/docs/models) `openai` | Yes | `gpt-5.2`, `gpt-5`, `gpt-5-mini`, `gpt-5-nano`, `gpt-4.1`, `gpt-4.1-mini`, `o4-mini` (default: `gpt-5-mini`) |
+| [Claude](https://www.anthropic.com/pricing) `claude` | Yes | `claude-sonnet-4-5-20250930`, `claude-opus-4-5-20251115`, `claude-haiku-4-5-20251015` (default: `claude-sonnet-4-5-20250930`) |
+| [Gemini](https://ai.google.dev/) `gemini` | Yes (free tier) | `gemini-3-pro`, `gemini-3-flash`, `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite` (default: `gemini-3-flash`) |
+| [Groq](https://console.groq.com/docs/models) `groq` | Yes (free) | `llama-3.3-70b-versatile`, `llama-3.1-8b-instant`, `meta-llama/llama-4-maverick-17b-128e-instruct`, `openai/gpt-oss-120b` (default: `llama-3.3-70b-versatile`) |
+| [DeepSeek](https://www.deepseek.com/) `deepseek` | Yes | `deepseek-chat` (V3.2), `deepseek-reasoner` (default: `deepseek-chat`) |
+| [xAI](https://x.ai/) `xai` | Yes | `grok-4`, `grok-4-mini`, `grok-4-mini-fast` (default: `grok-4-mini-fast`) |
 | [Ollama](https://github.com/ollama/ollama) `ollama` | No (local) | [see list](https://ollama.com/library) (default: `llama3.2`) |
-| [OpenRouter](https://openrouter.ai/) `openrouter` | Yes | [see list](https://openrouter.ai/models) (default: `anthropic/claude-sonnet-4`) |
+| [OpenRouter](https://openrouter.ai/) `openrouter` | Yes | [see list](https://openrouter.ai/models) (default: `anthropic/claude-sonnet-4.5`) |
+| [Vercel AI Gateway](https://vercel.com/docs/ai-gateway) `vercel` | Yes | [see list](https://vercel.com/docs/ai-gateway/supported-models) (default: `anthropic/claude-sonnet-4.5`) |
 
 ## Advanced Configuration 🔅
 
@@ -230,7 +231,7 @@ Lumen will load configurations in the following order of priority:
 ```json
 {
   "provider": "openai",
-  "model": "gpt-4o",
+  "model": "gpt-5-mini",
   "api_key": "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
   "draft": {
     "commit_types": {
@@ -261,7 +262,7 @@ Example: Using different providers for different projects:
 ```bash
 # Set global defaults in .zshrc/.bashrc
 export LUMEN_AI_PROVIDER="openai"
-export LUMEN_AI_MODEL="gpt-4o"
+export LUMEN_AI_MODEL="gpt-5-mini"
 export LUMEN_API_KEY="sk-xxxxxxxxxxxxxxxxxxxxxxxx"
 
 # Override per project using config file

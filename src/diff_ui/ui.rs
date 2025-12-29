@@ -9,7 +9,7 @@ use crate::diff_ui::context::{compute_context_lines, ContextLine};
 use crate::diff_ui::diff::compute_side_by_side;
 use crate::diff_ui::git::get_current_branch;
 use crate::diff_ui::highlight::highlight_line_spans;
-use crate::diff_ui::types::{ChangeType, DiffLine, DiffViewSettings, FileDiff, FocusedPanel, SidebarItem};
+use crate::diff_ui::types::{ChangeType, DiffFullscreen, DiffLine, DiffViewSettings, FileDiff, FocusedPanel, SidebarItem};
 
 pub struct LineStats {
     pub added: usize,
@@ -72,6 +72,7 @@ pub fn render_diff(
     viewed_files: &HashSet<usize>,
     settings: &DiffViewSettings,
     hunk_count: usize,
+    diff_fullscreen: DiffFullscreen,
 ) {
     let area = frame.area();
     let side_by_side = compute_side_by_side(&diff.old_content, &diff.new_content, settings.tab_width);
@@ -198,18 +199,26 @@ pub fn render_diff(
             );
         frame.render_widget(old_para, main_area);
     } else {
-        // Standard side-by-side view
-        let content_chunks = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-            .split(main_area);
+        // Standard side-by-side view (or fullscreen mode)
+        let (old_area, new_area) = match diff_fullscreen {
+            DiffFullscreen::OldOnly => (Some(main_area), None),
+            DiffFullscreen::NewOnly => (None, Some(main_area)),
+            DiffFullscreen::None => {
+                let content_chunks = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                    .split(main_area);
+                (Some(content_chunks[0]), Some(content_chunks[1]))
+            }
+        };
 
         // Compute context lines for old and new panels using tree-sitter
         let old_context = compute_context_lines(&diff.old_content, &diff.filename, scroll as usize, &settings.context, settings.tab_width);
         let new_context = compute_context_lines(&diff.new_content, &diff.filename, scroll as usize, &settings.context, settings.tab_width);
         let context_count = old_context.len().max(new_context.len());
 
-        let visible_height = content_chunks[0].height.saturating_sub(2) as usize;
+        let reference_area = old_area.or(new_area).unwrap_or(main_area);
+        let visible_height = reference_area.height.saturating_sub(2) as usize;
         let scroll_usize = scroll as usize;
 
         // Adjust visible lines to account for context lines
@@ -225,8 +234,12 @@ pub fn render_diff(
 
         // Render context lines first (if enabled)
         if settings.context.enabled && context_count > 0 {
-            render_context_lines(&old_context, context_count, &mut old_lines, &diff.filename);
-            render_context_lines(&new_context, context_count, &mut new_lines, &diff.filename);
+            if old_area.is_some() {
+                render_context_lines(&old_context, context_count, &mut old_lines, &diff.filename);
+            }
+            if new_area.is_some() {
+                render_context_lines(&new_context, context_count, &mut new_lines, &diff.filename);
+            }
         }
 
         for diff_line in &visible_lines {
@@ -236,63 +249,70 @@ pub fn render_diff(
                 ChangeType::Insert => (None, Some(Color::Rgb(30, 60, 30))),
             };
 
-            let mut old_spans: Vec<Span> = Vec::new();
-            match &diff_line.old_line {
-                Some((num, text)) => {
-                    let prefix = format!("{:4} | ", num);
-                    old_spans.push(Span::styled(
-                        prefix,
-                        Style::default()
-                            .fg(Color::DarkGray)
-                            .bg(old_bg.unwrap_or(Color::Reset)),
-                    ));
-                    old_spans.extend(highlight_line_spans(text, &diff.filename, old_bg));
+            if old_area.is_some() {
+                let mut old_spans: Vec<Span> = Vec::new();
+                match &diff_line.old_line {
+                    Some((num, text)) => {
+                        let prefix = format!("{:4} | ", num);
+                        old_spans.push(Span::styled(
+                            prefix,
+                            Style::default()
+                                .fg(Color::DarkGray)
+                                .bg(old_bg.unwrap_or(Color::Reset)),
+                        ));
+                        old_spans.extend(highlight_line_spans(text, &diff.filename, old_bg));
+                    }
+                    None => {
+                        old_spans.push(Span::styled("     |", Style::default().fg(Color::DarkGray)));
+                    }
                 }
-                None => {
-                    old_spans.push(Span::styled("     |", Style::default().fg(Color::DarkGray)));
-                }
+                old_lines.push(Line::from(old_spans));
             }
 
-            let mut new_spans: Vec<Span> = Vec::new();
-            match &diff_line.new_line {
-                Some((num, text)) => {
-                    let prefix = format!("{:4} | ", num);
-                    new_spans.push(Span::styled(
-                        prefix,
-                        Style::default()
-                            .fg(Color::DarkGray)
-                            .bg(new_bg.unwrap_or(Color::Reset)),
-                    ));
-                    new_spans.extend(highlight_line_spans(text, &diff.filename, new_bg));
+            if new_area.is_some() {
+                let mut new_spans: Vec<Span> = Vec::new();
+                match &diff_line.new_line {
+                    Some((num, text)) => {
+                        let prefix = format!("{:4} | ", num);
+                        new_spans.push(Span::styled(
+                            prefix,
+                            Style::default()
+                                .fg(Color::DarkGray)
+                                .bg(new_bg.unwrap_or(Color::Reset)),
+                        ));
+                        new_spans.extend(highlight_line_spans(text, &diff.filename, new_bg));
+                    }
+                    None => {
+                        new_spans.push(Span::styled("     |", Style::default().fg(Color::DarkGray)));
+                    }
                 }
-                None => {
-                    new_spans.push(Span::styled("     |", Style::default().fg(Color::DarkGray)));
-                }
+                new_lines.push(Line::from(new_spans));
             }
-
-            old_lines.push(Line::from(old_spans));
-            new_lines.push(Line::from(new_spans));
         }
 
-        let old_para = Paragraph::new(old_lines)
-            .scroll((0, h_scroll))
-            .block(
-                Block::default()
-                    .title(" [2] Old ")
-                    .borders(Borders::ALL)
-                    .border_style(diff_title_style.patch(Style::default().fg(Color::Red))),
-            );
-        let new_para = Paragraph::new(new_lines)
-            .scroll((0, h_scroll))
-            .block(
-                Block::default()
-                    .title(" New ")
-                    .borders(Borders::ALL)
-                    .border_style(diff_title_style.patch(Style::default().fg(Color::Green))),
-            );
+        if let Some(area) = old_area {
+            let old_para = Paragraph::new(old_lines)
+                .scroll((0, h_scroll))
+                .block(
+                    Block::default()
+                        .title(" [2] Old ")
+                        .borders(Borders::ALL)
+                        .border_style(diff_title_style.patch(Style::default().fg(Color::Red))),
+                );
+            frame.render_widget(old_para, area);
+        }
 
-        frame.render_widget(old_para, content_chunks[0]);
-        frame.render_widget(new_para, content_chunks[1]);
+        if let Some(area) = new_area {
+            let new_para = Paragraph::new(new_lines)
+                .scroll((0, h_scroll))
+                .block(
+                    Block::default()
+                        .title(" New ")
+                        .borders(Borders::ALL)
+                        .border_style(diff_title_style.patch(Style::default().fg(Color::Green))),
+                );
+            frame.render_widget(new_para, area);
+        }
     }
 
     // Render footer
@@ -301,7 +321,8 @@ pub fn render_diff(
     let truncated_filename = truncate_middle(&diff.filename, max_filename_len);
     let bg = Color::Rgb(30, 30, 40);
 
-    // Left section: branch + filename + watch
+    // Left section: branch + filename + viewed + watch
+    let viewed_indicator = if viewed_files.contains(&current_file) { " ✓" } else { "" };
     let left_spans = vec![
         Span::styled(" ", Style::default().bg(bg)),
         Span::styled(
@@ -310,6 +331,7 @@ pub fn render_diff(
         ),
         Span::styled(" ", Style::default().bg(bg)),
         Span::styled(truncated_filename, Style::default().fg(Color::Rgb(200, 200, 200)).bg(bg)),
+        Span::styled(viewed_indicator, Style::default().fg(Color::Green).bg(bg)),
         Span::styled(watch_indicator, Style::default().fg(Color::Yellow).bg(bg)),
     ];
 

@@ -87,6 +87,14 @@ impl Default for FocusedPanel {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Default)]
+pub enum DiffFullscreen {
+    #[default]
+    None,
+    OldOnly,
+    NewOnly,
+}
+
 #[derive(Clone)]
 pub enum SidebarItem {
     Directory {

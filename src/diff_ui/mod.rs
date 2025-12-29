@@ -27,7 +27,7 @@ use crate::commit_reference::CommitReference;
 use diff::{compute_side_by_side, find_hunk_starts};
 use git::load_file_diffs;
 pub use modal::{KeyBind, KeyBindSection, Modal};
-use types::{build_file_tree, DiffViewSettings, FocusedPanel, SidebarItem};
+use types::{build_file_tree, DiffFullscreen, DiffViewSettings, FocusedPanel, SidebarItem};
 use watcher::setup_watcher;
 
 #[derive(Default, Clone, Copy, PartialEq)]
@@ -79,6 +79,7 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
         })
         .unwrap_or(0);
     let settings = DiffViewSettings::default();
+    let mut diff_fullscreen = DiffFullscreen::default();
     let mut scroll: u16 = if !file_diffs.is_empty() && current_file < file_diffs.len() {
         let diff = &file_diffs[current_file];
         let side_by_side = compute_side_by_side(&diff.old_content, &diff.new_content, settings.tab_width);
@@ -169,6 +170,7 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                     &viewed_files,
                     &settings,
                     hunk_count,
+                    diff_fullscreen,
                 );
                 if let Some(ref modal) = active_modal {
                     modal.render(frame);
@@ -216,6 +218,7 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                                             &sidebar_items[sidebar_selected]
                                         {
                                             current_file = *file_index;
+                                            diff_fullscreen = DiffFullscreen::None;
                                             let diff = &file_diffs[current_file];
                                             let side_by_side = compute_side_by_side(
                                                 &diff.old_content,
@@ -306,6 +309,7 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                                     if let SidebarItem::File { file_index, .. } = &sidebar_items[next] {
                                         sidebar_selected = next;
                                         current_file = *file_index;
+                                        diff_fullscreen = DiffFullscreen::None;
                                         // Auto-scroll sidebar
                                         let visible_height =
                                             terminal.size()?.height.saturating_sub(5) as usize;
@@ -341,6 +345,7 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                                     if let SidebarItem::File { file_index, .. } = &sidebar_items[prev] {
                                         sidebar_selected = prev;
                                         current_file = *file_index;
+                                        diff_fullscreen = DiffFullscreen::None;
                                         // Auto-scroll sidebar
                                         if sidebar_selected < sidebar_scroll {
                                             sidebar_scroll = sidebar_selected;
@@ -362,6 +367,34 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                                     prev -= 1;
                                 }
                             }
+                        }
+                        KeyCode::Char(']') => {
+                            // Toggle new panel fullscreen (only if new content exists)
+                            if !file_diffs.is_empty() {
+                                let diff = &file_diffs[current_file];
+                                if !diff.new_content.is_empty() {
+                                    diff_fullscreen = match diff_fullscreen {
+                                        DiffFullscreen::NewOnly => DiffFullscreen::None,
+                                        _ => DiffFullscreen::NewOnly,
+                                    };
+                                }
+                            }
+                        }
+                        KeyCode::Char('[') => {
+                            // Toggle old panel fullscreen (only if old content exists)
+                            if !file_diffs.is_empty() {
+                                let diff = &file_diffs[current_file];
+                                if !diff.old_content.is_empty() {
+                                    diff_fullscreen = match diff_fullscreen {
+                                        DiffFullscreen::OldOnly => DiffFullscreen::None,
+                                        _ => DiffFullscreen::OldOnly,
+                                    };
+                                }
+                            }
+                        }
+                        KeyCode::Char('=') => {
+                            // Reset to side-by-side view
+                            diff_fullscreen = DiffFullscreen::None;
                         }
                         KeyCode::Down | KeyCode::Char('j') => {
                             if focused_panel == FocusedPanel::Sidebar {
@@ -425,6 +458,7 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                                     &sidebar_items[sidebar_selected]
                                 {
                                     current_file = *file_index;
+                                    diff_fullscreen = DiffFullscreen::None;
                                     let diff = &file_diffs[current_file];
                                     let side_by_side =
                                         compute_side_by_side(&diff.old_content, &diff.new_content, settings.tab_width);
@@ -483,25 +517,45 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                                     }
                                 }
                             } else if focused_panel == FocusedPanel::DiffView {
-                                // Toggle viewed status; if marking as viewed, move to next
+                                // Toggle viewed status; if marking as viewed, move to next non-viewed file
                                 if viewed_files.contains(&current_file) {
                                     viewed_files.remove(&current_file);
                                 } else {
                                     viewed_files.insert(current_file);
-                                    if current_file < file_diffs.len() - 1 {
-                                        current_file += 1;
-                                        if let Some(idx) = sidebar_items.iter().position(|item| {
-                                            matches!(item, SidebarItem::File { file_index, .. } if *file_index == current_file)
-                                        }) {
-                                            sidebar_selected = idx;
-                                            // Auto-scroll sidebar
-                                            let visible_height =
-                                                terminal.size()?.height.saturating_sub(5) as usize;
-                                            if sidebar_selected >= sidebar_scroll + visible_height {
-                                                sidebar_scroll =
-                                                    sidebar_selected.saturating_sub(visible_height)
-                                                        + 1;
+                                    // Find next non-viewed file in sidebar order, wrapping around if needed
+                                    // First, try files after current position
+                                    let mut next_file: Option<(usize, usize)> = None;
+                                    for (idx, item) in sidebar_items.iter().enumerate().skip(sidebar_selected + 1) {
+                                        if let SidebarItem::File { file_index, .. } = item {
+                                            if !viewed_files.contains(file_index) {
+                                                next_file = Some((idx, *file_index));
+                                                break;
                                             }
+                                        }
+                                    }
+                                    // If not found, wrap around and search from beginning
+                                    if next_file.is_none() {
+                                        for (idx, item) in sidebar_items.iter().enumerate().take(sidebar_selected) {
+                                            if let SidebarItem::File { file_index, .. } = item {
+                                                if !viewed_files.contains(file_index) {
+                                                    next_file = Some((idx, *file_index));
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if let Some((idx, file_idx)) = next_file {
+                                        sidebar_selected = idx;
+                                        current_file = file_idx;
+                                        diff_fullscreen = DiffFullscreen::None;
+                                        // Auto-scroll sidebar
+                                        let visible_height =
+                                            terminal.size()?.height.saturating_sub(5) as usize;
+                                        if sidebar_selected >= sidebar_scroll + visible_height {
+                                            sidebar_scroll =
+                                                sidebar_selected.saturating_sub(visible_height) + 1;
+                                        } else if sidebar_selected < sidebar_scroll {
+                                            sidebar_scroll = sidebar_selected;
                                         }
                                         let diff = &file_diffs[current_file];
                                         let side_by_side =
@@ -622,6 +676,9 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                                             KeyBind { key: "{ / }", description: "Previous / next hunk" },
                                             KeyBind { key: "pageup / pagedown", description: "Scroll by page" },
                                             KeyBind { key: "space", description: "Mark viewed & next file" },
+                                            KeyBind { key: "]", description: "Toggle new panel fullscreen" },
+                                            KeyBind { key: "[", description: "Toggle old panel fullscreen" },
+                                            KeyBind { key: "=", description: "Reset fullscreen to side-by-side" },
                                         ],
                                     },
                                 ],

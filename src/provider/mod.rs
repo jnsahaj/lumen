@@ -1,5 +1,7 @@
+use genai::adapter::AdapterKind;
 use genai::chat::{ChatMessage, ChatRequest};
-use genai::Client;
+use genai::resolver::{AuthData, Endpoint, ServiceTargetResolver};
+use genai::{Client, ClientBuilder, ModelIden, ServiceTarget};
 use phind::{PhindConfig, PhindProvider};
 use thiserror::Error;
 
@@ -41,6 +43,13 @@ pub struct LumenProvider {
     provider_name: String,
 }
 
+/// Provider configuration for custom endpoint providers (OpenRouter, Vercel)
+struct CustomProviderConfig {
+    endpoint: &'static str,
+    env_key: &'static str,
+    adapter_kind: AdapterKind,
+}
+
 impl LumenProvider {
     pub fn new(
         provider_type: ProviderType,
@@ -56,23 +65,83 @@ impl LumenProvider {
                     "Phind".to_string(),
                 )
             }
+            // Custom endpoint providers (OpenRouter, Vercel) - use ServiceTargetResolver
+            ProviderType::Openrouter | ProviderType::Vercel => {
+                let (default_model, name, config) = match provider_type {
+                    ProviderType::Openrouter => (
+                        "anthropic/claude-sonnet-4.5",
+                        "OpenRouter",
+                        CustomProviderConfig {
+                            endpoint: "https://openrouter.ai/api/v1/",
+                            env_key: "OPENROUTER_API_KEY",
+                            adapter_kind: AdapterKind::OpenAI,
+                        },
+                    ),
+                    ProviderType::Vercel => (
+                        "anthropic/claude-sonnet-4.5",
+                        "Vercel",
+                        CustomProviderConfig {
+                            // Trailing slash is required for URL joining to work correctly
+                            endpoint: "https://ai-gateway.vercel.sh/v1/",
+                            env_key: "VERCEL_API_KEY",
+                            adapter_kind: AdapterKind::OpenAI,
+                        },
+                    ),
+                    _ => unreachable!(),
+                };
+
+                let model = model.unwrap_or_else(|| default_model.to_string());
+                let model_for_resolver = model.clone();
+
+                // Get API key from CLI/config or environment
+                let auth_env_key = config.env_key;
+                if let Some(key) = api_key {
+                    std::env::set_var(auth_env_key, key);
+                }
+
+                let endpoint = config.endpoint;
+                let adapter_kind = config.adapter_kind;
+
+                let target_resolver = ServiceTargetResolver::from_resolver_fn(
+                    move |service_target: ServiceTarget| -> Result<ServiceTarget, genai::resolver::Error> {
+                        let ServiceTarget { model, .. } = service_target;
+                        Ok(ServiceTarget {
+                            endpoint: Endpoint::from_static(endpoint),
+                            auth: AuthData::from_env(auth_env_key),
+                            model: ModelIden::new(adapter_kind, model.model_name),
+                        })
+                    },
+                );
+
+                let client = ClientBuilder::default()
+                    .with_service_target_resolver(target_resolver)
+                    .build();
+
+                (
+                    ProviderBackend::GenAI {
+                        client,
+                        model: model_for_resolver,
+                    },
+                    name.to_string(),
+                )
+            }
+            // Native genai providers
             _ => {
                 let (default_model, name, env_key) = match provider_type {
-                    ProviderType::Openai => ("gpt-4.1-mini", "OpenAI", "OPENAI_API_KEY"),
+                    ProviderType::Openai => ("gpt-5-mini", "OpenAI", "OPENAI_API_KEY"),
                     ProviderType::Claude => (
-                        "claude-sonnet-4-20250514",
+                        "claude-sonnet-4-5-20250930",
                         "Claude",
                         "ANTHROPIC_API_KEY",
                     ),
                     ProviderType::Groq => ("llama-3.3-70b-versatile", "Groq", "GROQ_API_KEY"),
                     ProviderType::Ollama => ("llama3.2", "Ollama", ""),
                     ProviderType::Deepseek => ("deepseek-chat", "DeepSeek", "DEEPSEEK_API_KEY"),
-                    ProviderType::Openrouter => {
-                        ("anthropic/claude-sonnet-4", "OpenRouter", "OPENROUTER_API_KEY")
+                    ProviderType::Gemini => ("gemini-3-flash", "Gemini", "GEMINI_API_KEY"),
+                    ProviderType::Xai => ("grok-4-mini-fast", "xAI", "XAI_API_KEY"),
+                    ProviderType::Phind | ProviderType::Openrouter | ProviderType::Vercel => {
+                        unreachable!()
                     }
-                    ProviderType::Gemini => ("gemini-2.5-flash", "Gemini", "GEMINI_API_KEY"),
-                    ProviderType::Xai => ("grok-3-mini-fast", "xAI", "XAI_API_KEY"),
-                    ProviderType::Phind => unreachable!(),
                 };
 
                 let model = model.unwrap_or_else(|| default_model.to_string());
@@ -111,7 +180,7 @@ impl LumenProvider {
                 let response = client.exec_chat(model, chat_req, None).await?;
 
                 response
-                    .content_text_as_str()
+                    .first_text()
                     .map(|s| s.to_string())
                     .ok_or(ProviderError::NoCompletionChoice)
             }
