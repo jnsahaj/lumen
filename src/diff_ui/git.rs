@@ -1,35 +1,37 @@
 use std::fs;
-use std::process::Command;
 
 use super::DiffOptions;
 use crate::commit_reference::CommitReference;
 use crate::diff_ui::types::{FileDiff, FileStatus};
+use crate::vcs::Vcs;
 
 pub fn get_current_branch() -> String {
-    let output = Command::new("git")
-        .args(["rev-parse", "--abbrev-ref", "HEAD"])
-        .output();
+    let vcs = Vcs::detect();
+    let output = vcs.get_current_branch().output();
 
     match output {
         Ok(o) if o.status.success() => {
-            String::from_utf8_lossy(&o.stdout).trim().to_string()
+            let result = String::from_utf8_lossy(&o.stdout).trim().to_string();
+            if result.is_empty() {
+                "unknown".to_string()
+            } else {
+                result
+            }
         }
         _ => "unknown".to_string(),
     }
 }
 
-/// Resolved references for diff comparison
 pub enum DiffRefs {
-    /// Uncommitted changes (working tree vs HEAD)
     WorkingTree,
-    /// Single commit (SHA vs SHA^)
     Single(String),
-    /// Range between two refs
     Range { from: String, to: String },
 }
 
 impl DiffRefs {
     pub fn from_options(options: &DiffOptions) -> Self {
+        let vcs = Vcs::detect();
+        
         match &options.reference {
             None => DiffRefs::WorkingTree,
             Some(CommitReference::Single(sha)) => DiffRefs::Single(sha.clone()),
@@ -38,11 +40,10 @@ impl DiffRefs {
                 to: to.clone(),
             },
             Some(CommitReference::TripleDots { from, to }) => {
-                // Get merge-base for triple dots
-                let output = Command::new("git")
-                    .args(["merge-base", from, to])
+                let output = vcs
+                    .get_merge_base(from, to)
                     .output()
-                    .expect("Failed to run git merge-base");
+                    .expect("Failed to get merge base");
                 let merge_base = String::from_utf8_lossy(&output.stdout).trim().to_string();
                 DiffRefs::Range {
                     from: merge_base,
@@ -53,64 +54,50 @@ impl DiffRefs {
     }
 }
 
-/// Get the list of files changed
 pub fn get_changed_files(options: &DiffOptions) -> Vec<String> {
+    let vcs = Vcs::detect();
     let refs = DiffRefs::from_options(options);
 
     let files: Vec<String> = match refs {
         DiffRefs::Single(sha) => {
-            let output = Command::new("git")
-                .args(["diff-tree", "--no-commit-id", "--name-only", "-r", &sha])
+            let output = vcs
+                .get_commit_files(&sha)
                 .output()
-                .expect("Failed to run git");
-            String::from_utf8_lossy(&output.stdout)
-                .lines()
-                .filter(|s| !s.is_empty())
-                .map(String::from)
-                .collect()
+                .expect("Failed to get commit files");
+            vcs.parse_file_list(&String::from_utf8_lossy(&output.stdout))
         }
         DiffRefs::Range { from, to } => {
-            let output = Command::new("git")
-                .args(["diff", "--name-only", &from, &to])
+            let output = vcs
+                .get_range_files(&from, &to)
                 .output()
-                .expect("Failed to run git");
-            String::from_utf8_lossy(&output.stdout)
-                .lines()
-                .filter(|s| !s.is_empty())
-                .map(String::from)
-                .collect()
+                .expect("Failed to get range files");
+            vcs.parse_file_list(&String::from_utf8_lossy(&output.stdout))
         }
         DiffRefs::WorkingTree => {
-            // Get unstaged changes (tracked files modified in working tree)
-            let unstaged = Command::new("git")
-                .args(["diff", "--name-only", "HEAD"])
-                .output()
-                .expect("Failed to run git");
-
-            // Get staged changes (including newly added files)
-            let staged = Command::new("git")
-                .args(["diff", "--cached", "--name-only"])
-                .output()
-                .expect("Failed to run git");
-
-            // Get untracked files (new files not yet added to git)
-            let untracked = Command::new("git")
-                .args(["ls-files", "--others", "--exclude-standard"])
-                .output()
-                .expect("Failed to run git");
-
             let mut all_files: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-            for line in String::from_utf8_lossy(&unstaged.stdout).lines() {
-                if !line.is_empty() {
-                    all_files.insert(line.to_string());
+            let unstaged = vcs
+                .get_unstaged_files()
+                .output()
+                .expect("Failed to get unstaged files");
+            for file in vcs.parse_file_list(&String::from_utf8_lossy(&unstaged.stdout)) {
+                all_files.insert(file);
+            }
+
+            if vcs.supports_staging() {
+                let staged = vcs
+                    .get_staged_files()
+                    .output()
+                    .expect("Failed to get staged files");
+                for file in vcs.parse_file_list(&String::from_utf8_lossy(&staged.stdout)) {
+                    all_files.insert(file);
                 }
             }
-            for line in String::from_utf8_lossy(&staged.stdout).lines() {
-                if !line.is_empty() {
-                    all_files.insert(line.to_string());
-                }
-            }
+
+            let untracked = vcs
+                .get_untracked_files()
+                .output()
+                .expect("Failed to get untracked files");
             for line in String::from_utf8_lossy(&untracked.stdout).lines() {
                 if !line.is_empty() {
                     all_files.insert(line.to_string());
@@ -128,16 +115,30 @@ pub fn get_changed_files(options: &DiffOptions) -> Vec<String> {
     }
 }
 
-/// Get content of a file at the "old" side of the diff
 pub fn get_old_content(filename: &str, refs: &DiffRefs) -> String {
-    let ref_spec = match refs {
-        DiffRefs::Single(sha) => format!("{}^:{}", sha, filename),
-        DiffRefs::Range { from, .. } => format!("{}:{}", from, filename),
-        DiffRefs::WorkingTree => format!("HEAD:{}", filename),
+    let vcs = Vcs::detect();
+    
+    let (rev, use_parent) = match refs {
+        DiffRefs::Single(sha) => (sha.clone(), true),
+        DiffRefs::Range { from, .. } => (from.clone(), false),
+        DiffRefs::WorkingTree => {
+            match vcs {
+                Vcs::Git => ("HEAD".to_string(), false),
+                Vcs::Jj => ("@-".to_string(), false),
+            }
+        }
     };
-    let output = Command::new("git")
-        .args(["show", &ref_spec])
-        .output();
+
+    let actual_rev = if use_parent {
+        match vcs {
+            Vcs::Git => format!("{}^", rev),
+            Vcs::Jj => format!("{}-", rev),
+        }
+    } else {
+        rev
+    };
+
+    let output = vcs.show_file(filename, &actual_rev).output();
 
     match output {
         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
@@ -145,31 +146,25 @@ pub fn get_old_content(filename: &str, refs: &DiffRefs) -> String {
     }
 }
 
-/// Get content of a file at the "new" side of the diff
 pub fn get_new_content(filename: &str, refs: &DiffRefs) -> String {
+    let vcs = Vcs::detect();
+    
     match refs {
         DiffRefs::Single(sha) => {
-            let output = Command::new("git")
-                .args(["show", &format!("{}:{}", sha, filename)])
-                .output();
-
+            let output = vcs.show_file(filename, sha).output();
             match output {
                 Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
                 _ => String::new(),
             }
         }
         DiffRefs::Range { to, .. } => {
-            let output = Command::new("git")
-                .args(["show", &format!("{}:{}", to, filename)])
-                .output();
-
+            let output = vcs.show_file(filename, to).output();
             match output {
                 Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
                 _ => String::new(),
             }
         }
         DiffRefs::WorkingTree => {
-            // Read from working tree
             fs::read_to_string(filename).unwrap_or_default()
         }
     }

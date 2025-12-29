@@ -1,5 +1,5 @@
 use crate::error::LumenError;
-use std::process::Command;
+use crate::vcs::Vcs;
 use thiserror::Error;
 
 use super::GIT_DIFF_EXCLUSIONS;
@@ -38,10 +38,10 @@ impl Commit {
     }
 
     pub fn is_valid_commit(sha: &str) -> Result<(), LumenError> {
-        let output = Command::new("git").args(["cat-file", "-t", sha]).output()?;
-        let output_str = String::from_utf8(output.stdout)?;
+        let vcs = Vcs::detect();
+        let output = vcs.validate_revision(sha).output()?;
 
-        if output_str.trim() == "commit" {
+        if vcs.is_valid_revision_output(&output) {
             return Ok(());
         }
 
@@ -49,26 +49,24 @@ impl Commit {
     }
 
     fn get_full_hash(sha: &str) -> Result<String, LumenError> {
-        let output = Command::new("git").args(["rev-parse", sha]).output()?;
+        let vcs = Vcs::detect();
+        let output = vcs.get_full_hash(sha).output()?;
 
         let full_hash = String::from_utf8(output.stdout)?.trim_end().to_string();
         Ok(full_hash)
     }
 
     fn get_diff(sha: &str) -> Result<String, LumenError> {
-        let output = Command::new("git")
-            .args([
-                "diff-tree",
-                "-p",
-                "--binary",
-                "--no-color",
-                "--compact-summary",
-                sha,
-            ])
-            .args(GIT_DIFF_EXCLUSIONS)
-            .output()?;
-
+        let vcs = Vcs::detect();
+        let mut cmd = vcs.get_commit_diff(sha);
+        
+        if vcs == Vcs::Git {
+            cmd.args(GIT_DIFF_EXCLUSIONS);
+        }
+        
+        let output = cmd.output()?;
         let diff = String::from_utf8(output.stdout)?;
+        
         if diff.is_empty() {
             return Err(CommitError::EmptyDiff(sha.to_string()).into());
         }
@@ -77,43 +75,32 @@ impl Commit {
     }
 
     fn get_message(sha: &str) -> Result<String, LumenError> {
-        let output = Command::new("git")
-            .args(["log", "--format=%B", "-n", "1", sha])
-            .output()?;
+        let vcs = Vcs::detect();
+        let output = vcs.get_commit_message(sha).output()?;
 
         let message = String::from_utf8(output.stdout)?.trim_end_matches('\n').to_string();
         Ok(message)
     }
 
     fn get_author_name(sha: &str) -> Result<String, LumenError> {
-        let output = Command::new("git")
-            .args(["log", "--format=%an", "-n", "1", sha])
-            .output()?;
+        let vcs = Vcs::detect();
+        let output = vcs.get_author_name(sha).output()?;
 
         let name = String::from_utf8(output.stdout)?.trim_end().to_string();
         Ok(name)
     }
 
     fn get_author_email(sha: &str) -> Result<String, LumenError> {
-        let output = Command::new("git")
-            .args(["log", "--format=%ae", "-n", "1", sha])
-            .output()?;
+        let vcs = Vcs::detect();
+        let output = vcs.get_author_email(sha).output()?;
 
         let email = String::from_utf8(output.stdout)?.trim_end().to_string();
         Ok(email)
     }
 
     fn get_date(sha: &str) -> Result<String, LumenError> {
-        let output = Command::new("git")
-            .args([
-                "log",
-                "--format=%cd",
-                "--date=format:%Y-%m-%d %H:%M:%S",
-                "-n",
-                "1",
-                sha,
-            ])
-            .output()?;
+        let vcs = Vcs::detect();
+        let output = vcs.get_commit_date(sha).output()?;
 
         let date = String::from_utf8(output.stdout)?.trim_end().to_string();
         Ok(date)
