@@ -29,6 +29,13 @@ pub use modal::{KeyBind, KeyBindSection, Modal};
 use types::{build_file_tree, DiffViewSettings, FocusedPanel, SidebarItem};
 use watcher::setup_watcher;
 
+#[derive(Default, Clone, Copy, PartialEq)]
+enum PendingKey {
+    #[default]
+    None,
+    G,
+}
+
 pub struct DiffOptions {
     pub reference: Option<CommitReference>,
     pub file: Option<Vec<String>>,
@@ -51,18 +58,6 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
     };
 
     let mut file_diffs = load_file_diffs(&options);
-    let mut current_file: usize = 0;
-    let mut scroll: u16 = if !file_diffs.is_empty() {
-        let diff = &file_diffs[0];
-        let side_by_side = compute_side_by_side(&diff.old_content, &diff.new_content);
-        let hunks = find_hunk_starts(&side_by_side);
-        hunks
-            .first()
-            .map(|&h| (h as u16).saturating_sub(5))
-            .unwrap_or(0)
-    } else {
-        0
-    };
     let mut needs_reload = false;
     let mut focused_panel = FocusedPanel::default();
     let mut viewed_files: HashSet<usize> = HashSet::new();
@@ -72,10 +67,32 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
         .iter()
         .position(|item| matches!(item, SidebarItem::File { .. }))
         .unwrap_or(0);
+    let mut current_file: usize = sidebar_items
+        .get(sidebar_selected)
+        .and_then(|item| {
+            if let SidebarItem::File { file_index, .. } = item {
+                Some(*file_index)
+            } else {
+                None
+            }
+        })
+        .unwrap_or(0);
+    let mut scroll: u16 = if !file_diffs.is_empty() && current_file < file_diffs.len() {
+        let diff = &file_diffs[current_file];
+        let side_by_side = compute_side_by_side(&diff.old_content, &diff.new_content);
+        let hunks = find_hunk_starts(&side_by_side);
+        hunks
+            .first()
+            .map(|&h| (h as u16).saturating_sub(5))
+            .unwrap_or(0)
+    } else {
+        0
+    };
     let mut sidebar_scroll: usize = 0;
     let mut h_scroll: u16 = 0;
     let settings = DiffViewSettings::default();
     let mut active_modal: Option<Modal> = None;
+    let mut pending_key = PendingKey::default();
 
     loop {
         if let Some(ref rx) = watch_rx {
@@ -159,11 +176,12 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
         }
 
         if event::poll(Duration::from_millis(100))? {
+            let visible_height = terminal.size()?.height.saturating_sub(2) as usize;
+            let bottom_padding = 5;
             let max_scroll = if !file_diffs.is_empty() {
                 let diff = &file_diffs[current_file];
-                compute_side_by_side(&diff.old_content, &diff.new_content)
-                    .len()
-                    .saturating_sub(1)
+                let total_lines = compute_side_by_side(&diff.old_content, &diff.new_content).len();
+                total_lines.saturating_sub(visible_height.saturating_sub(bottom_padding))
             } else {
                 0
             };
@@ -245,6 +263,9 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                     }
                 }
                 Event::Key(key) if key.kind == KeyEventKind::Press && active_modal.is_none() => {
+                    if key.code != KeyCode::Char('g') {
+                        pending_key = PendingKey::None;
+                    }
                     match key.code {
                         KeyCode::Char('q') | KeyCode::Esc => break,
                         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => break,
@@ -530,6 +551,41 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                         KeyCode::Char('r') => {
                             needs_reload = true;
                         }
+                        KeyCode::Char('y') => {
+                            if !file_diffs.is_empty() {
+                                if let Ok(mut clipboard) = arboard::Clipboard::new() {
+                                    let _ = clipboard.set_text(&file_diffs[current_file].filename);
+                                }
+                            }
+                        }
+                        KeyCode::Char('e') => {
+                            if !file_diffs.is_empty() {
+                                io::stdout().execute(DisableMouseCapture)?;
+                                io::stdout().execute(LeaveAlternateScreen)?;
+                                disable_raw_mode()?;
+
+                                let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
+                                let _ = std::process::Command::new(&editor)
+                                    .arg(&file_diffs[current_file].filename)
+                                    .status();
+
+                                enable_raw_mode()?;
+                                io::stdout().execute(EnterAlternateScreen)?;
+                                io::stdout().execute(EnableMouseCapture)?;
+                                terminal.clear()?;
+                            }
+                        }
+                        KeyCode::Char('g') => {
+                            if pending_key == PendingKey::G {
+                                scroll = 0;
+                                pending_key = PendingKey::None;
+                            } else {
+                                pending_key = PendingKey::G;
+                            }
+                        }
+                        KeyCode::Char('G') => {
+                            scroll = max_scroll as u16;
+                        }
                         KeyCode::Char('?') => {
                             active_modal = Some(Modal::keybindings(
                                 "Keybindings",
@@ -542,6 +598,8 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                                             KeyBind { key: "1 / 2", description: "Focus sidebar / diff" },
                                             KeyBind { key: "ctrl+j / ctrl+k", description: "Next / previous file" },
                                             KeyBind { key: "r", description: "Reload diff" },
+                                            KeyBind { key: "y", description: "Copy current filename" },
+                                            KeyBind { key: "e", description: "Open current file in editor" },
                                             KeyBind { key: "?", description: "Show keybindings" },
                                         ],
                                     },
@@ -558,6 +616,7 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                                         bindings: vec![
                                             KeyBind { key: "j/k or up/down", description: "Scroll vertically" },
                                             KeyBind { key: "h/l or left/right", description: "Scroll horizontally" },
+                                            KeyBind { key: "gg / G", description: "Scroll to top / bottom" },
                                             KeyBind { key: "{ / }", description: "Previous / next hunk" },
                                             KeyBind { key: "pageup / pagedown", description: "Scroll by page" },
                                             KeyBind { key: "space", description: "Mark viewed & next file" },
