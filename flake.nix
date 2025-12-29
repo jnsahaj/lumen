@@ -1,5 +1,5 @@
 {
-  description = "A command-line tool that uses AI to streamline your git workflow - from generating commit messages to explaining complex changes, all without requiring an API key.";
+  description = "A command-line tool that uses AI to streamline your git workflow - from generating commit messages to explaining complex changes.";
 
   inputs = {
     nixpkgs.url = github:nixos/nixpkgs/nixos-unstable;

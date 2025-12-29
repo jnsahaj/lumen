@@ -5,7 +5,7 @@
 ![GitHub License](https://img.shields.io/github/license/jnsahaj/lumen)
 ![Crates.io Size](https://img.shields.io/crates/size/lumen)
 
-A command-line tool that uses AI to streamline your git workflow - generate commit messages, view diff and explain changes, all without requiring an API key.
+A command-line tool that uses AI to streamline your git workflow - generate commit messages, view diff and explain changes.
 ![CleanShot 2025-12-30 at 02 47 04](https://github.com/user-attachments/assets/21e9d32a-de8a-40b2-b79b-3e87c9cbb9eb)
 
 ## Table of Contents
@@ -32,7 +32,7 @@ A command-line tool that uses AI to streamline your git workflow - generate comm
 - **Git History Insights**: Understand what changed in any commit, branch, or your current work
 - **Interactive Search**: Find and explore commits using fuzzy search
 - **Change Analysis**: Ask questions about specific changes and their impact
-- **Zero Config**: Works instantly without an API key, using Phind by default
+- **Multiple AI Providers**: Supports OpenAI, Claude, Groq, Ollama, and more
 - **Flexible**: Works with any git workflow and supports multiple AI providers
 - **Rich Output**: Markdown support for readable explanations and diffs (requires: mdcat)
 
@@ -199,8 +199,7 @@ export LUMEN_AI_MODEL="gpt-5-mini"
 
 | Provider | API Key Required | Models |
 |----------|-----------------|---------|
-| [Phind](https://www.phind.com/agent) `phind` (Default) | No | `Phind-70B` |
-| [OpenAI](https://platform.openai.com/docs/models) `openai` | Yes | `gpt-5.2`, `gpt-5`, `gpt-5-mini`, `gpt-5-nano`, `gpt-4.1`, `gpt-4.1-mini`, `o4-mini` (default: `gpt-5-mini`) |
+| [OpenAI](https://platform.openai.com/docs/models) `openai` (Default) | Yes | `gpt-5.2`, `gpt-5`, `gpt-5-mini`, `gpt-5-nano`, `gpt-4.1`, `gpt-4.1-mini`, `o4-mini` (default: `gpt-5-mini`) |
 | [Claude](https://www.anthropic.com/pricing) `claude` | Yes | `claude-sonnet-4-5-20250930`, `claude-opus-4-5-20251115`, `claude-haiku-4-5-20251015` (default: `claude-sonnet-4-5-20250930`) |
 | [Gemini](https://ai.google.dev/) `gemini` | Yes (free tier) | `gemini-3-pro`, `gemini-3-flash`, `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite` (default: `gemini-3-flash`) |
 | [Groq](https://console.groq.com/docs/models) `groq` | Yes (free) | `llama-3.3-70b-versatile`, `llama-3.1-8b-instant`, `meta-llama/llama-4-maverick-17b-128e-instruct`, `openai/gpt-oss-120b` (default: `llama-3.3-70b-versatile`) |

@@ -39,9 +39,9 @@ pub struct DraftConfig {
 
 fn default_ai_provider() -> ProviderType {
     std::env::var("LUMEN_AI_PROVIDER")
-        .unwrap_or_else(|_| "phind".to_string())
+        .unwrap_or_else(|_| "openai".to_string())
         .parse()
-        .unwrap_or(ProviderType::Phind)
+        .unwrap_or(ProviderType::Openai)
 }
 
 fn deserialize_ai_provider<'de, D>(deserializer: D) -> Result<ProviderType, D::Error>

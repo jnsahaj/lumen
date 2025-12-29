@@ -2,15 +2,12 @@ use genai::adapter::AdapterKind;
 use genai::chat::{ChatMessage, ChatRequest};
 use genai::resolver::{AuthData, Endpoint, ServiceTargetResolver};
 use genai::{Client, ClientBuilder, ModelIden, ServiceTarget};
-use phind::{PhindConfig, PhindProvider};
 use thiserror::Error;
 
 use crate::ai_prompt::{AIPrompt, AIPromptError};
 use crate::command::{draft::DraftCommand, explain::ExplainCommand, operate::OperateCommand};
 use crate::config::cli::ProviderType;
 use crate::error::LumenError;
-
-pub mod phind;
 
 #[derive(Error, Debug)]
 pub enum ProviderError {
@@ -35,7 +32,6 @@ pub enum ProviderError {
 
 enum ProviderBackend {
     GenAI { client: Client, model: String },
-    Phind(PhindProvider),
 }
 
 pub struct LumenProvider {
@@ -57,14 +53,6 @@ impl LumenProvider {
         model: Option<String>,
     ) -> Result<Self, LumenError> {
         let (backend, provider_name) = match provider_type {
-            ProviderType::Phind => {
-                let config = PhindConfig::new(model);
-                let client = reqwest::Client::new();
-                (
-                    ProviderBackend::Phind(PhindProvider::new(client, config)),
-                    "Phind".to_string(),
-                )
-            }
             // Custom endpoint providers (OpenRouter, Vercel) - use ServiceTargetResolver
             ProviderType::Openrouter | ProviderType::Vercel => {
                 let (default_model, name, config) = match provider_type {
@@ -139,7 +127,7 @@ impl LumenProvider {
                     ProviderType::Deepseek => ("deepseek-chat", "DeepSeek", "DEEPSEEK_API_KEY"),
                     ProviderType::Gemini => ("gemini-3-flash", "Gemini", "GEMINI_API_KEY"),
                     ProviderType::Xai => ("grok-4-mini-fast", "xAI", "XAI_API_KEY"),
-                    ProviderType::Phind | ProviderType::Openrouter | ProviderType::Vercel => {
+                    ProviderType::Openrouter | ProviderType::Vercel => {
                         unreachable!()
                     }
                 };
@@ -184,7 +172,6 @@ impl LumenProvider {
                     .map(|s| s.to_string())
                     .ok_or(ProviderError::NoCompletionChoice)
             }
-            ProviderBackend::Phind(provider) => provider.complete(prompt).await,
         }
     }
 
@@ -206,7 +193,6 @@ impl LumenProvider {
     fn get_model(&self) -> String {
         match &self.backend {
             ProviderBackend::GenAI { model, .. } => model.clone(),
-            ProviderBackend::Phind(provider) => provider.get_model(),
         }
     }
 }

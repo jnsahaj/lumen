@@ -28,7 +28,6 @@ pub struct Cli {
 #[derive(Copy, Clone, PartialEq, Eq, ValueEnum, Debug)]
 pub enum ProviderType {
     Openai,
-    Phind,
     Groq,
     Claude,
     Ollama,
@@ -45,7 +44,6 @@ impl FromStr for ProviderType {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "openai" => Ok(ProviderType::Openai),
-            "phind" => Ok(ProviderType::Phind),
             "groq" => Ok(ProviderType::Groq),
             "claude" => Ok(ProviderType::Claude),
             "ollama" => Ok(ProviderType::Ollama),
