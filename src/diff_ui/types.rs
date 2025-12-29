@@ -1,4 +1,4 @@
-use crate::diff_ui::sticky_lines::StickyLinesConfig;
+use crate::diff_ui::context::ContextConfig;
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum FileStatus {
@@ -28,7 +28,7 @@ pub struct FileDiff {
 /// with additional configuration options in the future.
 #[derive(Clone, Default)]
 pub struct DiffViewSettings {
-    pub sticky_lines: StickyLinesConfig,
+    pub context: ContextConfig,
 }
 
 pub struct DiffLine {

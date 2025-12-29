@@ -1,3 +1,4 @@
+mod context;
 mod diff;
 mod git;
 mod highlight;

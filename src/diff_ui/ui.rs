@@ -5,10 +5,10 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, Paragraph},
 };
 
+use crate::diff_ui::context::{compute_context_lines, ContextLine};
 use crate::diff_ui::diff::compute_side_by_side;
 use crate::diff_ui::git::get_current_branch;
 use crate::diff_ui::highlight::highlight_line_spans;
-use crate::diff_ui::sticky_lines::{compute_sticky_lines, StickyLine};
 use crate::diff_ui::types::{ChangeType, DiffLine, DiffViewSettings, FileDiff, FocusedPanel, SidebarItem};
 
 pub struct LineStats {
@@ -118,13 +118,9 @@ pub fn render_diff(
     if is_new_file {
         // Show only the new file panel
         let visible_height = main_area.height.saturating_sub(2) as usize;
-        let new_content_lines: Vec<(usize, String)> = side_by_side
-            .iter()
-            .filter_map(|dl| dl.new_line.clone())
-            .collect();
-        let new_sticky = compute_sticky_lines(&new_content_lines, scroll as usize, &settings.sticky_lines);
-        let sticky_count = new_sticky.len();
-        let content_height = visible_height.saturating_sub(sticky_count);
+        let new_context = compute_context_lines(&diff.new_content, &diff.filename, scroll as usize, &settings.context);
+        let context_count = new_context.len();
+        let content_height = visible_height.saturating_sub(context_count);
 
         let visible_lines: Vec<&DiffLine> = side_by_side
             .iter()
@@ -133,8 +129,8 @@ pub fn render_diff(
             .collect();
 
         let mut new_lines: Vec<Line> = Vec::new();
-        if settings.sticky_lines.enabled && sticky_count > 0 {
-            render_sticky_lines(&new_sticky, sticky_count, &mut new_lines, &diff.filename);
+        if settings.context.enabled && context_count > 0 {
+            render_context_lines(&new_context, context_count, &mut new_lines, &diff.filename);
         }
 
         for diff_line in &visible_lines {
@@ -163,13 +159,9 @@ pub fn render_diff(
     } else if is_deleted_file {
         // Show only the old file panel
         let visible_height = main_area.height.saturating_sub(2) as usize;
-        let old_content_lines: Vec<(usize, String)> = side_by_side
-            .iter()
-            .filter_map(|dl| dl.old_line.clone())
-            .collect();
-        let old_sticky = compute_sticky_lines(&old_content_lines, scroll as usize, &settings.sticky_lines);
-        let sticky_count = old_sticky.len();
-        let content_height = visible_height.saturating_sub(sticky_count);
+        let old_context = compute_context_lines(&diff.old_content, &diff.filename, scroll as usize, &settings.context);
+        let context_count = old_context.len();
+        let content_height = visible_height.saturating_sub(context_count);
 
         let visible_lines: Vec<&DiffLine> = side_by_side
             .iter()
@@ -178,8 +170,8 @@ pub fn render_diff(
             .collect();
 
         let mut old_lines: Vec<Line> = Vec::new();
-        if settings.sticky_lines.enabled && sticky_count > 0 {
-            render_sticky_lines(&old_sticky, sticky_count, &mut old_lines, &diff.filename);
+        if settings.context.enabled && context_count > 0 {
+            render_context_lines(&old_context, context_count, &mut old_lines, &diff.filename);
         }
 
         for diff_line in &visible_lines {
@@ -212,26 +204,16 @@ pub fn render_diff(
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
             .split(main_area);
 
-        // Extract old and new content lines for sticky computation
-        let old_content_lines: Vec<(usize, String)> = side_by_side
-            .iter()
-            .filter_map(|dl| dl.old_line.clone())
-            .collect();
-        let new_content_lines: Vec<(usize, String)> = side_by_side
-            .iter()
-            .filter_map(|dl| dl.new_line.clone())
-            .collect();
-
-        // Compute sticky lines for old and new panels
-        let old_sticky = compute_sticky_lines(&old_content_lines, scroll as usize, &settings.sticky_lines);
-        let new_sticky = compute_sticky_lines(&new_content_lines, scroll as usize, &settings.sticky_lines);
-        let sticky_count = old_sticky.len().max(new_sticky.len());
+        // Compute context lines for old and new panels using tree-sitter
+        let old_context = compute_context_lines(&diff.old_content, &diff.filename, scroll as usize, &settings.context);
+        let new_context = compute_context_lines(&diff.new_content, &diff.filename, scroll as usize, &settings.context);
+        let context_count = old_context.len().max(new_context.len());
 
         let visible_height = content_chunks[0].height.saturating_sub(2) as usize;
         let scroll_usize = scroll as usize;
 
-        // Adjust visible lines to account for sticky lines
-        let content_height = visible_height.saturating_sub(sticky_count);
+        // Adjust visible lines to account for context lines
+        let content_height = visible_height.saturating_sub(context_count);
         let visible_lines: Vec<&DiffLine> = side_by_side
             .iter()
             .skip(scroll_usize)
@@ -241,10 +223,10 @@ pub fn render_diff(
         let mut old_lines: Vec<Line> = Vec::new();
         let mut new_lines: Vec<Line> = Vec::new();
 
-        // Render sticky lines first (if enabled)
-        if settings.sticky_lines.enabled && sticky_count > 0 {
-            render_sticky_lines(&old_sticky, sticky_count, &mut old_lines, &diff.filename);
-            render_sticky_lines(&new_sticky, sticky_count, &mut new_lines, &diff.filename);
+        // Render context lines first (if enabled)
+        if settings.context.enabled && context_count > 0 {
+            render_context_lines(&old_context, context_count, &mut old_lines, &diff.filename);
+            render_context_lines(&new_context, context_count, &mut new_lines, &diff.filename);
         }
 
         for diff_line in &visible_lines {
@@ -374,28 +356,28 @@ pub fn render_diff(
     frame.render_widget(footer, footer_area);
 }
 
-fn render_sticky_lines(
-    sticky: &[StickyLine],
+fn render_context_lines(
+    context: &[ContextLine],
     total_count: usize,
     lines: &mut Vec<Line>,
     filename: &str,
 ) {
-    let sticky_bg = Color::Rgb(40, 40, 50);
+    let context_bg = Color::Rgb(40, 40, 50);
     
     for i in 0..total_count {
-        if let Some(sl) = sticky.get(i) {
-            let prefix = format!("{:4} ~ ", sl.line_number);
+        if let Some(cl) = context.get(i) {
+            let prefix = format!("{:4} ~ ", cl.line_number);
             let mut spans: Vec<Span> = vec![Span::styled(
                 prefix,
-                Style::default().fg(Color::DarkGray).bg(sticky_bg),
+                Style::default().fg(Color::DarkGray).bg(context_bg),
             )];
-            spans.extend(highlight_line_spans(&sl.content, filename, Some(sticky_bg)));
+            spans.extend(highlight_line_spans(&cl.content, filename, Some(context_bg)));
             lines.push(Line::from(spans));
         } else {
-            // Empty sticky line placeholder (when other panel has more sticky lines)
+            // Empty context line placeholder (when other panel has more context lines)
             lines.push(Line::from(vec![Span::styled(
                 "     ~".to_string(),
-                Style::default().fg(Color::DarkGray).bg(sticky_bg),
+                Style::default().fg(Color::DarkGray).bg(context_bg),
             )]));
         }
     }
