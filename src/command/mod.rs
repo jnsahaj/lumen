@@ -124,6 +124,7 @@ impl LumenCommand {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn execute_bash_command(command: &str) -> Result<(), LumenError> {
         let output = std::process::Command::new("sh")
             .arg("-c")
@@ -139,7 +140,7 @@ impl LumenCommand {
         Ok(())
     }
 
-    // ask for (y/N) confirmation to execute the command
+    #[allow(dead_code)]
     fn execute_bash_command_with_confirmation(command: &str) -> Result<(), LumenError> {
         let mut input = String::new();
         println!("{} (y/N)", command);

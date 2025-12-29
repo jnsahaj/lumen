@@ -1,4 +1,5 @@
 /// Configuration for sticky lines feature
+#[allow(dead_code)]
 #[derive(Clone)]
 pub struct StickyLinesConfig {
     pub enabled: bool,
@@ -15,6 +16,7 @@ impl Default for StickyLinesConfig {
 }
 
 /// Represents a sticky line with its content and original line number
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct StickyLine {
     pub line_number: usize,
@@ -23,6 +25,7 @@ pub struct StickyLine {
 }
 
 /// Computes the indentation level (number of leading spaces/tabs) of a line
+#[allow(dead_code)]
 fn get_indentation(line: &str) -> usize {
     let mut indent = 0;
     for ch in line.chars() {
@@ -37,6 +40,7 @@ fn get_indentation(line: &str) -> usize {
 
 /// Checks if a line opens a scope block.
 /// Returns true for function/class/control flow definitions.
+#[allow(dead_code)]
 fn is_block_opener(line: &str) -> bool {
     let trimmed = line.trim();
     if trimmed.is_empty() {
@@ -109,6 +113,7 @@ fn is_block_opener(line: &str) -> bool {
 
 /// Checks if a line starts a multi-line function/method definition.
 /// These are lines like `fn foo(`, `async function bar(`, `private async method(` etc.
+#[allow(dead_code)]
 fn is_multiline_fn_start(line: &str) -> bool {
     let trimmed = line.trim();
     if trimmed.is_empty() {
@@ -154,6 +159,7 @@ fn is_multiline_fn_start(line: &str) -> bool {
 
 /// Checks if a line ends a multi-line function signature and opens a block.
 /// These are lines like `): ReturnType {` or `) {`
+#[allow(dead_code)]
 fn is_multiline_fn_end(line: &str) -> bool {
     let trimmed = line.trim();
     
@@ -175,6 +181,7 @@ fn is_multiline_fn_end(line: &str) -> bool {
 
 /// Track which block openers are still "open" (not closed) at a given position.
 /// This uses brace counting to determine which blocks contain the scroll position.
+#[allow(dead_code)]
 pub fn compute_sticky_lines(
     lines: &[(usize, String)],
     scroll_position: usize,
