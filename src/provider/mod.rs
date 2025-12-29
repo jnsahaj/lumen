@@ -58,18 +58,20 @@ impl LumenProvider {
             }
             _ => {
                 let (default_model, name, env_key) = match provider_type {
-                    ProviderType::Openai => ("gpt-4o-mini", "OpenAI", "OPENAI_API_KEY"),
+                    ProviderType::Openai => ("gpt-4.1-mini", "OpenAI", "OPENAI_API_KEY"),
                     ProviderType::Claude => (
-                        "claude-3-5-sonnet-20241022",
+                        "claude-sonnet-4-20250514",
                         "Claude",
                         "ANTHROPIC_API_KEY",
                     ),
-                    ProviderType::Groq => ("llama-3.1-8b-instant", "Groq", "GROQ_API_KEY"),
+                    ProviderType::Groq => ("llama-3.3-70b-versatile", "Groq", "GROQ_API_KEY"),
                     ProviderType::Ollama => ("llama3.2", "Ollama", ""),
                     ProviderType::Deepseek => ("deepseek-chat", "DeepSeek", "DEEPSEEK_API_KEY"),
                     ProviderType::Openrouter => {
-                        ("anthropic/claude-3.5-sonnet", "OpenRouter", "OPENROUTER_API_KEY")
+                        ("anthropic/claude-sonnet-4", "OpenRouter", "OPENROUTER_API_KEY")
                     }
+                    ProviderType::Gemini => ("gemini-2.5-flash", "Gemini", "GEMINI_API_KEY"),
+                    ProviderType::Xai => ("grok-3-mini-fast", "xAI", "XAI_API_KEY"),
                     ProviderType::Phind => unreachable!(),
                 };
 

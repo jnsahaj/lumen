@@ -200,12 +200,14 @@ export LUMEN_AI_MODEL="gpt-4o"
 | Provider | API Key Required | Models |
 |----------|-----------------|---------|
 | [Phind](https://www.phind.com/agent) `phind` (Default) | No | `Phind-70B` |
-| [Groq](https://groq.com/) `groq` | Yes (free) | `llama2-70b-4096`, `mixtral-8x7b-32768` (default: `mixtral-8x7b-32768`) |
-| [OpenAI](https://platform.openai.com/docs/guides/text-generation/chat-completions-api) `openai` | Yes | `gpt-4o`, `gpt-4o-mini`, `gpt-4`, `gpt-3.5-turbo` (default: `gpt-4o-mini`) |
-| [Claude](https://claude.ai/new) `claude` | Yes | [see list](https://docs.anthropic.com/en/docs/about-claude/models#model-names) (default: `claude-3-5-sonnet-20241022`) |
-| [Ollama](https://github.com/ollama/ollama) `ollama` | No (local) | [see list](https://github.com/ollama/ollama/blob/main/docs/api.md#model-names) (required) |
-| [OpenRouter](https://openrouter.ai/) `openrouter` | Yes | [see list](https://openrouter.ai/models) (default: `anthropic/claude-3.5-sonnet`) |
-| [DeepSeek](https://www.deepseek.com/) `deepseek` | Yes | `deepseek-chat`, `deepseek-reasoner` (default: `deepseek-reasoner`) |
+| [OpenAI](https://platform.openai.com/docs/guides/text-generation/chat-completions-api) `openai` | Yes | `gpt-4.1`, `gpt-4.1-mini`, `gpt-4.1-nano`, `gpt-4o`, `o1`, `o3-mini` (default: `gpt-4.1-mini`) |
+| [Claude](https://claude.ai/new) `claude` | Yes | `claude-sonnet-4-20250514`, `claude-opus-4-20250514`, `claude-3-5-haiku-20241022` (default: `claude-sonnet-4-20250514`) |
+| [Gemini](https://ai.google.dev/) `gemini` | Yes (free tier) | `gemini-2.5-flash`, `gemini-2.5-pro`, `gemini-2.0-flash` (default: `gemini-2.5-flash`) |
+| [Groq](https://groq.com/) `groq` | Yes (free) | `llama-3.3-70b-versatile`, `llama-3.1-8b-instant`, `mixtral-8x7b-32768` (default: `llama-3.3-70b-versatile`) |
+| [DeepSeek](https://www.deepseek.com/) `deepseek` | Yes | `deepseek-chat`, `deepseek-reasoner` (default: `deepseek-chat`) |
+| [xAI](https://x.ai/) `xai` | Yes | `grok-3`, `grok-3-fast`, `grok-3-mini`, `grok-3-mini-fast` (default: `grok-3-mini-fast`) |
+| [Ollama](https://github.com/ollama/ollama) `ollama` | No (local) | [see list](https://ollama.com/library) (default: `llama3.2`) |
+| [OpenRouter](https://openrouter.ai/) `openrouter` | Yes | [see list](https://openrouter.ai/models) (default: `anthropic/claude-sonnet-4`) |
 
 ## Advanced Configuration 🔅
 

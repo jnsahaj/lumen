@@ -34,6 +34,8 @@ pub enum ProviderType {
     Ollama,
     Openrouter,
     Deepseek,
+    Gemini,
+    Xai,
 }
 
 impl FromStr for ProviderType {
@@ -48,6 +50,8 @@ impl FromStr for ProviderType {
             "ollama" => Ok(ProviderType::Ollama),
             "openrouter" => Ok(ProviderType::Openrouter),
             "deepseek" => Ok(ProviderType::Deepseek),
+            "gemini" => Ok(ProviderType::Gemini),
+            "xai" => Ok(ProviderType::Xai),
             _ => Err(format!("Unknown provider: {}", s)),
         }
     }
