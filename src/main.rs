@@ -11,6 +11,7 @@ mod ai_prompt;
 mod command;
 mod commit_reference;
 mod config;
+mod diff_ui;
 mod error;
 mod git_entity;
 mod provider;
@@ -39,27 +40,28 @@ async fn run() -> Result<(), LumenError> {
     match cli.command {
         Commands::Explain {
             reference,
-            diff,
             staged,
             query,
         } => {
-            let git_entity = if diff {
-                GitEntity::Diff(Diff::from_working_tree(staged)?)
-            } else if let Some(CommitReference::Single(input)) = reference {
-                let sha = if input == "-" {
-                    read_from_stdin()?
-                } else {
-                    input
-                };
-                GitEntity::Commit(Commit::new(sha)?)
-            } else if let Some(CommitReference::Range { from, to }) = reference {
-                GitEntity::Diff(Diff::from_commits_range(&from, &to, false)?)
-            }  else if let Some(CommitReference::TripleDots { from, to }) = reference {
-                GitEntity::Diff(Diff::from_commits_range(&from, &to, true)?)
-            } else {
-                return Err(LumenError::InvalidArguments(
-                    "`explain` expects SHA-1 or --diff to be present".into(),
-                ));
+            let git_entity = match reference {
+                Some(CommitReference::Single(input)) => {
+                    let sha = if input == "-" {
+                        read_from_stdin()?
+                    } else {
+                        input
+                    };
+                    GitEntity::Commit(Commit::new(sha)?)
+                }
+                Some(CommitReference::Range { from, to }) => {
+                    GitEntity::Diff(Diff::from_commits_range(&from, &to, false)?)
+                }
+                Some(CommitReference::TripleDots { from, to }) => {
+                    GitEntity::Diff(Diff::from_commits_range(&from, &to, true)?)
+                }
+                None => {
+                    // Default: show uncommitted diff
+                    GitEntity::Diff(Diff::from_working_tree(staged)?)
+                }
             };
 
             command
@@ -76,6 +78,18 @@ async fn run() -> Result<(), LumenError> {
             command
                 .execute(command::CommandType::Operate { query })
                 .await?;
+        }
+        Commands::Diff {
+            reference,
+            file,
+            watch,
+        } => {
+            let options = diff_ui::DiffOptions {
+                reference,
+                file,
+                watch,
+            };
+            diff_ui::run_diff_ui(options)?;
         }
     }
 

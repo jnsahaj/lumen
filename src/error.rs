@@ -19,6 +19,7 @@ pub enum LumenError {
     #[error("Missing Model for {0}, use --model or LUMEN_MODEL env variable, or add \"model\": \"...\" to configuration file")]
     MissingModel(String),
 
+    #[allow(dead_code)]
     #[error("Invalid arguments: {0}")]
     InvalidArguments(String),
 

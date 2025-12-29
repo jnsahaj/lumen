@@ -1,4 +1,4 @@
-use clap::{command, Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand, ValueEnum};
 use std::str::FromStr;
 
 use crate::commit_reference::CommitReference;
@@ -55,17 +55,13 @@ impl FromStr for ProviderType {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Explain the changes in a commit, or the current diff
+    /// Explain the changes in a commit, or the current diff (default)
     Explain {
-        /// The commit hash to use
-        #[arg(group = "target", value_parser = clap::value_parser!(CommitReference))]
+        /// Commit reference: SHA, HEAD, HEAD~3..HEAD, main..feature, main...feature
+        #[arg(value_parser = clap::value_parser!(CommitReference))]
         reference: Option<CommitReference>,
 
-        /// Explain current diff
-        #[arg(long, group = "target")]
-        diff: bool,
-
-        /// Use staged diff
+        /// Use staged diff only (when showing uncommitted changes)
         #[arg(long)]
         staged: bool,
 
@@ -85,5 +81,19 @@ pub enum Commands {
     Operate {
         #[arg()]
         query: String,
+    },
+    /// Launch interactive side-by-side diff viewer
+    Diff {
+        /// Commit reference: SHA, HEAD, HEAD~3..HEAD, main..feature, main...feature
+        #[arg(value_parser = clap::value_parser!(CommitReference))]
+        reference: Option<CommitReference>,
+
+        /// Filter to specific files
+        #[arg(short, long)]
+        file: Option<Vec<String>>,
+
+        /// Watch for file changes and auto-reload
+        #[arg(short, long)]
+        watch: bool,
     },
 }
