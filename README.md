@@ -5,7 +5,7 @@
 ![GitHub License](https://img.shields.io/github/license/jnsahaj/lumen)
 ![Crates.io Size](https://img.shields.io/crates/size/lumen)
 
-A command-line tool that uses AI to streamline your git workflow - from generating commit messages to explaining complex changes, all without requiring an API key.
+A command-line tool that uses AI to streamline your git workflow - generate commit messages, view diff and explain changes, all without requiring an API key.
 
 ## Table of Contents
 - [Features](#features-)
@@ -13,9 +13,9 @@ A command-line tool that uses AI to streamline your git workflow - from generati
   - [Prerequisites](#prerequisites)
   - [Installation](#installation)
 - [Usage](#usage-)
+  - [Visual Diff Viewer](#visual-diff-viewer)
   - [Generate Commit Messages](#generate-commit-messages)
   - [Generate Git Commands](#generate-git-commands)
-  - [Visual Diff Viewer](#visual-diff-viewer)
   - [Explain Changes](#explain-changes)
   - [Interactive Mode](#interactive-mode)
   - [Tips & Tricks](#tips--tricks)
@@ -26,6 +26,7 @@ A command-line tool that uses AI to streamline your git workflow - from generati
 
 ## Features 🔅
 
+- **Beautiful & Ergonomic Diff Viewer**: Review your code with minimal effort
 - **Smart Commit Messages**: Generate conventional commit messages for your staged changes
 - **Git History Insights**: Understand what changed in any commit, branch, or your current work
 - **Interactive Search**: Find and explore commits using fuzzy search
