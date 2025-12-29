@@ -1,4 +1,4 @@
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 
 use crate::{
     config::configuration::DraftConfig, error::LumenError, git_entity::GitEntity,
@@ -15,7 +15,12 @@ impl DraftCommand {
     pub async fn execute(&self, provider: &LumenProvider) -> Result<(), LumenError> {
         let result = provider.draft(self).await?;
 
-        println!("{result}");
+        // Only add newline when outputting to terminal, not when piped (e.g., `lumen draft | pbcopy`)
+        if std::io::stdout().is_terminal() {
+            println!("{result}");
+        } else {
+            print!("{result}");
+        }
         std::io::stdout().flush()?;
         Ok(())
     }
