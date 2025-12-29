@@ -1,6 +1,7 @@
 mod diff;
 mod git;
 mod highlight;
+mod modal;
 mod sticky_lines;
 mod types;
 mod ui;
@@ -24,6 +25,7 @@ use ratatui::prelude::*;
 use crate::commit_reference::CommitReference;
 use diff::{compute_side_by_side, find_hunk_starts};
 use git::load_file_diffs;
+pub use modal::{KeyBind, KeyBindSection, Modal};
 use types::{build_file_tree, DiffViewSettings, FocusedPanel, SidebarItem};
 use watcher::setup_watcher;
 
@@ -73,6 +75,7 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
     let mut sidebar_scroll: usize = 0;
     let mut h_scroll: u16 = 0;
     let settings = DiffViewSettings::default();
+    let mut active_modal: Option<Modal> = None;
 
     loop {
         if let Some(ref rx) = watch_rx {
@@ -123,6 +126,9 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
         if file_diffs.is_empty() {
             terminal.draw(|frame| {
                 ui::render_empty_state(frame, options.watch);
+                if let Some(ref modal) = active_modal {
+                    modal.render(frame);
+                }
             })?;
         } else {
             let diff = &file_diffs[current_file];
@@ -146,6 +152,9 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                     &settings,
                     hunk_count,
                 );
+                if let Some(ref modal) = active_modal {
+                    modal.render(frame);
+                }
             })?;
         }
 
@@ -160,7 +169,14 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
             };
 
             match event::read()? {
-                Event::Mouse(mouse) => {
+                Event::Key(key) if key.kind == KeyEventKind::Press && active_modal.is_some() => {
+                    if let Some(ref mut modal) = active_modal {
+                        if let Some(_result) = modal.handle_input(key) {
+                            active_modal = None;
+                        }
+                    }
+                }
+                Event::Mouse(mouse) if active_modal.is_none() => {
                     let term_size = terminal.size()?;
                     let header_height = 3u16;
                     let sidebar_width = if show_sidebar { 40u16 } else { 0u16 };
@@ -230,7 +246,7 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                         _ => {}
                     }
                 }
-                Event::Key(key) if key.kind == KeyEventKind::Press => {
+                Event::Key(key) if key.kind == KeyEventKind::Press && active_modal.is_none() => {
                     match key.code {
                         KeyCode::Char('q') | KeyCode::Esc => break,
                         KeyCode::Char('1') => {
@@ -514,6 +530,42 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                         }
                         KeyCode::Char('r') => {
                             needs_reload = true;
+                        }
+                        KeyCode::Char('?') => {
+                            active_modal = Some(Modal::keybindings(
+                                "Keybindings",
+                                vec![
+                                    KeyBindSection {
+                                        title: "Global",
+                                        bindings: vec![
+                                            KeyBind { key: "q / esc", description: "Quit" },
+                                            KeyBind { key: "tab", description: "Toggle sidebar" },
+                                            KeyBind { key: "1 / 2", description: "Focus sidebar / diff" },
+                                            KeyBind { key: "ctrl+j / ctrl+k", description: "Next / previous file" },
+                                            KeyBind { key: "r", description: "Reload diff" },
+                                            KeyBind { key: "?", description: "Show keybindings" },
+                                        ],
+                                    },
+                                    KeyBindSection {
+                                        title: "Sidebar",
+                                        bindings: vec![
+                                            KeyBind { key: "j/k or up/down", description: "Navigate files" },
+                                            KeyBind { key: "enter", description: "Open file in diff view" },
+                                            KeyBind { key: "space", description: "Toggle file as viewed" },
+                                        ],
+                                    },
+                                    KeyBindSection {
+                                        title: "Diff View",
+                                        bindings: vec![
+                                            KeyBind { key: "j/k or up/down", description: "Scroll vertically" },
+                                            KeyBind { key: "h/l or left/right", description: "Scroll horizontally" },
+                                            KeyBind { key: "{ / }", description: "Previous / next hunk" },
+                                            KeyBind { key: "pageup / pagedown", description: "Scroll by page" },
+                                            KeyBind { key: "space", description: "Mark viewed & next file" },
+                                        ],
+                                    },
+                                ],
+                            ));
                         }
                         _ => {}
                     }
