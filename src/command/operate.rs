@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use spinoff::{spinners, Color, Spinner};
 use std::io::{self, Write};
 use thiserror::Error;
+use xml::reader::{EventReader, XmlEvent};
 
 #[derive(Debug)]
 pub struct OperateResult {
@@ -26,35 +27,62 @@ pub struct OperateCommand {
 }
 
 pub fn extract_operate_response(ai_response: &str) -> Result<OperateResult, ExtractError> {
-    // Helper function to extract content between XML tags
-    fn extract_tag(text: &str, tag_name: &str) -> Result<String, ExtractError> {
-        let start_tag = format!("<{}>", tag_name);
-        let end_tag = format!("</{}>", tag_name);
+    let parser = EventReader::from_str(ai_response);
+    let mut command = None;
+    let mut explanation = None;
+    let mut warning = None;
+    let mut current_element = None;
+    let mut current_text = String::new();
 
-        if let Some(start) = text.find(&start_tag) {
-            if let Some(end) = text.find(&end_tag) {
-                let content_start = start + start_tag.len();
-                if content_start < end {
-                    return Ok(text[content_start..end].trim().to_string());
+    for event in parser {
+        match event {
+            Ok(XmlEvent::StartElement { name, .. }) => {
+                current_element = Some(name.local_name.clone());
+                current_text.clear();
+            }
+            Ok(XmlEvent::Characters(text)) => {
+                if current_element.is_some() {
+                    current_text.push_str(&text);
                 }
             }
+            Ok(XmlEvent::EndElement { name }) => {
+                if let Some(element) = &current_element {
+                    if element == &name.local_name {
+                        match element.as_str() {
+                            "command" => command = Some(current_text.trim().to_string()),
+                            "explanation" => explanation = Some(current_text.trim().to_string()),
+                            "warning" => {
+                                let trimmed = current_text.trim();
+                                if !trimmed.is_empty() {
+                                    warning = Some(trimmed.to_string());
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                current_element = None;
+                current_text.clear();
+            }
+            Err(e) => {
+                return Err(ExtractError {
+                    field: "xml".to_string(),
+                    message: format!("XML parsing error: {}", e),
+                });
+            }
+            _ => {}
         }
-
-        Err(ExtractError {
-            field: tag_name.to_string(),
-            message: format!("Could not find valid <{}> tags", tag_name),
-        })
     }
 
-    // Extract required fields
-    let command = extract_tag(ai_response, "command")?;
-    let explanation = extract_tag(ai_response, "explanation")?;
+    let command = command.ok_or_else(|| ExtractError {
+        field: "command".to_string(),
+        message: "Missing <command> tag".to_string(),
+    })?;
 
-    // Warning is optional
-    let warning = match extract_tag(ai_response, "warning") {
-        Ok(warning_text) if !warning_text.is_empty() => Some(warning_text),
-        _ => None,
-    };
+    let explanation = explanation.ok_or_else(|| ExtractError {
+        field: "explanation".to_string(),
+        message: "Missing <explanation> tag".to_string(),
+    })?;
 
     Ok(OperateResult {
         command,
