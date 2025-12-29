@@ -13,8 +13,10 @@ pub const HIGHLIGHT_NAMES: &[&str] = &[
     "function",
     "function.builtin",
     "function.method",
+    "function.macro",
     "keyword",
     "label",
+    "module",
     "number",
     "operator",
     "property",
@@ -29,6 +31,7 @@ pub const HIGHLIGHT_NAMES: &[&str] = &[
     "variable",
     "variable.builtin",
     "variable.parameter",
+    "variable.member",
 ];
 
 pub fn highlight_color(index: usize) -> Color {
@@ -38,12 +41,15 @@ pub fn highlight_color(index: usize) -> Color {
         Some(&"string" | &"string.special") => Color::Rgb(165, 214, 255),
         Some(&"number" | &"constant" | &"constant.builtin") => Color::Rgb(121, 192, 255),
         Some(&"function" | &"function.builtin" | &"function.method") => Color::Rgb(210, 168, 255),
+        Some(&"function.macro") => Color::Rgb(86, 182, 194),
         Some(&"type" | &"type.builtin" | &"constructor") => Color::Rgb(255, 203, 107),
         Some(&"variable.builtin") => Color::Rgb(255, 123, 114),
-        Some(&"property") => Color::Rgb(121, 192, 255),
+        Some(&"variable.member" | &"property") => Color::Rgb(121, 192, 255),
+        Some(&"module") => Color::Rgb(230, 192, 123),
         Some(&"operator") => Color::Rgb(255, 123, 114),
         Some(&"tag") => Color::Rgb(126, 231, 135),
         Some(&"attribute") => Color::Rgb(121, 192, 255),
+        Some(&"label") => Color::Rgb(255, 160, 122),
         Some(&"punctuation" | &"punctuation.bracket" | &"punctuation.delimiter") => {
             Color::Rgb(200, 200, 200)
         }
@@ -79,7 +85,6 @@ const TS_HIGHLIGHTS: &str = r#"
 
 ["(" ")" "[" "]" "{" "}"] @punctuation.bracket
 ["." "," ";" ":"] @punctuation.delimiter
-["=" "+" "-" "*" "/" "%" "!" "?" "<" ">" "&" "|" "^" "~" "==" "===" "!=" "!==" "<=" ">=" "&&" "||" "++" "--" "+=" "-=" "=>" "?."] @operator
 "#;
 
 const TSX_HIGHLIGHTS: &str = r#"
@@ -115,7 +120,6 @@ const TSX_HIGHLIGHTS: &str = r#"
 
 ["(" ")" "[" "]" "{" "}"] @punctuation.bracket
 ["." "," ";" ":"] @punctuation.delimiter
-["=" "+" "-" "*" "/" "%" "!" "?" "<" ">" "&" "|" "^" "~" "==" "===" "!=" "!==" "<=" ">=" "&&" "||" "++" "--" "+=" "-=" "=>" "?."] @operator
 "#;
 
 const JS_HIGHLIGHTS: &str = r#"
@@ -147,12 +151,14 @@ const JS_HIGHLIGHTS: &str = r#"
 
 ["(" ")" "[" "]" "{" "}"] @punctuation.bracket
 ["." "," ";" ":"] @punctuation.delimiter
-["=" "+" "-" "*" "/" "%" "!" "?" "<" ">" "&" "|" "^" "~" "==" "===" "!=" "!==" "<=" ">=" "&&" "||" "++" "--" "+=" "-=" "=>" "?."] @operator
 "#;
 
 const RUST_HIGHLIGHTS: &str = r#"
+; Comments
 (line_comment) @comment
 (block_comment) @comment
+
+; Strings and literals
 (string_literal) @string
 (raw_string_literal) @string
 (char_literal) @string
@@ -160,21 +166,119 @@ const RUST_HIGHLIGHTS: &str = r#"
 (float_literal) @number
 (boolean_literal) @constant.builtin
 
-[
-  "let" "mut" "const" "static" "fn" "struct" "enum" "impl" "trait" 
-  "type" "mod" "use" "pub" "crate" "self" "super" "as" "where" 
-  "async" "await" "move" "ref" "if" "else" "match" "for" "while" 
-  "loop" "break" "continue" "return" "unsafe" "extern" "dyn"
-] @keyword
-
+; Types
 (type_identifier) @type
 (primitive_type) @type.builtin
 
-(function_item name: (identifier) @function)
+; Functions
+(function_item (identifier) @function)
+(function_signature_item (identifier) @function)
 (call_expression function: (identifier) @function)
-(macro_invocation macro: (identifier) @function)
+(call_expression function: (field_expression field: (field_identifier) @function.method))
+(call_expression function: (scoped_identifier name: (identifier) @function))
+(generic_function function: (identifier) @function)
+(generic_function function: (scoped_identifier name: (identifier) @function))
 
-(field_identifier) @property
+; Macros
+(macro_invocation macro: (identifier) @function.macro "!" @function.macro)
+(macro_definition "macro_rules!" @function.macro)
+
+; Fields and properties
+(field_identifier) @variable.member
+(shorthand_field_identifier) @variable.member
+
+; Labels and lifetimes
+(lifetime (identifier) @label)
+
+; Parameters
+(parameter (identifier) @variable.parameter)
+
+; Modules
+(mod_item name: (identifier) @module)
+(scoped_identifier path: (identifier) @module)
+
+; Self, crate, and special
+(self) @variable.builtin
+(crate) @keyword
+(super) @keyword
+(mutable_specifier) @keyword
+
+; Keywords
+"as" @keyword
+"async" @keyword
+"await" @keyword
+"break" @keyword
+"const" @keyword
+"continue" @keyword
+"dyn" @keyword
+"else" @keyword
+"enum" @keyword
+"extern" @keyword
+"fn" @keyword
+"for" @keyword
+"if" @keyword
+"impl" @keyword
+"in" @keyword
+"let" @keyword
+"loop" @keyword
+"match" @keyword
+"mod" @keyword
+"move" @keyword
+"pub" @keyword
+"ref" @keyword
+"return" @keyword
+"static" @keyword
+"struct" @keyword
+"trait" @keyword
+"type" @keyword
+"unsafe" @keyword
+"use" @keyword
+"where" @keyword
+"while" @keyword
+
+; Operators
+"*" @operator
+"&" @operator
+"=" @operator
+"+" @operator
+"-" @operator
+"/" @operator
+"%" @operator
+"!" @operator
+"<" @operator
+">" @operator
+"==" @operator
+"!=" @operator
+"<=" @operator
+">=" @operator
+"&&" @operator
+"||" @operator
+"+=" @operator
+"-=" @operator
+"*=" @operator
+"/=" @operator
+".." @operator
+"..=" @operator
+"=>" @operator
+"->" @operator
+"?" @operator
+
+; Punctuation
+"(" @punctuation.bracket
+")" @punctuation.bracket
+"[" @punctuation.bracket
+"]" @punctuation.bracket
+"{" @punctuation.bracket
+"}" @punctuation.bracket
+"::" @punctuation.delimiter
+":" @punctuation.delimiter
+"." @punctuation.delimiter
+"," @punctuation.delimiter
+";" @punctuation.delimiter
+
+; Attributes
+(attribute_item) @attribute
+(inner_attribute_item) @attribute
 "#;
 
 const JSON_HIGHLIGHTS: &str = r#"
@@ -184,56 +288,171 @@ const JSON_HIGHLIGHTS: &str = r#"
 (false) @constant.builtin
 (null) @constant.builtin
 (pair key: (string) @property)
-["[" "]" "{" "}"] @punctuation.bracket
-[":" ","] @punctuation.delimiter
+
+"[" @punctuation.bracket
+"]" @punctuation.bracket
+"{" @punctuation.bracket
+"}" @punctuation.bracket
+":" @punctuation.delimiter
+"," @punctuation.delimiter
 "#;
 
 const PYTHON_HIGHLIGHTS: &str = r#"
+; Comments and strings
 (comment) @comment
 (string) @string
+(escape_sequence) @string.special
+
+; Literals
 (integer) @number
 (float) @number
+(none) @constant.builtin
 (true) @constant.builtin
 (false) @constant.builtin
-(none) @constant.builtin
 
-["def" "class" "lambda" "if" "elif" "else" "for" "while" "try" "except" "finally" "with" "as" "import" "from" "return" "yield" "raise" "pass" "break" "continue" "global" "nonlocal" "assert" "async" "await" "and" "or" "not" "in" "is"] @keyword
+; Types and attributes
+(type (identifier) @type)
+(attribute attribute: (identifier) @property)
 
+; Functions
 (function_definition name: (identifier) @function)
 (call function: (identifier) @function)
 (call function: (attribute attribute: (identifier) @function.method))
+(decorator) @function
+(decorator (identifier) @function)
 
-(attribute attribute: (identifier) @property)
-(type (identifier) @type)
+; Keywords
+"as" @keyword
+"assert" @keyword
+"async" @keyword
+"await" @keyword
+"break" @keyword
+"class" @keyword
+"continue" @keyword
+"def" @keyword
+"del" @keyword
+"elif" @keyword
+"else" @keyword
+"except" @keyword
+"finally" @keyword
+"for" @keyword
+"from" @keyword
+"global" @keyword
+"if" @keyword
+"import" @keyword
+"lambda" @keyword
+"nonlocal" @keyword
+"pass" @keyword
+"raise" @keyword
+"return" @keyword
+"try" @keyword
+"while" @keyword
+"with" @keyword
+"yield" @keyword
+"match" @keyword
+"case" @keyword
+"and" @operator
+"or" @operator
+"not" @operator
+"in" @operator
+"is" @operator
 
-["(" ")" "[" "]" "{" "}"] @punctuation.bracket
-["." "," ":" ";"] @punctuation.delimiter
-["=" "+" "-" "*" "/" "%" "!" "<" ">" "&" "|" "^" "~" "==" "!=" "<=" ">=" "+=" "-=" "*=" "/=" "**" "//"] @operator
 "#;
 
 const GO_HIGHLIGHTS: &str = r#"
+; Comments and strings
 (comment) @comment
 (interpreted_string_literal) @string
 (raw_string_literal) @string
 (rune_literal) @string
+
+; Literals
 (int_literal) @number
 (float_literal) @number
 (true) @constant.builtin
 (false) @constant.builtin
 (nil) @constant.builtin
 
-["func" "var" "const" "type" "struct" "interface" "map" "chan" "package" "import" "if" "else" "for" "range" "switch" "case" "default" "select" "break" "continue" "return" "go" "defer" "fallthrough" "goto"] @keyword
-
+; Types
 (type_identifier) @type
+(type_spec name: (type_identifier) @type)
+
+; Functions
 (function_declaration name: (identifier) @function)
+(method_declaration name: (field_identifier) @function.method)
 (call_expression function: (identifier) @function)
 (call_expression function: (selector_expression field: (field_identifier) @function.method))
 
+; Fields
 (field_identifier) @property
 
-["(" ")" "[" "]" "{" "}"] @punctuation.bracket
-["." "," ";" ":"] @punctuation.delimiter
-["=" "+" "-" "*" "/" "%" "!" "<" ">" "&" "|" "^" ":=" "==" "!=" "<=" ">=" "&&" "||" "++" "--" "+=" "-=" "<-"] @operator
+; Package
+(package_identifier) @module
+
+; Keywords
+"break" @keyword
+"case" @keyword
+"chan" @keyword
+"const" @keyword
+"continue" @keyword
+"default" @keyword
+"defer" @keyword
+"else" @keyword
+"fallthrough" @keyword
+"for" @keyword
+"func" @keyword
+"go" @keyword
+"goto" @keyword
+"if" @keyword
+"import" @keyword
+"interface" @keyword
+"map" @keyword
+"package" @keyword
+"range" @keyword
+"return" @keyword
+"select" @keyword
+"struct" @keyword
+"switch" @keyword
+"type" @keyword
+"var" @keyword
+
+; Operators
+"=" @operator
+"+" @operator
+"-" @operator
+"*" @operator
+"/" @operator
+"%" @operator
+"!" @operator
+"<" @operator
+">" @operator
+"&" @operator
+"|" @operator
+"^" @operator
+":=" @operator
+"==" @operator
+"!=" @operator
+"<=" @operator
+">=" @operator
+"&&" @operator
+"||" @operator
+"++" @operator
+"--" @operator
+"+=" @operator
+"-=" @operator
+"<-" @operator
+
+; Punctuation
+"(" @punctuation.bracket
+")" @punctuation.bracket
+"[" @punctuation.bracket
+"]" @punctuation.bracket
+"{" @punctuation.bracket
+"}" @punctuation.bracket
+"." @punctuation.delimiter
+"," @punctuation.delimiter
+";" @punctuation.delimiter
+":" @punctuation.delimiter
 "#;
 
 const CSS_HIGHLIGHTS: &str = r#"
@@ -246,9 +465,7 @@ const CSS_HIGHLIGHTS: &str = r#"
 (tag_name) @tag
 (class_name) @type
 (id_name) @constant
-["@media" "@import" "@keyframes" "@font-face"] @keyword
-["(" ")" "[" "]" "{" "}"] @punctuation.bracket
-[":" ";" ","] @punctuation.delimiter
+(at_keyword) @keyword
 "#;
 
 const HTML_HIGHLIGHTS: &str = r#"
@@ -256,9 +473,6 @@ const HTML_HIGHLIGHTS: &str = r#"
 (quoted_attribute_value) @string
 (tag_name) @tag
 (attribute_name) @attribute
-(text) @string
-["<" ">" "</" "/>"] @punctuation.bracket
-["="] @operator
 "#;
 
 const TOML_HIGHLIGHTS: &str = r#"
@@ -269,8 +483,6 @@ const TOML_HIGHLIGHTS: &str = r#"
 (boolean) @constant.builtin
 (bare_key) @property
 (dotted_key) @property
-["[" "]" "{" "}"] @punctuation.bracket
-["." "=" ","] @punctuation.delimiter
 "#;
 
 const BASH_HIGHLIGHTS: &str = r#"
@@ -280,183 +492,150 @@ const BASH_HIGHLIGHTS: &str = r#"
 (number) @number
 (command_name) @function
 (variable_name) @variable
-["if" "then" "else" "elif" "fi" "case" "esac" "for" "while" "do" "done" "in" "function" "return" "local" "export"] @keyword
-["(" ")" "[" "]" "[[" "]]" "{" "}"] @punctuation.bracket
-[";" "|" "||" "&&" "&" ">" "<" ">>" "<<"] @operator
 "#;
 
 pub struct LanguageConfig {
     pub config: HighlightConfiguration,
 }
 
+fn load_config(
+    language: tree_sitter::Language,
+    name: &str,
+    highlights: &str,
+    ext: &'static str,
+    configs: &mut Vec<(&'static str, LanguageConfig)>,
+) {
+    match HighlightConfiguration::new(language, name, highlights, "", "") {
+        Ok(mut config) => {
+            config.configure(HIGHLIGHT_NAMES);
+            configs.push((ext, LanguageConfig { config }));
+        }
+        Err(_e) => {
+            #[cfg(debug_assertions)]
+            eprintln!("[WARN] Failed to load {} highlight config: {:?}", name, _e);
+        }
+    }
+}
+
 pub static CONFIGS: Lazy<Vec<(&'static str, LanguageConfig)>> = Lazy::new(|| {
     let mut configs = Vec::new();
 
     // TypeScript
-    if let Ok(mut config) = HighlightConfiguration::new(
+    load_config(
         tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
         "typescript",
         TS_HIGHLIGHTS,
-        "",
-        "",
-    ) {
-        config.configure(HIGHLIGHT_NAMES);
-        configs.push(("ts", LanguageConfig { config }));
-    }
+        "ts",
+        &mut configs,
+    );
 
     // TSX
-    if let Ok(mut config) = HighlightConfiguration::new(
+    load_config(
         tree_sitter_typescript::LANGUAGE_TSX.into(),
         "tsx",
         TSX_HIGHLIGHTS,
-        "",
-        "",
-    ) {
-        config.configure(HIGHLIGHT_NAMES);
-        configs.push(("tsx", LanguageConfig { config }));
-    }
+        "tsx",
+        &mut configs,
+    );
 
-    // JavaScript/JSX
-    if let Ok(mut config) = HighlightConfiguration::new(
+    // JavaScript
+    load_config(
         tree_sitter_javascript::LANGUAGE.into(),
         "javascript",
         JS_HIGHLIGHTS,
-        "",
-        "",
-    ) {
-        config.configure(HIGHLIGHT_NAMES);
-        configs.push(("js", LanguageConfig { config }));
-        configs.push((
-            "jsx",
-            LanguageConfig {
-                config: {
-                    let mut c = HighlightConfiguration::new(
-                        tree_sitter_javascript::LANGUAGE.into(),
-                        "javascript",
-                        JS_HIGHLIGHTS,
-                        "",
-                        "",
-                    )
-                    .unwrap();
-                    c.configure(HIGHLIGHT_NAMES);
-                    c
-                },
-            },
-        ));
-    }
+        "js",
+        &mut configs,
+    );
+
+    // JSX (same as JS but different extension)
+    load_config(
+        tree_sitter_javascript::LANGUAGE.into(),
+        "javascript",
+        JS_HIGHLIGHTS,
+        "jsx",
+        &mut configs,
+    );
 
     // Rust
-    if let Ok(mut config) = HighlightConfiguration::new(
+    load_config(
         tree_sitter_rust::LANGUAGE.into(),
         "rust",
         RUST_HIGHLIGHTS,
-        "",
-        "",
-    ) {
-        config.configure(HIGHLIGHT_NAMES);
-        configs.push(("rs", LanguageConfig { config }));
-    }
+        "rs",
+        &mut configs,
+    );
 
     // JSON
-    if let Ok(mut config) = HighlightConfiguration::new(
+    load_config(
         tree_sitter_json::LANGUAGE.into(),
         "json",
         JSON_HIGHLIGHTS,
-        "",
-        "",
-    ) {
-        config.configure(HIGHLIGHT_NAMES);
-        configs.push(("json", LanguageConfig { config }));
-    }
+        "json",
+        &mut configs,
+    );
 
     // Python
-    if let Ok(mut config) = HighlightConfiguration::new(
+    load_config(
         tree_sitter_python::LANGUAGE.into(),
         "python",
         PYTHON_HIGHLIGHTS,
-        "",
-        "",
-    ) {
-        config.configure(HIGHLIGHT_NAMES);
-        configs.push(("py", LanguageConfig { config }));
-    }
+        "py",
+        &mut configs,
+    );
 
     // Go
-    if let Ok(mut config) = HighlightConfiguration::new(
+    load_config(
         tree_sitter_go::LANGUAGE.into(),
         "go",
         GO_HIGHLIGHTS,
-        "",
-        "",
-    ) {
-        config.configure(HIGHLIGHT_NAMES);
-        configs.push(("go", LanguageConfig { config }));
-    }
+        "go",
+        &mut configs,
+    );
 
     // CSS
-    if let Ok(mut config) = HighlightConfiguration::new(
+    load_config(
         tree_sitter_css::LANGUAGE.into(),
         "css",
         CSS_HIGHLIGHTS,
-        "",
-        "",
-    ) {
-        config.configure(HIGHLIGHT_NAMES);
-        configs.push(("css", LanguageConfig { config }));
-    }
+        "css",
+        &mut configs,
+    );
 
     // HTML
-    if let Ok(mut config) = HighlightConfiguration::new(
+    load_config(
         tree_sitter_html::LANGUAGE.into(),
         "html",
         HTML_HIGHLIGHTS,
-        "",
-        "",
-    ) {
-        config.configure(HIGHLIGHT_NAMES);
-        configs.push(("html", LanguageConfig { config }));
-    }
+        "html",
+        &mut configs,
+    );
 
     // TOML
-    if let Ok(mut config) = HighlightConfiguration::new(
+    load_config(
         tree_sitter_toml_ng::LANGUAGE.into(),
         "toml",
         TOML_HIGHLIGHTS,
-        "",
-        "",
-    ) {
-        config.configure(HIGHLIGHT_NAMES);
-        configs.push(("toml", LanguageConfig { config }));
-    }
+        "toml",
+        &mut configs,
+    );
 
-    // Bash
-    if let Ok(mut config) = HighlightConfiguration::new(
+    // Bash (sh extension)
+    load_config(
         tree_sitter_bash::LANGUAGE.into(),
         "bash",
         BASH_HIGHLIGHTS,
-        "",
-        "",
-    ) {
-        config.configure(HIGHLIGHT_NAMES);
-        configs.push(("sh", LanguageConfig { config }));
-        configs.push((
-            "bash",
-            LanguageConfig {
-                config: {
-                    let mut c = HighlightConfiguration::new(
-                        tree_sitter_bash::LANGUAGE.into(),
-                        "bash",
-                        BASH_HIGHLIGHTS,
-                        "",
-                        "",
-                    )
-                    .unwrap();
-                    c.configure(HIGHLIGHT_NAMES);
-                    c
-                },
-            },
-        ));
-    }
+        "sh",
+        &mut configs,
+    );
+
+    // Bash (bash extension)
+    load_config(
+        tree_sitter_bash::LANGUAGE.into(),
+        "bash",
+        BASH_HIGHLIGHTS,
+        "bash",
+        &mut configs,
+    );
 
     configs
 });
@@ -516,4 +695,65 @@ pub fn highlight_line_spans<'a>(line: &str, filename: &str, bg: Option<Color>) -
 
 pub fn init() {
     let _ = &*CONFIGS;
+    #[cfg(debug_assertions)]
+    {
+        let extensions: Vec<&str> = CONFIGS.iter().map(|(ext, _)| *ext).collect();
+        eprintln!("[DEBUG] Loaded highlight configs for: {:?}", extensions);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_all_configs_load() {
+        let extensions: Vec<&str> = CONFIGS.iter().map(|(ext, _)| *ext).collect();
+        // Should have all expected languages
+        assert!(extensions.contains(&"rs"), "Rust config should be loaded");
+        assert!(extensions.contains(&"ts"), "TypeScript config should be loaded");
+        assert!(extensions.contains(&"tsx"), "TSX config should be loaded");
+        assert!(extensions.contains(&"js"), "JavaScript config should be loaded");
+        assert!(extensions.contains(&"py"), "Python config should be loaded");
+        assert!(extensions.contains(&"go"), "Go config should be loaded");
+        assert!(extensions.contains(&"json"), "JSON config should be loaded");
+    }
+
+    #[test]
+    fn test_rust_highlighting() {
+        let code = r#"fn main() {
+    let x = 42;
+    println!("Hello");
+}"#;
+        let result = highlight_code(code, "test.rs");
+        // Should have multiple highlighted segments
+        assert!(!result.is_empty(), "Rust highlighting should produce output");
+        // Should have some highlights (not all None)
+        let has_highlights = result.iter().any(|(_, h)| h.is_some());
+        assert!(has_highlights, "Rust code should have syntax highlights");
+    }
+
+    #[test]
+    fn test_typescript_highlighting() {
+        let code = r#"const x: number = 42;
+function hello(): string {
+    return "world";
+}"#;
+        let result = highlight_code(code, "test.ts");
+        assert!(!result.is_empty(), "TypeScript highlighting should produce output");
+        let has_highlights = result.iter().any(|(_, h)| h.is_some());
+        assert!(has_highlights, "TypeScript code should have syntax highlights");
+    }
+
+    #[test]
+    fn test_python_highlighting() {
+        let code = r#"def hello():
+    x = 42
+    return "world"
+"#;
+        let result = highlight_code(code, "test.py");
+        assert!(!result.is_empty(), "Python highlighting should produce output");
+        let has_highlights = result.iter().any(|(_, h)| h.is_some());
+        assert!(has_highlights, "Python code should have syntax highlights");
+    }
 }
