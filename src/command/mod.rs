@@ -9,6 +9,7 @@ use crate::error::LumenError;
 use crate::git_entity::diff::Diff;
 use crate::git_entity::GitEntity;
 use crate::provider::LumenProvider;
+use crate::vcs::Vcs;
 
 pub mod draft;
 pub mod explain;
@@ -59,7 +60,8 @@ impl LumenCommand {
     }
 
     fn get_sha_from_fzf() -> Result<String, LumenError> {
-        let command = "git log --color=always --format='%C(auto)%h%d %s %C(black)%C(bold)%cr' | fzf --ansi --reverse --bind='enter:become(echo {1})'";
+        let vcs = Vcs::detect();
+        let command = vcs.fzf_log_command();
 
         let output = std::process::Command::new("sh")
             .arg("-c")
