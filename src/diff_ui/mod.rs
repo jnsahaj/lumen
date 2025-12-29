@@ -178,17 +178,17 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                 }
                 Event::Mouse(mouse) if active_modal.is_none() => {
                     let term_size = terminal.size()?;
-                    let header_height = 3u16;
+                    let footer_height = 1u16;
                     let sidebar_width = if show_sidebar { 40u16 } else { 0u16 };
 
                     match mouse.kind {
                         MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
                             if show_sidebar
                                 && mouse.column < sidebar_width
-                                && mouse.row >= header_height
+                                && mouse.row < term_size.height.saturating_sub(footer_height)
                             {
                                 let clicked_row =
-                                    (mouse.row - header_height - 1) as usize + sidebar_scroll;
+                                    (mouse.row.saturating_sub(1)) as usize + sidebar_scroll;
                                 if clicked_row < sidebar_items.len() {
                                     if matches!(sidebar_items[clicked_row], SidebarItem::File { .. }) {
                                         sidebar_selected = clicked_row;
@@ -218,14 +218,13 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                         MouseEventKind::ScrollDown => {
                             if show_sidebar
                                 && mouse.column < sidebar_width
-                                && mouse.row >= header_height
+                                && mouse.row < term_size.height.saturating_sub(footer_height)
                             {
                                 let max_sidebar_scroll =
                                     sidebar_items.len().saturating_sub(1);
                                 sidebar_scroll = (sidebar_scroll + 3).min(max_sidebar_scroll);
                             } else if mouse.column >= sidebar_width
-                                && mouse.row >= header_height
-                                && mouse.row < term_size.height
+                                && mouse.row < term_size.height.saturating_sub(footer_height)
                             {
                                 scroll = (scroll + 3).min(max_scroll as u16);
                             }
@@ -233,12 +232,11 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                         MouseEventKind::ScrollUp => {
                             if show_sidebar
                                 && mouse.column < sidebar_width
-                                && mouse.row >= header_height
+                                && mouse.row < term_size.height.saturating_sub(footer_height)
                             {
                                 sidebar_scroll = sidebar_scroll.saturating_sub(3);
                             } else if mouse.column >= sidebar_width
-                                && mouse.row >= header_height
-                                && mouse.row < term_size.height
+                                && mouse.row < term_size.height.saturating_sub(footer_height)
                             {
                                 scroll = scroll.saturating_sub(3);
                             }
@@ -249,6 +247,7 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                 Event::Key(key) if key.kind == KeyEventKind::Press && active_modal.is_none() => {
                     match key.code {
                         KeyCode::Char('q') | KeyCode::Esc => break,
+                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => break,
                         KeyCode::Char('1') => {
                             focused_panel = FocusedPanel::Sidebar;
                             show_sidebar = true;

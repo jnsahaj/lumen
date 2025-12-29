@@ -5,6 +5,19 @@ use super::DiffOptions;
 use crate::commit_reference::CommitReference;
 use crate::diff_ui::types::{FileDiff, FileStatus};
 
+pub fn get_current_branch() -> String {
+    let output = Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .output();
+
+    match output {
+        Ok(o) if o.status.success() => {
+            String::from_utf8_lossy(&o.stdout).trim().to_string()
+        }
+        _ => "unknown".to_string(),
+    }
+}
+
 /// Resolved references for diff comparison
 pub enum DiffRefs {
     /// Uncommitted changes (working tree vs HEAD)

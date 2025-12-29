@@ -6,9 +6,28 @@ use ratatui::{
 };
 
 use crate::diff_ui::diff::compute_side_by_side;
+use crate::diff_ui::git::get_current_branch;
 use crate::diff_ui::highlight::highlight_line_spans;
 use crate::diff_ui::sticky_lines::{compute_sticky_lines, StickyLine};
 use crate::diff_ui::types::{ChangeType, DiffLine, DiffViewSettings, FileDiff, FocusedPanel, SidebarItem};
+
+pub struct LineStats {
+    pub added: usize,
+    pub removed: usize,
+}
+
+pub fn compute_line_stats(side_by_side: &[DiffLine]) -> LineStats {
+    let mut added = 0;
+    let mut removed = 0;
+    for line in side_by_side {
+        match line.change_type {
+            ChangeType::Insert => added += 1,
+            ChangeType::Delete => removed += 1,
+            ChangeType::Equal => {}
+        }
+    }
+    LineStats { added, removed }
+}
 
 pub fn render_empty_state(frame: &mut Frame, watching: bool) {
     let watch_hint = if watching {
@@ -40,7 +59,7 @@ fn truncate_middle(s: &str, max_len: usize) -> String {
 pub fn render_diff(
     frame: &mut Frame,
     diff: &FileDiff,
-    file_diffs: &[FileDiff],
+    _file_diffs: &[FileDiff],
     sidebar_items: &[SidebarItem],
     current_file: usize,
     scroll: u16,
@@ -56,37 +75,19 @@ pub fn render_diff(
 ) {
     let area = frame.area();
     let side_by_side = compute_side_by_side(&diff.old_content, &diff.new_content);
+    let line_stats = compute_line_stats(&side_by_side);
+    let branch = get_current_branch();
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(0)])
+        .constraints([Constraint::Min(0), Constraint::Length(1)])
         .split(area);
-
-    let watch_indicator = if watching { " [watching]" } else { "" };
-    let max_filename_len = 40;
-    let truncated_filename = truncate_middle(&diff.filename, max_filename_len);
-    let hunks_text = if hunk_count == 1 { "hunk" } else { "hunks" };
-    let header = Paragraph::new(format!(
-        " File {}/{}: {} ({} {}){}  |  [j/k] scroll  [C-j/k] files  [Space] viewed  [q] quit",
-        current_file + 1,
-        file_diffs.len(),
-        truncated_filename,
-        hunk_count,
-        hunks_text,
-        watch_indicator
-    ))
-    .block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Cyan)),
-    );
-    frame.render_widget(header, chunks[0]);
 
     let main_area = if show_sidebar {
         let main_chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Length(45), Constraint::Min(0)])
-            .split(chunks[1]);
+            .split(chunks[0]);
 
         render_sidebar(
             frame,
@@ -101,7 +102,7 @@ pub fn render_diff(
 
         main_chunks[1]
     } else {
-        chunks[1]
+        chunks[0]
     };
 
     // Determine if this is a new file (no old content) or deleted file (no new content)
@@ -311,6 +312,66 @@ pub fn render_diff(
         frame.render_widget(old_para, content_chunks[0]);
         frame.render_widget(new_para, content_chunks[1]);
     }
+
+    // Render footer
+    let watch_indicator = if watching { " watching" } else { "" };
+    let max_filename_len = (area.width as usize).saturating_sub(60).min(50);
+    let truncated_filename = truncate_middle(&diff.filename, max_filename_len);
+    let bg = Color::Rgb(30, 30, 40);
+
+    // Left section: branch + filename + watch
+    let left_spans = vec![
+        Span::styled(" ", Style::default().bg(bg)),
+        Span::styled(
+            format!(" {} ", branch),
+            Style::default().fg(Color::Rgb(180, 180, 220)).bg(Color::Rgb(50, 50, 70)),
+        ),
+        Span::styled(" ", Style::default().bg(bg)),
+        Span::styled(truncated_filename, Style::default().fg(Color::Rgb(200, 200, 200)).bg(bg)),
+        Span::styled(watch_indicator, Style::default().fg(Color::Yellow).bg(bg)),
+    ];
+
+    // Center section: +N -N (X hunks)
+    let center_spans = vec![
+        Span::styled(format!("+{}", line_stats.added), Style::default().fg(Color::Rgb(80, 200, 120)).bg(bg)),
+        Span::styled(" ", Style::default().bg(bg)),
+        Span::styled(format!("-{}", line_stats.removed), Style::default().fg(Color::Rgb(240, 80, 80)).bg(bg)),
+        Span::styled(" ", Style::default().bg(bg)),
+        Span::styled(
+            format!("({} {})", hunk_count, if hunk_count == 1 { "hunk" } else { "hunks" }),
+            Style::default().fg(Color::Rgb(140, 140, 160)).bg(bg),
+        ),
+    ];
+
+    // Right section: help hint
+    let right_spans = vec![
+        Span::styled(" ? help ", Style::default().fg(Color::Rgb(120, 120, 140)).bg(bg)),
+    ];
+
+    let left_line = Line::from(left_spans);
+    let center_line = Line::from(center_spans);
+    let right_line = Line::from(right_spans);
+
+    let footer_area = chunks[1];
+    let footer_width = footer_area.width as usize;
+    let left_len = left_line.width();
+    let center_len = center_line.width();
+    let right_len = right_line.width();
+
+    // Calculate padding to center the middle section
+    let center_pos = footer_width / 2;
+    let center_start = center_pos.saturating_sub(center_len / 2);
+    let left_padding = center_start.saturating_sub(left_len);
+    let right_padding = footer_width.saturating_sub(center_start + center_len + right_len);
+
+    let mut final_spans: Vec<Span> = left_line.spans;
+    final_spans.push(Span::styled(" ".repeat(left_padding), Style::default().bg(bg)));
+    final_spans.extend(center_line.spans);
+    final_spans.push(Span::styled(" ".repeat(right_padding), Style::default().bg(bg)));
+    final_spans.extend(right_line.spans);
+
+    let footer = Paragraph::new(Line::from(final_spans)).style(Style::default().bg(bg));
+    frame.render_widget(footer, footer_area);
 }
 
 fn render_sticky_lines(
