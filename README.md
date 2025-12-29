@@ -7,8 +7,6 @@
 
 A command-line tool that uses AI to streamline your git workflow - from generating commit messages to explaining complex changes, all without requiring an API key.
 
-![demo](https://github.com/user-attachments/assets/0d029bdb-3b11-4b5c-bed6-f5a91d8529f2)
-
 ## Table of Contents
 - [Features](#features-)
 - [Getting Started](#getting-started-)
