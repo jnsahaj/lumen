@@ -206,14 +206,14 @@ generate_release_notes() {
     
     if [[ -z "$last_tag" ]]; then
         # No previous tag, get all commits
-        info "No previous tag found, including all commits"
+        info "No previous tag found, including all commits" >&2
         while IFS= read -r line; do
             local hash=$(echo "$line" | cut -d' ' -f1)
             local message=$(echo "$line" | cut -d' ' -f2-)
             notes+="* $message ([${hash:0:7}](https://github.com/jnsahaj/lumen/commit/$hash))\n"
         done < <(git log --oneline --format="%H %s")
     else
-        info "Generating changelog since $last_tag"
+        info "Generating changelog since $last_tag" >&2
         while IFS= read -r line; do
             local hash=$(echo "$line" | cut -d' ' -f1)
             local message=$(echo "$line" | cut -d' ' -f2-)
