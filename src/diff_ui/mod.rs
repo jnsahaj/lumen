@@ -92,6 +92,7 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
         0
     };
     let mut sidebar_scroll: usize = 0;
+    let mut sidebar_h_scroll: u16 = 0;
     let mut h_scroll: u16 = 0;
     let mut active_modal: Option<Modal> = None;
     let mut pending_key = PendingKey::default();
@@ -167,6 +168,7 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                     focused_panel,
                     sidebar_selected,
                     sidebar_scroll,
+                    sidebar_h_scroll,
                     &viewed_files,
                     &settings,
                     hunk_count,
@@ -502,11 +504,15 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                         KeyCode::Char('h') | KeyCode::Left => {
                             if focused_panel == FocusedPanel::DiffView {
                                 h_scroll = h_scroll.saturating_sub(4);
+                            } else if focused_panel == FocusedPanel::Sidebar {
+                                sidebar_h_scroll = sidebar_h_scroll.saturating_sub(4);
                             }
                         }
                         KeyCode::Char('l') | KeyCode::Right => {
                             if focused_panel == FocusedPanel::DiffView {
                                 h_scroll = h_scroll.saturating_add(4);
+                            } else if focused_panel == FocusedPanel::Sidebar {
+                                sidebar_h_scroll = sidebar_h_scroll.saturating_add(4);
                             }
                         }
                         KeyCode::Enter => {
@@ -724,6 +730,7 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                                         title: "Sidebar",
                                         bindings: vec![
                                             KeyBind { key: "j/k or up/down", description: "Navigate files" },
+                                            KeyBind { key: "h/l or left/right", description: "Scroll horizontally" },
                                             KeyBind { key: "enter", description: "Open file in diff view" },
                                             KeyBind { key: "space", description: "Toggle file as viewed" },
                                         ],

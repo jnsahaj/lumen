@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, List, ListItem, Paragraph},
+    widgets::{Block, Borders, Paragraph},
 };
 
 use crate::diff_ui::context::{compute_context_lines, ContextLine};
@@ -69,6 +69,7 @@ pub fn render_diff(
     focused_panel: FocusedPanel,
     sidebar_selected: usize,
     sidebar_scroll: usize,
+    sidebar_h_scroll: u16,
     viewed_files: &HashSet<usize>,
     settings: &DiffViewSettings,
     hunk_count: usize,
@@ -97,6 +98,7 @@ pub fn render_diff(
             current_file,
             sidebar_selected,
             sidebar_scroll,
+            sidebar_h_scroll,
             viewed_files,
             focused_panel == FocusedPanel::Sidebar,
         );
@@ -412,11 +414,12 @@ fn render_sidebar(
     current_file: usize,
     sidebar_selected: usize,
     sidebar_scroll: usize,
+    sidebar_h_scroll: u16,
     viewed_files: &HashSet<usize>,
     is_focused: bool,
 ) {
     let visible_height = area.height.saturating_sub(2) as usize;
-    let items: Vec<ListItem> = sidebar_items
+    let lines: Vec<Line> = sidebar_items
         .iter()
         .enumerate()
         .map(|(i, item)| {
@@ -502,13 +505,11 @@ fn render_sidebar(
                 base_style
             };
 
-            let line = Line::from(vec![
+            Line::from(vec![
                 Span::styled(prefix, base_style),
                 Span::styled(status_symbol, status_style),
                 Span::styled(name, base_style),
-            ]);
-
-            ListItem::new(line)
+            ])
         })
         .collect();
 
@@ -518,18 +519,20 @@ fn render_sidebar(
         Color::DarkGray
     };
 
-    let visible_items: Vec<ListItem> = items
+    let visible_lines: Vec<Line> = lines
         .into_iter()
         .skip(sidebar_scroll)
         .take(visible_height)
         .collect();
 
-    let list = List::new(visible_items).block(
-        Block::default()
-            .title(" [1] Files ")
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(border_color)),
-    );
+    let para = Paragraph::new(visible_lines)
+        .scroll((0, sidebar_h_scroll))
+        .block(
+            Block::default()
+                .title(" [1] Files ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(border_color)),
+        );
 
-    frame.render_widget(list, area);
+    frame.render_widget(para, area);
 }
