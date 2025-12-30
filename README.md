@@ -13,6 +13,7 @@ A command-line tool that uses AI to streamline your git workflow - generate comm
 - [Getting Started](#getting-started-)
   - [Prerequisites](#prerequisites)
   - [Installation](#installation)
+  - [Configuration (for AI features)](#configuration-for-ai-features)
 - [Usage](#usage-)
   - [Visual Diff Viewer](#visual-diff-viewer)
   - [Generate Commit Messages](#generate-commit-messages)
@@ -59,6 +60,19 @@ brew install jnsahaj/lumen/lumen
 ```bash
 cargo install lumen
 ```
+
+### Configuration (for AI features)
+
+If you want to use AI-powered features (`explain`, `draft`, `list`, `operate`), run the interactive setup:
+
+```bash
+lumen configure
+```
+
+This will guide you through selecting an AI provider and entering your API key. The configuration is saved to `~/.config/lumen/lumen.config.json`.
+
+> [!NOTE]
+> The `diff` command works without any configuration - it's a standalone visual diff viewer.
 
 ## Usage 🔅
 
