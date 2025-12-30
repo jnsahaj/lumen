@@ -20,12 +20,6 @@ pub enum ProviderError {
     #[error("No completion content in response")]
     NoCompletionChoice,
 
-    #[error("API request failed with status code {0}: {1}")]
-    APIError(reqwest::StatusCode, String),
-
-    #[error("Unexpected response")]
-    UnexpectedResponse,
-
     #[error(transparent)]
     AIPromptError(#[from] AIPromptError),
 }
