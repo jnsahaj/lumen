@@ -169,38 +169,60 @@ publish_to_crates() {
     success "Published to crates.io"
 }
 
-# Step 4: Build release binary
+# Target architectures for macOS
+TARGETS=("x86_64-apple-darwin" "aarch64-apple-darwin")
+
+# Step 4: Build release binaries for all targets
 build_release() {
-    info "Building release binary..."
+    info "Building release binaries for all architectures..."
     
-    cargo build --release
+    for target in "${TARGETS[@]}"; do
+        info "Building for $target..."
+        
+        # Ensure the target is installed
+        if ! rustup target list --installed | grep -q "$target"; then
+            info "Installing target $target..."
+            rustup target add "$target"
+        fi
+        
+        cargo build --release --target "$target"
+        
+        if [[ ! -f "target/$target/release/lumen" ]]; then
+            error "Release binary not found at target/$target/release/lumen"
+        fi
+        
+        success "Built for $target"
+    done
     
-    if [[ ! -f "target/release/lumen" ]]; then
-        error "Release binary not found at target/release/lumen"
-    fi
-    
-    success "Release binary built"
+    success "All release binaries built"
 }
 
-# Step 5: Create tarball
+# Step 5: Create tarballs for each architecture
 create_tarball() {
-    info "Creating tarball..."
+    info "Creating tarballs for all architectures..."
     
-    cd target/release
-    tar -czf lumen.tar.gz lumen
-    cd "$SCRIPT_DIR"
+    for target in "${TARGETS[@]}"; do
+        info "Creating tarball for $target..."
+        
+        cd "target/$target/release"
+        tar -czf "lumen-$target.tar.gz" lumen
+        cd "$SCRIPT_DIR"
+        
+        if [[ ! -f "target/$target/release/lumen-$target.tar.gz" ]]; then
+            error "Failed to create tarball for $target"
+        fi
+        
+        success "Tarball created for $target"
+    done
     
-    if [[ ! -f "target/release/lumen.tar.gz" ]]; then
-        error "Failed to create tarball"
-    fi
-    
-    success "Tarball created at target/release/lumen.tar.gz"
+    success "All tarballs created"
 }
 
-# Step 6: Calculate SHA256
+# Step 6: Calculate SHA256 for each architecture
 calculate_sha256() {
+    local target="$1"
     local sha256
-    sha256=$(shasum -a 256 target/release/lumen.tar.gz | awk '{print $1}')
+    sha256=$(shasum -a 256 "target/$target/release/lumen-$target.tar.gz" | awk '{print $1}')
     echo "$sha256"
 }
 
@@ -257,20 +279,28 @@ create_github_release() {
     local release_notes
     release_notes=$(generate_release_notes "$version")
     
+    # Collect all tarballs
+    local tarballs=()
+    for target in "${TARGETS[@]}"; do
+        tarballs+=("target/$target/release/lumen-$target.tar.gz")
+    done
+    
     # Create release with gh CLI
     gh release create "$tag" \
         --title "v$version" \
         --notes "$release_notes" \
-        target/release/lumen.tar.gz
+        "${tarballs[@]}"
     
-    success "GitHub release created and tarball uploaded"
+    success "GitHub release created and tarballs uploaded"
 }
 
 # Step 8: Update homebrew formula
 update_homebrew_formula() {
     local version="$1"
-    local sha256="$2"
-    local download_url="https://github.com/jnsahaj/lumen/releases/download/v$version/lumen.tar.gz"
+    local sha256_intel="$2"
+    local sha256_arm="$3"
+    local url_intel="https://github.com/jnsahaj/lumen/releases/download/v$version/lumen-x86_64-apple-darwin.tar.gz"
+    local url_arm="https://github.com/jnsahaj/lumen/releases/download/v$version/lumen-aarch64-apple-darwin.tar.gz"
     
     info "Updating homebrew formula..."
     
@@ -279,10 +309,28 @@ update_homebrew_formula() {
     # Pull latest changes
     git pull origin main --rebase
     
-    # Update the formula
-    sed -i '' "s|url \".*\"|url \"$download_url\"|" Formula/lumen.rb
-    sed -i '' "s|sha256 \".*\"|sha256 \"$sha256\"|" Formula/lumen.rb
-    sed -i '' "s|version \".*\"|version \"$version\"|" Formula/lumen.rb
+    # Generate new formula content
+    cat > Formula/lumen.rb << EOF
+class Lumen < Formula
+  desc "lumen is a command-line tool that can show pretty diff, generate commit messages with AI, summarise diffs / commits, and more without requiring an API key."
+  homepage "https://github.com/jnsahaj/lumen"
+  version "$version"
+
+  on_intel do
+    url "$url_intel"
+    sha256 "$sha256_intel"
+  end
+
+  on_arm do
+    url "$url_arm"
+    sha256 "$sha256_arm"
+  end
+
+  def install
+    bin.install "lumen"
+  end
+end
+EOF
     
     # Show the diff
     echo ""
@@ -369,11 +417,11 @@ main() {
     echo "  1. Update Cargo.toml version to $new_version"
     echo "  2. Commit Cargo.toml and Cargo.lock"
     echo "  3. Publish to crates.io"
-    echo "  4. Build release binary"
-    echo "  5. Create tarball"
-    echo "  6. Create GitHub release v$new_version and upload tarball"
+    echo "  4. Build release binaries (Intel + ARM)"
+    echo "  5. Create tarballs for each architecture"
+    echo "  6. Create GitHub release v$new_version and upload tarballs"
     echo "  7. Push main branch changes"
-    echo "  8. Update homebrew formula"
+    echo "  8. Update homebrew formula (with arch-specific URLs)"
     echo ""
     
     if ! confirm "Proceed with release?"; then
@@ -398,9 +446,11 @@ main() {
     create_tarball
     echo ""
     
-    local sha256
-    sha256=$(calculate_sha256)
-    info "SHA256: $sha256"
+    local sha256_intel sha256_arm
+    sha256_intel=$(calculate_sha256 "x86_64-apple-darwin")
+    sha256_arm=$(calculate_sha256 "aarch64-apple-darwin")
+    info "SHA256 (Intel): $sha256_intel"
+    info "SHA256 (ARM):   $sha256_arm"
     echo ""
     
     create_github_release "$new_version"
@@ -409,7 +459,7 @@ main() {
     push_main_changes
     echo ""
     
-    update_homebrew_formula "$new_version" "$sha256"
+    update_homebrew_formula "$new_version" "$sha256_intel" "$sha256_arm"
     echo ""
     
     echo -e "${GREEN}========================================${NC}"
