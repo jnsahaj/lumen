@@ -287,3 +287,25 @@ export LUMEN_API_KEY="sk-xxxxxxxxxxxxxxxxxxxxxxxx"
 # Or override using CLI flags
 lumen -p "ollama" -m "llama3.2" draft
 ```
+## Contributors
+
+<a href="https://github.com/jnsahaj/lumen/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=jnsahaj/lumen" />
+</a>
+
+Made with [contrib.rocks](https://contrib.rocks).
+
+### Interested in Contributing?
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+# Star History
+
+<p align="center">
+  <a target="_blank" href="https://star-history.com/#jnsahaj/lumen&Date">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=jnsahaj/lumen&type=Date&theme=dark">
+      <img alt="GitHub Star History for jnsahaj/lumen" src="https://api.star-history.com/svg?repos=jnsahaj/lumen&type=Date">
+    </picture>
+  </a>
+</p>
