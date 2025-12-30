@@ -90,6 +90,9 @@ async fn run() -> Result<(), LumenError> {
             };
             diff_ui::run_diff_ui(options)?;
         }
+        Commands::Configure => {
+            command::configure::ConfigureCommand::execute()?;
+        }
     }
 
     Ok(())

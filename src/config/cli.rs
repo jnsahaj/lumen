@@ -100,4 +100,6 @@ pub enum Commands {
         #[arg(short, long)]
         watch: bool,
     },
+    /// Interactively configure Lumen (provider, API key)
+    Configure,
 }

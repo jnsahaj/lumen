@@ -20,6 +20,9 @@ pub enum LumenError {
     #[error("Invalid configuration: {0}")]
     InvalidConfiguration(String),
 
+    #[error("Configuration error: {0}")]
+    ConfigurationError(String),
+
     #[error(transparent)]
     IoError(#[from] io::Error),
 
@@ -31,4 +34,7 @@ pub enum LumenError {
 
     #[error(transparent)]
     ProviderError(#[from] ProviderError),
+
+    #[error("JSON error: {0}")]
+    JsonError(#[from] serde_json::Error),
 }

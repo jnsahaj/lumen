@@ -10,6 +10,7 @@ use crate::git_entity::diff::Diff;
 use crate::git_entity::GitEntity;
 use crate::provider::LumenProvider;
 
+pub mod configure;
 pub mod draft;
 pub mod explain;
 pub mod list;
