@@ -2,6 +2,9 @@
 
 set -e
 
+# Auto mode flag
+AUTO_MODE=false
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -23,6 +26,10 @@ error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 confirm() {
     local prompt="$1"
     local response
+    if [[ "$AUTO_MODE" == true ]]; then
+        echo -e "${YELLOW}$prompt [y/N]${NC} y (auto)"
+        return 0
+    fi
     echo -en "${YELLOW}$prompt [y/N]${NC} "
     read -r response
     [[ "$response" =~ ^[Yy]$ ]]
@@ -148,10 +155,12 @@ commit_version_changes() {
 publish_to_crates() {
     info "Publishing to crates.io..."
     
-    if confirm "Run 'cargo publish --dry-run' first?"; then
-        cargo publish --dry-run
-        if ! confirm "Dry run successful. Proceed with actual publish?"; then
-            error "Aborted by user"
+    if [[ "$AUTO_MODE" != true ]]; then
+        if confirm "Run 'cargo publish --dry-run' first?"; then
+            cargo publish --dry-run
+            if ! confirm "Dry run successful. Proceed with actual publish?"; then
+                error "Aborted by user"
+            fi
         fi
     fi
     
@@ -308,10 +317,26 @@ push_main_changes() {
 
 # Main release flow
 main() {
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --auto|-a)
+                AUTO_MODE=true
+                shift
+                ;;
+            *)
+                shift
+                ;;
+        esac
+    done
+    
     echo ""
     echo -e "${GREEN}========================================${NC}"
     echo -e "${GREEN}       Lumen Release Script${NC}"
     echo -e "${GREEN}========================================${NC}"
+    if [[ "$AUTO_MODE" == true ]]; then
+        echo -e "${GREEN}           (Auto Mode)${NC}"
+    fi
     echo ""
     
     # Change to script directory
