@@ -110,17 +110,17 @@ impl LumenProvider {
             // Native genai providers
             _ => {
                 let (default_model, name, env_key) = match provider_type {
-                    ProviderType::Openai => ("gpt-5-mini", "OpenAI", "OPENAI_API_KEY"),
+                    ProviderType::Openai => ("gpt-4o-mini", "OpenAI", "OPENAI_API_KEY"),
                     ProviderType::Claude => (
-                        "claude-sonnet-4-5-20250930",
+                        "claude-sonnet-4-5-20250929",
                         "Claude",
                         "ANTHROPIC_API_KEY",
                     ),
                     ProviderType::Groq => ("llama-3.3-70b-versatile", "Groq", "GROQ_API_KEY"),
                     ProviderType::Ollama => ("llama3.2", "Ollama", ""),
                     ProviderType::Deepseek => ("deepseek-chat", "DeepSeek", "DEEPSEEK_API_KEY"),
-                    ProviderType::Gemini => ("gemini-3-flash", "Gemini", "GEMINI_API_KEY"),
-                    ProviderType::Xai => ("grok-4-mini-fast", "xAI", "XAI_API_KEY"),
+                    ProviderType::Gemini => ("gemini-1.5-flash", "Gemini", "GEMINI_API_KEY"),
+                    ProviderType::Xai => ("grok-beta", "xAI", "XAI_API_KEY"),
                     ProviderType::Openrouter | ProviderType::Vercel => {
                         unreachable!()
                     }
@@ -129,8 +129,9 @@ impl LumenProvider {
                 let model = model.unwrap_or_else(|| default_model.to_string());
 
                 // If api_key provided via CLI/config, set it in env so genai picks it up
+                // But only if the env var isn't already set (allow per-provider env vars to take precedence)
                 if let Some(key) = api_key {
-                    if !env_key.is_empty() {
+                    if !env_key.is_empty() && std::env::var(env_key).is_err() {
                         std::env::set_var(env_key, key);
                     }
                 }
