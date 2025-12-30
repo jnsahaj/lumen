@@ -262,8 +262,9 @@ impl Modal {
             if i > 0 {
                 lines.push(Line::from(""));
             }
+            let section_label = format!("[{}]", section.title);
             lines.push(Line::from(Span::styled(
-                format!("[{}]", section.title),
+                format!("{:>width$}", section_label, width = key_width),
                 Style::default().fg(Color::Yellow).bold(),
             )));
             for bind in &section.bindings {
