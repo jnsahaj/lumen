@@ -41,25 +41,31 @@ async fn run() -> Result<(), LumenError> {
             reference,
             staged,
             query,
+            list,
         } => {
-            let git_entity = match reference {
-                Some(CommitReference::Single(input)) => {
-                    let sha = if input == "-" {
-                        read_from_stdin()?
-                    } else {
-                        input
-                    };
-                    GitEntity::Commit(Commit::new(sha)?)
-                }
-                Some(CommitReference::Range { from, to }) => {
-                    GitEntity::Diff(Diff::from_commits_range(&from, &to, false)?)
-                }
-                Some(CommitReference::TripleDots { from, to }) => {
-                    GitEntity::Diff(Diff::from_commits_range(&from, &to, true)?)
-                }
-                None => {
-                    // Default: show uncommitted diff
-                    GitEntity::Diff(Diff::from_working_tree(staged)?)
+            let git_entity = if list {
+                let sha = command.get_sha_from_fzf()?;
+                GitEntity::Commit(Commit::new(sha)?)
+            } else {
+                match reference {
+                    Some(CommitReference::Single(input)) => {
+                        let sha = if input == "-" {
+                            read_from_stdin()?
+                        } else {
+                            input
+                        };
+                        GitEntity::Commit(Commit::new(sha)?)
+                    }
+                    Some(CommitReference::Range { from, to }) => {
+                        GitEntity::Diff(Diff::from_commits_range(&from, &to, false)?)
+                    }
+                    Some(CommitReference::TripleDots { from, to }) => {
+                        GitEntity::Diff(Diff::from_commits_range(&from, &to, true)?)
+                    }
+                    None => {
+                        // Default: show uncommitted diff
+                        GitEntity::Diff(Diff::from_working_tree(staged)?)
+                    }
                 }
             };
 
@@ -67,7 +73,10 @@ async fn run() -> Result<(), LumenError> {
                 .execute(command::CommandType::Explain { git_entity, query })
                 .await?;
         }
-        Commands::List => command.execute(command::CommandType::List).await?,
+        Commands::List => {
+            eprintln!("Warning: 'lumen list' is deprecated. Use 'lumen explain --list' instead.");
+            command.execute(command::CommandType::List).await?
+        }
         Commands::Draft { context } => {
             command
                 .execute(command::CommandType::Draft(context, config.draft))
