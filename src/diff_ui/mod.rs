@@ -368,6 +368,20 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                                 }
                             }
                         }
+                        KeyCode::Char('d')
+                            if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
+                            // Ctrl+d: scroll down half a screen (vim behavior)
+                            let half_screen = (visible_height / 2) as u16;
+                            scroll = (scroll + half_screen).min(max_scroll as u16);
+                        }
+                        KeyCode::Char('u')
+                            if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
+                            // Ctrl+u: scroll up half a screen (vim behavior)
+                            let half_screen = (visible_height / 2) as u16;
+                            scroll = scroll.saturating_sub(half_screen);
+                        }
                         KeyCode::Char(']') => {
                             // Toggle new panel fullscreen (only if new content exists)
                             if !file_diffs.is_empty() {
@@ -653,6 +667,7 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                                             KeyBind { key: "tab", description: "Toggle sidebar" },
                                             KeyBind { key: "1 / 2", description: "Focus sidebar / diff" },
                                             KeyBind { key: "ctrl+j / ctrl+k", description: "Next / previous file" },
+                                            KeyBind { key: "ctrl+d / ctrl+u", description: "Scroll half page down / up" },
                                             KeyBind { key: "r", description: "Reload diff" },
                                             KeyBind { key: "y", description: "Copy current filename" },
                                             KeyBind { key: "e", description: "Open current file in editor" },
