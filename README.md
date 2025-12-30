@@ -47,18 +47,35 @@ Before you begin, ensure you have:
 ### Installation
 
 #### Using Homebrew (MacOS and Linux)
+
 ```bash
 brew install jnsahaj/lumen/lumen
 ```
 
 #### Using Cargo
+>
 > [!IMPORTANT]
 > `cargo` is a package manager for `rust`,
 > and is installed automatically when you install `rust`.
 > See [installation guide](https://doc.rust-lang.org/cargo/getting-started/installation.html)
+
 ```bash
 cargo install lumen
 ```
+
+#### Using vscode devcontainers
+
+You need to add in your `devcontainer.json` file:
+
+```json
+{
+ "features": {
+  "ghcr.io/kvokka/features/lumen:1": {}
+  }
+}
+```
+
+More details in the feature [repo](https://github.com/kvokka/devcontainer-features/tree/main/features/lumen)
 
 ## Usage 🔅
 
