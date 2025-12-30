@@ -26,7 +26,7 @@ use ratatui::prelude::*;
 use crate::commit_reference::CommitReference;
 use diff::{compute_side_by_side, find_hunk_starts};
 use git::load_file_diffs;
-pub use modal::{KeyBind, KeyBindSection, Modal};
+pub use modal::{FilePickerItem, FileStatus as ModalFileStatus, KeyBind, KeyBindSection, Modal, ModalResult};
 use types::{build_file_tree, DiffFullscreen, DiffViewSettings, FocusedPanel, SidebarItem};
 use watcher::setup_watcher;
 
@@ -192,7 +192,27 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
             match event::read()? {
                 Event::Key(key) if key.kind == KeyEventKind::Press && active_modal.is_some() => {
                     if let Some(ref mut modal) = active_modal {
-                        if let Some(_result) = modal.handle_input(key) {
+                        if let Some(result) = modal.handle_input(key) {
+                            if let ModalResult::FileSelected(file_index) = result {
+                                current_file = file_index;
+                                diff_fullscreen = DiffFullscreen::None;
+                                if let Some(idx) = sidebar_items.iter().position(|item| {
+                                    matches!(item, SidebarItem::File { file_index: fi, .. } if *fi == current_file)
+                                }) {
+                                    sidebar_selected = idx;
+                                    let visible_height = terminal.size()?.height.saturating_sub(5) as usize;
+                                    if sidebar_selected >= sidebar_scroll + visible_height {
+                                        sidebar_scroll = sidebar_selected.saturating_sub(visible_height) + 1;
+                                    } else if sidebar_selected < sidebar_scroll {
+                                        sidebar_scroll = sidebar_selected;
+                                    }
+                                }
+                                let diff = &file_diffs[current_file];
+                                let side_by_side = compute_side_by_side(&diff.old_content, &diff.new_content, settings.tab_width);
+                                let hunks = find_hunk_starts(&side_by_side);
+                                scroll = hunks.first().map(|&h| (h as u16).saturating_sub(5)).unwrap_or(0);
+                                h_scroll = 0;
+                            }
                             active_modal = None;
                         }
                     }
@@ -381,6 +401,31 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                             // Ctrl+u: scroll up half a screen (vim behavior)
                             let half_screen = (visible_height / 2) as u16;
                             scroll = scroll.saturating_sub(half_screen);
+                        }
+                        KeyCode::Char('p')
+                            if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
+                            // Ctrl+p: open file picker (telescope-style fuzzy finder)
+                            if !file_diffs.is_empty() {
+                                let items: Vec<FilePickerItem> = file_diffs
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(i, diff)| {
+                                        let status = match diff.status {
+                                            types::FileStatus::Added => ModalFileStatus::Added,
+                                            types::FileStatus::Modified => ModalFileStatus::Modified,
+                                            types::FileStatus::Deleted => ModalFileStatus::Deleted,
+                                        };
+                                        FilePickerItem {
+                                            name: diff.filename.clone(),
+                                            file_index: i,
+                                            status,
+                                            viewed: viewed_files.contains(&i),
+                                        }
+                                    })
+                                    .collect();
+                                active_modal = Some(Modal::file_picker("Find File", items));
+                            }
                         }
                         KeyCode::Char(']') => {
                             // Toggle new panel fullscreen (only if new content exists)
@@ -668,6 +713,7 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                                             KeyBind { key: "1 / 2", description: "Focus sidebar / diff" },
                                             KeyBind { key: "ctrl+j / ctrl+k", description: "Next / previous file" },
                                             KeyBind { key: "ctrl+d / ctrl+u", description: "Scroll half page down / up" },
+                                            KeyBind { key: "ctrl+p", description: "Open file picker" },
                                             KeyBind { key: "r", description: "Reload diff" },
                                             KeyBind { key: "y", description: "Copy current filename" },
                                             KeyBind { key: "e", description: "Open current file in editor" },

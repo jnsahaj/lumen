@@ -17,6 +17,21 @@ pub struct KeyBindSection {
 }
 
 #[derive(Clone)]
+pub struct FilePickerItem {
+    pub name: String,
+    pub file_index: usize,
+    pub status: FileStatus,
+    pub viewed: bool,
+}
+
+#[derive(Clone, Copy)]
+pub enum FileStatus {
+    Added,
+    Modified,
+    Deleted,
+}
+
+#[derive(Clone)]
 pub enum ModalContent {
     #[allow(dead_code)]
     Info {
@@ -33,6 +48,13 @@ pub enum ModalContent {
         title: String,
         sections: Vec<KeyBindSection>,
     },
+    FilePicker {
+        title: String,
+        items: Vec<FilePickerItem>,
+        filtered_indices: Vec<usize>,
+        query: String,
+        selected: usize,
+    },
 }
 
 pub struct Modal {
@@ -44,6 +66,7 @@ pub enum ModalResult {
     Dismissed,
     #[allow(dead_code)]
     Selected(usize, String),
+    FileSelected(usize),
 }
 
 impl Modal {
@@ -77,6 +100,19 @@ impl Modal {
         }
     }
 
+    pub fn file_picker(title: impl Into<String>, items: Vec<FilePickerItem>) -> Self {
+        let filtered_indices: Vec<usize> = (0..items.len()).collect();
+        Self {
+            content: ModalContent::FilePicker {
+                title: title.into(),
+                items,
+                filtered_indices,
+                query: String::new(),
+                selected: 0,
+            },
+        }
+    }
+
     pub fn render(&self, frame: &mut Frame) {
         let area = frame.area();
 
@@ -102,6 +138,12 @@ impl Modal {
                 let height = (total_lines as u16 + 4).min(area.height * 80 / 100).max(5);
                 (width, height)
             }
+            ModalContent::FilePicker { filtered_indices, .. } => {
+                let width = 60.min(area.width.saturating_sub(4));
+                let items_count = filtered_indices.len().min(15) as u16;
+                let height = (items_count + 5).min(area.height * 80 / 100).max(8);
+                (width, height)
+            }
         };
 
         let modal_x = (area.width.saturating_sub(modal_width)) / 2;
@@ -123,6 +165,15 @@ impl Modal {
             }
             ModalContent::KeyBindings { title, sections } => {
                 self.render_keybindings(frame, modal_area, title, sections);
+            }
+            ModalContent::FilePicker {
+                title,
+                items,
+                filtered_indices,
+                query,
+                selected,
+            } => {
+                self.render_file_picker(frame, modal_area, title, items, filtered_indices, query, *selected);
             }
         }
     }
@@ -231,15 +282,98 @@ impl Modal {
         frame.render_widget(para, inner);
     }
 
+    fn render_file_picker(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        title: &str,
+        items: &[FilePickerItem],
+        filtered_indices: &[usize],
+        query: &str,
+        selected: usize,
+    ) {
+        let block = Block::default()
+            .title(format!(" {} ", title))
+            .title_style(Style::default().fg(Color::Cyan).bold())
+            .borders(Borders::ALL)
+            .border_type(ratatui::widgets::BorderType::Rounded)
+            .border_style(Style::default().fg(Color::DarkGray));
+
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+
+        use ratatui::layout::{Constraint, Direction, Layout};
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Length(1), Constraint::Min(1)])
+            .split(inner);
+
+        let input_line = Line::from(vec![
+            Span::styled("> ", Style::default().fg(Color::Green)),
+            Span::styled(query, Style::default().fg(Color::White)),
+            Span::styled("_", Style::default().fg(Color::Gray)),
+        ]);
+        frame.render_widget(Paragraph::new(input_line), chunks[0]);
+
+        let visible_count = chunks[2].height as usize;
+        let scroll_offset = if selected >= visible_count {
+            selected - visible_count + 1
+        } else {
+            0
+        };
+
+        let list_items: Vec<ListItem> = filtered_indices
+            .iter()
+            .enumerate()
+            .skip(scroll_offset)
+            .take(visible_count)
+            .map(|(i, &idx)| {
+                let item = &items[idx];
+                let is_selected = i == selected;
+
+                let (status_char, status_color) = match item.status {
+                    FileStatus::Added => ("A", Color::Green),
+                    FileStatus::Modified => ("M", Color::Yellow),
+                    FileStatus::Deleted => ("D", Color::Red),
+                };
+
+                let viewed_char = if item.viewed { "✓" } else { " " };
+
+                let spans = if is_selected {
+                    let selected_style = Style::default().fg(Color::Black).bg(Color::Cyan);
+                    vec![
+                        Span::styled(format!(" {} ", viewed_char), selected_style),
+                        Span::styled(format!("{} ", status_char), selected_style),
+                        Span::styled(item.name.clone(), selected_style),
+                    ]
+                } else {
+                    vec![
+                        Span::styled(format!(" {} ", viewed_char), Style::default().fg(Color::Green)),
+                        Span::styled(format!("{} ", status_char), Style::default().fg(status_color)),
+                        Span::styled(item.name.clone(), Style::default().fg(Color::White)),
+                    ]
+                };
+
+                ListItem::new(Line::from(spans))
+            })
+            .collect();
+
+        let list = List::new(list_items);
+        frame.render_widget(list, chunks[2]);
+    }
+
     /// Handle keyboard input for the modal.
     /// Returns Some(ModalResult) if the modal should close.
     pub fn handle_input(&mut self, key: KeyEvent) -> Option<ModalResult> {
-        // Close on Esc, q, or Ctrl+C
-        if key.code == KeyCode::Esc
-            || key.code == KeyCode::Char('q')
-            || (key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL))
-        {
-            return Some(ModalResult::Dismissed);
+        // FilePicker handles its own dismiss logic (needs to allow typing 'q')
+        if !matches!(self.content, ModalContent::FilePicker { .. }) {
+            // Close on Esc, q, or Ctrl+C
+            if key.code == KeyCode::Esc
+                || key.code == KeyCode::Char('q')
+                || (key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL))
+            {
+                return Some(ModalResult::Dismissed);
+            }
         }
 
         match &mut self.content {
@@ -278,6 +412,92 @@ impl Modal {
                 }
                 None
             }
+            ModalContent::FilePicker {
+                items,
+                filtered_indices,
+                query,
+                selected,
+                ..
+            } => {
+                match key.code {
+                    KeyCode::Esc => Some(ModalResult::Dismissed),
+                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        Some(ModalResult::Dismissed)
+                    }
+                    KeyCode::Down | KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) || key.code == KeyCode::Down => {
+                        if *selected < filtered_indices.len().saturating_sub(1) {
+                            *selected += 1;
+                        }
+                        None
+                    }
+                    KeyCode::Up | KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) || key.code == KeyCode::Up => {
+                        *selected = selected.saturating_sub(1);
+                        None
+                    }
+                    KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        if *selected < filtered_indices.len().saturating_sub(1) {
+                            *selected += 1;
+                        }
+                        None
+                    }
+                    KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        *selected = selected.saturating_sub(1);
+                        None
+                    }
+                    KeyCode::Enter => {
+                        if let Some(&file_idx) = filtered_indices.get(*selected) {
+                            Some(ModalResult::FileSelected(items[file_idx].file_index))
+                        } else {
+                            Some(ModalResult::Dismissed)
+                        }
+                    }
+                    KeyCode::Backspace => {
+                        query.pop();
+                        Self::update_filtered_indices(items, query, filtered_indices, selected);
+                        None
+                    }
+                    KeyCode::Char(c) => {
+                        query.push(c);
+                        Self::update_filtered_indices(items, query, filtered_indices, selected);
+                        None
+                    }
+                    _ => None,
+                }
+            }
         }
     }
+
+    fn update_filtered_indices(
+        items: &[FilePickerItem],
+        query: &str,
+        filtered_indices: &mut Vec<usize>,
+        selected: &mut usize,
+    ) {
+        let query_lower = query.to_lowercase();
+        *filtered_indices = items
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| fuzzy_match(&item.name.to_lowercase(), &query_lower))
+            .map(|(i, _)| i)
+            .collect();
+        if *selected >= filtered_indices.len() {
+            *selected = filtered_indices.len().saturating_sub(1);
+        }
+    }
+}
+
+fn fuzzy_match(text: &str, pattern: &str) -> bool {
+    if pattern.is_empty() {
+        return true;
+    }
+    let mut pattern_chars = pattern.chars().peekable();
+    for c in text.chars() {
+        if pattern_chars.peek() == Some(&c) {
+            pattern_chars.next();
+        }
+        if pattern_chars.peek().is_none() {
+            return true;
+        }
+    }
+    pattern_chars.peek().is_none()
 }
