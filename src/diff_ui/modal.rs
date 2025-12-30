@@ -139,7 +139,7 @@ impl Modal {
                 (width, height)
             }
             ModalContent::FilePicker { filtered_indices, .. } => {
-                let width = 60.min(area.width.saturating_sub(4));
+                let width = 80.min(area.width.saturating_sub(4));
                 let items_count = filtered_indices.len().min(15) as u16;
                 let height = (items_count + 5).min(area.height * 80 / 100).max(8);
                 (width, height)
