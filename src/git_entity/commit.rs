@@ -68,6 +68,7 @@ impl Commit {
             .args([
                 "diff-tree",
                 "-p",
+                "--root",
                 "--binary",
                 "--no-color",
                 "--compact-summary",
@@ -210,5 +211,13 @@ mod tests {
 
         let result = Commit::is_valid_commit("HEAD\n");
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn root_commit_diff_should_not_be_empty() {
+        let _repo = RepoGuard::new();
+
+        let commit = Commit::new("HEAD".to_string()).expect("root commit should load");
+        assert!(!commit.diff.trim().is_empty());
     }
 }
