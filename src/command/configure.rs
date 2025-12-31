@@ -1,3 +1,4 @@
+use crate::config::{ProviderInfo, ALL_PROVIDERS};
 use crate::error::LumenError;
 use dirs::home_dir;
 use inquire::{Select, Text};
@@ -5,76 +6,34 @@ use serde_json::{json, Value};
 use std::fmt;
 use std::fs;
 
-struct ProviderOption {
-    id: &'static str,
-    display_name: &'static str,
-    env_var: &'static str,
-}
+/// Wrapper for display in the selection prompt
+struct ProviderChoice(&'static ProviderInfo);
 
-impl fmt::Display for ProviderOption {
+impl fmt::Display for ProviderChoice {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.display_name)
+        write!(f, "{}", self.0.display_name)
     }
 }
 
-const PROVIDERS: &[ProviderOption] = &[
-    ProviderOption {
-        id: "openai",
-        display_name: "OpenAI",
-        env_var: "OPENAI_API_KEY",
-    },
-    ProviderOption {
-        id: "groq",
-        display_name: "Groq",
-        env_var: "GROQ_API_KEY",
-    },
-    ProviderOption {
-        id: "claude",
-        display_name: "Claude (Anthropic)",
-        env_var: "ANTHROPIC_API_KEY",
-    },
-    ProviderOption {
-        id: "ollama",
-        display_name: "Ollama (local)",
-        env_var: "",
-    },
-    ProviderOption {
-        id: "openrouter",
-        display_name: "OpenRouter",
-        env_var: "OPENROUTER_API_KEY",
-    },
-    ProviderOption {
-        id: "deepseek",
-        display_name: "DeepSeek",
-        env_var: "DEEPSEEK_API_KEY",
-    },
-    ProviderOption {
-        id: "gemini",
-        display_name: "Gemini (Google)",
-        env_var: "GEMINI_API_KEY",
-    },
-    ProviderOption {
-        id: "xai",
-        display_name: "xAI (Grok)",
-        env_var: "XAI_API_KEY",
-    },
-    ProviderOption {
-        id: "vercel",
-        display_name: "Vercel AI Gateway",
-        env_var: "VERCEL_API_KEY",
-    },
-];
-
+/// Command to handle interactive configuration of Lumen features.
 pub struct ConfigureCommand;
 
 impl ConfigureCommand {
+    /// Executes the interactive configuration wizard.
+    ///
+    /// This process:
+    /// 1. Prompts the user to select an AI provider
+    /// 2. Asks for an API key (if needed)
+    /// 3. Allows specifying a custom model name
+    /// 4. Saves the configuration to `~/.config/lumen/lumen.config.json`
     pub fn execute() -> Result<(), LumenError> {
         println!("\n  \x1b[1;36mLumen Configuration\x1b[0m\n");
 
         let provider = Self::select_provider()?;
-        let api_key = Self::get_api_key(&provider)?;
+        let api_key = Self::get_api_key(provider)?;
+        let model = Self::get_model_name(provider)?;
 
-        Self::save_config(&provider, api_key.as_deref())?;
+        Self::save_config(provider, api_key.as_deref(), model.as_deref())?;
 
         let config_path = Self::get_config_path()?;
         println!(
@@ -85,19 +44,23 @@ impl ConfigureCommand {
         Ok(())
     }
 
-    fn select_provider() -> Result<&'static ProviderOption, LumenError> {
-        let options: Vec<&ProviderOption> = PROVIDERS.iter().collect();
+    /// Prompts the user to select an AI provider from the supported list.
+    fn select_provider() -> Result<&'static ProviderInfo, LumenError> {
+        let options: Vec<ProviderChoice> = ALL_PROVIDERS.iter().map(ProviderChoice).collect();
 
         let selection = Select::new("Select your default AI provider:", options)
             .with_help_message("↑↓ to move, enter to select, type to filter")
             .prompt()
             .map_err(|e| LumenError::ConfigurationError(e.to_string()))?;
 
-        Ok(selection)
+        Ok(selection.0)
     }
 
-    fn get_api_key(provider: &ProviderOption) -> Result<Option<String>, LumenError> {
-        if provider.env_var.is_empty() {
+    /// Prompts the user for an API key if the provider requires one.
+    /// Returns `None` if the user leaves the input empty (to use env var) or if the provider
+    /// is local (e.g. Ollama).
+    fn get_api_key(provider: &ProviderInfo) -> Result<Option<String>, LumenError> {
+        if provider.env_key.is_empty() {
             println!(
                 "\n  \x1b[2mOllama runs locally — no API key needed.\x1b[0m"
             );
@@ -106,7 +69,7 @@ impl ConfigureCommand {
 
         let prompt = format!(
             "Enter your API key (or leave empty to use {}):",
-            provider.env_var
+            provider.env_key
         );
 
         let api_key = Text::new(&prompt)
@@ -120,6 +83,27 @@ impl ConfigureCommand {
         }
     }
 
+    /// Prompts the user for a custom model name.
+    /// Returns `None` if the user accepts the default model by pressing Enter.
+    fn get_model_name(provider: &ProviderInfo) -> Result<Option<String>, LumenError> {
+        let prompt = format!(
+            "Enter model name (leave empty for default: {}):",
+            provider.default_model
+        );
+
+        let model = Text::new(&prompt)
+            .with_help_message("Press Enter to use the default model")
+            .prompt()
+            .map_err(|e| LumenError::ConfigurationError(e.to_string()))?;
+
+        if model.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(model))
+        }
+    }
+
+    /// Resolves the path to the configuration directory (`~/.config/lumen`).
     fn get_config_path() -> Result<std::path::PathBuf, LumenError> {
         let mut path = home_dir().ok_or_else(|| {
             LumenError::ConfigurationError("Could not determine home directory".to_string())
@@ -129,7 +113,14 @@ impl ConfigureCommand {
         Ok(path)
     }
 
-    fn save_config(provider: &ProviderOption, api_key: Option<&str>) -> Result<(), LumenError> {
+    /// Saves the selected configuration to the JSON config file.
+    /// If `model` is `None`, any existing `model` key in the config is removed to ensure
+    /// the provider's default is used.
+    fn save_config(
+        provider: &ProviderInfo,
+        api_key: Option<&str>,
+        model: Option<&str>,
+    ) -> Result<(), LumenError> {
         let config_dir = Self::get_config_path()?;
         fs::create_dir_all(&config_dir)?;
 
@@ -142,10 +133,19 @@ impl ConfigureCommand {
             json!({})
         };
 
+        // Get provider ID from the type
         config["provider"] = json!(provider.id);
 
         if let Some(key) = api_key {
             config["api_key"] = json!(key);
+        }
+
+        if let Some(m) = model {
+            config["model"] = json!(m);
+        } else {
+            // Remove model key to use provider default
+            config.as_object_mut().map(|obj| obj.remove("model"));
+
         }
 
         let content = serde_json::to_string_pretty(&config)?;
