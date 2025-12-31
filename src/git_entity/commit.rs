@@ -4,6 +4,7 @@ use thiserror::Error;
 
 use super::GIT_DIFF_EXCLUSIONS;
 
+/// Errors that can occur when resolving commit metadata or diffs.
 #[derive(Error, Debug, Clone)]
 pub enum CommitError {
     #[error("Commit '{0}' not found")]
@@ -13,6 +14,7 @@ pub enum CommitError {
     EmptyDiff(String),
 }
 
+/// Parsed commit metadata and its diff content.
 #[derive(Clone, Debug)]
 pub struct Commit {
     pub full_hash: String,
@@ -24,6 +26,7 @@ pub struct Commit {
 }
 
 impl Commit {
+    /// Build a commit object from a SHA or ref.
     pub fn new(sha: String) -> Result<Self, LumenError> {
         let sha = sha.trim().to_string();
         Self::is_valid_commit(&sha)?;
@@ -38,6 +41,7 @@ impl Commit {
         })
     }
 
+    /// Validate that a SHA or ref resolves to a commit object.
     pub fn is_valid_commit(sha: &str) -> Result<(), LumenError> {
         let sha = sha.trim();
         let output = Command::new("git").args(["cat-file", "-t", sha]).output()?;
@@ -50,6 +54,7 @@ impl Commit {
         Err(CommitError::InvalidCommit(sha.to_string()).into())
     }
 
+    /// Resolve the full commit hash for a ref.
     fn get_full_hash(sha: &str) -> Result<String, LumenError> {
         let output = Command::new("git").args(["rev-parse", sha]).output()?;
 
@@ -57,6 +62,7 @@ impl Commit {
         Ok(full_hash)
     }
 
+    /// Get the commit diff content.
     fn get_diff(sha: &str) -> Result<String, LumenError> {
         let output = Command::new("git")
             .args([
@@ -78,6 +84,7 @@ impl Commit {
         Ok(diff)
     }
 
+    /// Get the commit message body.
     fn get_message(sha: &str) -> Result<String, LumenError> {
         let output = Command::new("git")
             .args(["log", "--format=%B", "-n", "1", sha])
@@ -89,6 +96,7 @@ impl Commit {
         Ok(message)
     }
 
+    /// Get the commit author name.
     fn get_author_name(sha: &str) -> Result<String, LumenError> {
         let output = Command::new("git")
             .args(["log", "--format=%an", "-n", "1", sha])
@@ -98,6 +106,7 @@ impl Commit {
         Ok(name)
     }
 
+    /// Get the commit author email.
     fn get_author_email(sha: &str) -> Result<String, LumenError> {
         let output = Command::new("git")
             .args(["log", "--format=%ae", "-n", "1", sha])
@@ -107,6 +116,7 @@ impl Commit {
         Ok(email)
     }
 
+    /// Get the commit timestamp formatted for display.
     fn get_date(sha: &str) -> Result<String, LumenError> {
         let output = Command::new("git")
             .args([
