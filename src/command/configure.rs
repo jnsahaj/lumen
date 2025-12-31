@@ -15,9 +15,17 @@ impl fmt::Display for ProviderChoice {
     }
 }
 
+/// Command to handle interactive configuration of Lumen features.
 pub struct ConfigureCommand;
 
 impl ConfigureCommand {
+    /// Executes the interactive configuration wizard.
+    ///
+    /// This process:
+    /// 1. Prompts the user to select an AI provider
+    /// 2. Asks for an API key (if needed)
+    /// 3. Allows specifying a custom model name
+    /// 4. Saves the configuration to `~/.config/lumen/lumen.config.json`
     pub fn execute() -> Result<(), LumenError> {
         println!("\n  \x1b[1;36mLumen Configuration\x1b[0m\n");
 
@@ -36,6 +44,7 @@ impl ConfigureCommand {
         Ok(())
     }
 
+    /// Prompts the user to select an AI provider from the supported list.
     fn select_provider() -> Result<&'static ProviderInfo, LumenError> {
         let options: Vec<ProviderChoice> = ALL_PROVIDERS.iter().map(ProviderChoice).collect();
 
@@ -47,6 +56,9 @@ impl ConfigureCommand {
         Ok(selection.0)
     }
 
+    /// Prompts the user for an API key if the provider requires one.
+    /// Returns `None` if the user leaves the input empty (to use env var) or if the provider
+    /// is local (e.g. Ollama).
     fn get_api_key(provider: &ProviderInfo) -> Result<Option<String>, LumenError> {
         if provider.env_key.is_empty() {
             println!(
@@ -71,6 +83,8 @@ impl ConfigureCommand {
         }
     }
 
+    /// Prompts the user for a custom model name.
+    /// Returns `None` if the user accepts the default model by pressing Enter.
     fn get_model_name(provider: &ProviderInfo) -> Result<Option<String>, LumenError> {
         let prompt = format!(
             "Enter model name (leave empty for default: {}):",
@@ -89,6 +103,7 @@ impl ConfigureCommand {
         }
     }
 
+    /// Resolves the path to the configuration directory (`~/.config/lumen`).
     fn get_config_path() -> Result<std::path::PathBuf, LumenError> {
         let mut path = home_dir().ok_or_else(|| {
             LumenError::ConfigurationError("Could not determine home directory".to_string())
@@ -98,6 +113,9 @@ impl ConfigureCommand {
         Ok(path)
     }
 
+    /// Saves the selected configuration to the JSON config file.
+    /// If `model` is `None`, any existing `model` key in the config is removed to ensure
+    /// the provider's default is used.
     fn save_config(
         provider: &ProviderInfo,
         api_key: Option<&str>,
@@ -124,6 +142,10 @@ impl ConfigureCommand {
 
         if let Some(m) = model {
             config["model"] = json!(m);
+        } else {
+            // Remove model key to use provider default
+            config.as_object_mut().map(|obj| obj.remove("model"));
+
         }
 
         let content = serde_json::to_string_pretty(&config)?;
