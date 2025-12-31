@@ -9,6 +9,7 @@ struct ProviderOption {
     id: &'static str,
     display_name: &'static str,
     env_var: &'static str,
+    needs_api_key: bool,
 }
 
 impl fmt::Display for ProviderOption {
@@ -22,46 +23,61 @@ const PROVIDERS: &[ProviderOption] = &[
         id: "openai",
         display_name: "OpenAI",
         env_var: "OPENAI_API_KEY",
+        needs_api_key: true,
     },
     ProviderOption {
         id: "groq",
         display_name: "Groq",
         env_var: "GROQ_API_KEY",
+        needs_api_key: true,
     },
     ProviderOption {
         id: "claude",
         display_name: "Claude (Anthropic)",
         env_var: "ANTHROPIC_API_KEY",
+        needs_api_key: true,
     },
     ProviderOption {
         id: "ollama",
         display_name: "Ollama (local)",
         env_var: "",
+        needs_api_key: false,
     },
     ProviderOption {
         id: "openrouter",
         display_name: "OpenRouter",
         env_var: "OPENROUTER_API_KEY",
+        needs_api_key: true,
     },
     ProviderOption {
         id: "deepseek",
         display_name: "DeepSeek",
         env_var: "DEEPSEEK_API_KEY",
+        needs_api_key: true,
     },
     ProviderOption {
         id: "gemini",
         display_name: "Gemini (Google)",
         env_var: "GEMINI_API_KEY",
+        needs_api_key: true,
     },
     ProviderOption {
         id: "xai",
         display_name: "xAI (Grok)",
         env_var: "XAI_API_KEY",
+        needs_api_key: true,
     },
     ProviderOption {
         id: "vercel",
         display_name: "Vercel AI Gateway",
         env_var: "VERCEL_API_KEY",
+        needs_api_key: true,
+    },
+    ProviderOption {
+        id: "qwen",
+        display_name: "Qwen (OAuth)",
+        env_var: "",
+        needs_api_key: false,
     },
 ];
 
@@ -97,10 +113,16 @@ impl ConfigureCommand {
     }
 
     fn get_api_key(provider: &ProviderOption) -> Result<Option<String>, LumenError> {
-        if provider.env_var.is_empty() {
-            println!(
-                "\n  \x1b[2mOllama runs locally — no API key needed.\x1b[0m"
-            );
+        if !provider.needs_api_key {
+            if provider.id == "qwen" {
+                println!(
+                    "\n  \x1b[2mQwen OAuth will open a browser on first use to authorize your account.\x1b[0m"
+                );
+            } else {
+                println!(
+                    "\n  \x1b[2mOllama runs locally — no API key needed.\x1b[0m"
+                );
+            }
             return Ok(None);
         }
 
@@ -146,6 +168,10 @@ impl ConfigureCommand {
 
         if let Some(key) = api_key {
             config["api_key"] = json!(key);
+        } else if provider.id == "qwen" {
+            if let Some(obj) = config.as_object_mut() {
+                obj.remove("api_key");
+            }
         }
 
         let content = serde_json::to_string_pretty(&config)?;
