@@ -1,4 +1,5 @@
 use crate::error::LumenError;
+use crate::vcs::Vcs;
 use thiserror::Error;
 
 use super::{commit::Commit, GIT_DIFF_EXCLUSIONS};
@@ -24,18 +25,16 @@ pub enum Diff {
 
 impl Diff {
     pub fn from_working_tree(staged: bool) -> Result<Self, LumenError> {
-        let args = if staged {
-            vec!["diff", "--staged"]
-        } else {
-            vec!["diff"]
-        };
+        let vcs = Vcs::detect();
+        let mut cmd = vcs.diff_working_tree(staged);
+        
+        if vcs == Vcs::Git {
+            cmd.args(GIT_DIFF_EXCLUSIONS);
+        }
 
-        let output = std::process::Command::new("git")
-            .args(args)
-            .args(GIT_DIFF_EXCLUSIONS)
-            .output()?;
-
+        let output = cmd.output()?;
         let diff = String::from_utf8(output.stdout)?;
+        
         if diff.is_empty() {
             return Err(DiffError::EmptyDiff { staged }.into());
         }
@@ -47,14 +46,22 @@ impl Diff {
         let _ = Commit::is_valid_commit(from)?;
         let _ = Commit::is_valid_commit(to)?;
 
-        let separator = if triple_dot { "..." } else { ".." };
-        let range = format!("{}{}{}", from, separator, to);
+        let vcs = Vcs::detect();
+        
+        let actual_from = if triple_dot {
+            let output = vcs.get_merge_base(from, to).output()?;
+            String::from_utf8(output.stdout)?.trim().to_string()
+        } else {
+            from.to_string()
+        };
 
-        let output = std::process::Command::new("git")
-            .args(["diff", &range])
-            .args(GIT_DIFF_EXCLUSIONS)
-            .output()?;
+        let mut cmd = vcs.diff_range(&actual_from, to);
+        
+        if vcs == Vcs::Git {
+            cmd.args(GIT_DIFF_EXCLUSIONS);
+        }
 
+        let output = cmd.output()?;
         let diff = String::from_utf8(output.stdout)?;
 
         if diff.is_empty() {
