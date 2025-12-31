@@ -69,10 +69,16 @@ If you want to use AI-powered features (`explain`, `draft`, `list`, `operate`), 
 lumen configure
 ```
 
-This will guide you through selecting an AI provider and entering your API key. The configuration is saved to `~/.config/lumen/lumen.config.json`.
+This will guide you through:
+1. Selecting an AI provider
+2. Entering your API key (optional if using environment variable)
+3. Specifying a custom model name (optional - press Enter to use the default)
+
+The configuration is saved to `~/.config/lumen/lumen.config.json`.
 
 > [!NOTE]
 > The `diff` command works without any configuration - it's a standalone visual diff viewer.
+
 
 ## Usage 🔅
 
@@ -215,7 +221,7 @@ export LUMEN_AI_MODEL="gpt-5-mini"
 |----------|-----------------|---------|
 | [OpenAI](https://platform.openai.com/docs/models) `openai` (Default) | Yes | `gpt-5.2`, `gpt-5`, `gpt-5-mini`, `gpt-5-nano`, `gpt-4.1`, `gpt-4.1-mini`, `o4-mini` (default: `gpt-5-mini`) |
 | [Claude](https://www.anthropic.com/pricing) `claude` | Yes | `claude-sonnet-4-5-20250930`, `claude-opus-4-5-20251115`, `claude-haiku-4-5-20251015` (default: `claude-sonnet-4-5-20250930`) |
-| [Gemini](https://ai.google.dev/) `gemini` | Yes (free tier) | `gemini-3-pro`, `gemini-3-flash`, `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite` (default: `gemini-3-flash`) |
+| [Gemini](https://ai.google.dev/) `gemini` | Yes (free tier) | `gemini-3-pro`, `gemini-3-flash-preview`, `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite` (default: `gemini-2.5-flash`) |
 | [Groq](https://console.groq.com/docs/models) `groq` | Yes (free) | `llama-3.3-70b-versatile`, `llama-3.1-8b-instant`, `meta-llama/llama-4-maverick-17b-128e-instruct`, `openai/gpt-oss-120b` (default: `llama-3.3-70b-versatile`) |
 | [DeepSeek](https://www.deepseek.com/) `deepseek` | Yes | `deepseek-chat` (V3.2), `deepseek-reasoner` (default: `deepseek-chat`) |
 | [xAI](https://x.ai/) `xai` | Yes | `grok-4`, `grok-4-mini`, `grok-4-mini-fast` (default: `grok-4-mini-fast`) |

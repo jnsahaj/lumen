@@ -7,6 +7,7 @@ use thiserror::Error;
 use crate::ai_prompt::{AIPrompt, AIPromptError};
 use crate::command::{draft::DraftCommand, explain::ExplainCommand, operate::OperateCommand};
 use crate::config::cli::ProviderType;
+use crate::config::ProviderInfo;
 use crate::error::LumenError;
 
 #[derive(Error, Debug)]
@@ -49,30 +50,23 @@ impl LumenProvider {
         let (backend, provider_name) = match provider_type {
             // Custom endpoint providers (OpenRouter, Vercel) - use ServiceTargetResolver
             ProviderType::Openrouter | ProviderType::Vercel => {
-                let (default_model, name, config) = match provider_type {
-                    ProviderType::Openrouter => (
-                        "anthropic/claude-sonnet-4.5",
-                        "OpenRouter",
-                        CustomProviderConfig {
-                            endpoint: "https://openrouter.ai/api/v1/",
-                            env_key: "OPENROUTER_API_KEY",
-                            adapter_kind: AdapterKind::OpenAI,
-                        },
-                    ),
-                    ProviderType::Vercel => (
-                        "anthropic/claude-sonnet-4.5",
-                        "Vercel",
-                        CustomProviderConfig {
-                            // Trailing slash is required for URL joining to work correctly
-                            endpoint: "https://ai-gateway.vercel.sh/v1/",
-                            env_key: "VERCEL_API_KEY",
-                            adapter_kind: AdapterKind::OpenAI,
-                        },
-                    ),
+                let defaults = ProviderInfo::for_provider(provider_type);
+                let config = match provider_type {
+                    ProviderType::Openrouter => CustomProviderConfig {
+                        endpoint: "https://openrouter.ai/api/v1/",
+                        env_key: defaults.env_key,
+                        adapter_kind: AdapterKind::OpenAI,
+                    },
+                    ProviderType::Vercel => CustomProviderConfig {
+                        // Trailing slash is required for URL joining to work correctly
+                        endpoint: "https://ai-gateway.vercel.sh/v1/",
+                        env_key: defaults.env_key,
+                        adapter_kind: AdapterKind::OpenAI,
+                    },
                     _ => unreachable!(),
                 };
 
-                let model = model.unwrap_or_else(|| default_model.to_string());
+                let model = model.unwrap_or_else(|| defaults.default_model.to_string());
                 let model_for_resolver = model.clone();
 
                 // Get API key from CLI/config or environment
@@ -104,34 +98,19 @@ impl LumenProvider {
                         client,
                         model: model_for_resolver,
                     },
-                    name.to_string(),
+                    defaults.display_name.to_string(),
                 )
             }
             // Native genai providers
             _ => {
-                let (default_model, name, env_key) = match provider_type {
-                    ProviderType::Openai => ("gpt-5-mini", "OpenAI", "OPENAI_API_KEY"),
-                    ProviderType::Claude => (
-                        "claude-sonnet-4-5-20250930",
-                        "Claude",
-                        "ANTHROPIC_API_KEY",
-                    ),
-                    ProviderType::Groq => ("llama-3.3-70b-versatile", "Groq", "GROQ_API_KEY"),
-                    ProviderType::Ollama => ("llama3.2", "Ollama", ""),
-                    ProviderType::Deepseek => ("deepseek-chat", "DeepSeek", "DEEPSEEK_API_KEY"),
-                    ProviderType::Gemini => ("gemini-3-flash", "Gemini", "GEMINI_API_KEY"),
-                    ProviderType::Xai => ("grok-4-mini-fast", "xAI", "XAI_API_KEY"),
-                    ProviderType::Openrouter | ProviderType::Vercel => {
-                        unreachable!()
-                    }
-                };
+                let defaults = ProviderInfo::for_provider(provider_type);
 
-                let model = model.unwrap_or_else(|| default_model.to_string());
+                let model = model.unwrap_or_else(|| defaults.default_model.to_string());
 
                 // If api_key provided via CLI/config, set it in env so genai picks it up
                 if let Some(key) = api_key {
-                    if !env_key.is_empty() {
-                        std::env::set_var(env_key, key);
+                    if !defaults.env_key.is_empty() {
+                        std::env::set_var(defaults.env_key, key);
                     }
                 }
 
@@ -140,7 +119,7 @@ impl LumenProvider {
                         client: Client::default(),
                         model,
                     },
-                    name.to_string(),
+                    defaults.display_name.to_string(),
                 )
             }
         };
