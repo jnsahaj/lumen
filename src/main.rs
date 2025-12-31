@@ -15,6 +15,7 @@ mod diff_ui;
 mod error;
 mod git_entity;
 mod provider;
+mod qwen_oauth;
 
 #[tokio::main]
 async fn main() {
