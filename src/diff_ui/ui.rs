@@ -9,6 +9,7 @@ use crate::diff_ui::context::{compute_context_lines, ContextLine};
 use crate::diff_ui::diff::compute_side_by_side;
 use crate::diff_ui::git::get_current_branch;
 use crate::diff_ui::highlight::highlight_line_spans;
+use crate::diff_ui::theme;
 use crate::diff_ui::types::{ChangeType, DiffFullscreen, DiffLine, DiffViewSettings, FileDiff, FocusedPanel, SidebarItem};
 
 pub struct LineStats {
@@ -112,10 +113,11 @@ pub fn render_diff(
     let is_new_file = diff.old_content.is_empty() && !diff.new_content.is_empty();
     let is_deleted_file = !diff.old_content.is_empty() && diff.new_content.is_empty();
 
+    let t = theme::get();
     let diff_title_style = if focused_panel == FocusedPanel::DiffView {
-        Style::default().fg(Color::Cyan)
+        Style::default().fg(t.ui.border_focused)
     } else {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(t.ui.border_unfocused)
     };
 
     if is_new_file {
@@ -142,10 +144,10 @@ pub fn render_diff(
                 let mut spans: Vec<Span> = vec![Span::styled(
                     prefix,
                     Style::default()
-                        .fg(Color::DarkGray)
-                        .bg(Color::Rgb(30, 60, 30)),
+                        .fg(t.ui.line_number)
+                        .bg(t.diff.added_bg),
                 )];
-                spans.extend(highlight_line_spans(text, &diff.filename, Some(Color::Rgb(30, 60, 30))));
+                spans.extend(highlight_line_spans(text, &diff.filename, Some(t.diff.added_bg)));
                 new_lines.push(Line::from(spans));
             }
         }
@@ -156,7 +158,7 @@ pub fn render_diff(
                 Block::default()
                     .title(" [2] New File ")
                     .borders(Borders::ALL)
-                    .border_style(diff_title_style.patch(Style::default().fg(Color::Green))),
+                    .border_style(diff_title_style.patch(Style::default().fg(t.ui.status_added))),
             );
         frame.render_widget(new_para, main_area);
     } else if is_deleted_file {
@@ -183,10 +185,10 @@ pub fn render_diff(
                 let mut spans: Vec<Span> = vec![Span::styled(
                     prefix,
                     Style::default()
-                        .fg(Color::DarkGray)
-                        .bg(Color::Rgb(60, 30, 30)),
+                        .fg(t.ui.line_number)
+                        .bg(t.diff.deleted_bg),
                 )];
-                spans.extend(highlight_line_spans(text, &diff.filename, Some(Color::Rgb(60, 30, 30))));
+                spans.extend(highlight_line_spans(text, &diff.filename, Some(t.diff.deleted_bg)));
                 old_lines.push(Line::from(spans));
             }
         }
@@ -197,7 +199,7 @@ pub fn render_diff(
                 Block::default()
                     .title(" [2] Deleted File ")
                     .borders(Borders::ALL)
-                    .border_style(diff_title_style.patch(Style::default().fg(Color::Red))),
+                    .border_style(diff_title_style.patch(Style::default().fg(t.ui.status_deleted))),
             );
         frame.render_widget(old_para, main_area);
     } else {
@@ -247,8 +249,8 @@ pub fn render_diff(
         for diff_line in &visible_lines {
             let (old_bg, new_bg) = match diff_line.change_type {
                 ChangeType::Equal => (None, None),
-                ChangeType::Delete => (Some(Color::Rgb(60, 30, 30)), None),
-                ChangeType::Insert => (None, Some(Color::Rgb(30, 60, 30))),
+                ChangeType::Delete => (Some(t.diff.deleted_bg), None),
+                ChangeType::Insert => (None, Some(t.diff.added_bg)),
             };
 
             if old_area.is_some() {
@@ -259,13 +261,13 @@ pub fn render_diff(
                         old_spans.push(Span::styled(
                             prefix,
                             Style::default()
-                                .fg(Color::DarkGray)
+                                .fg(t.ui.line_number)
                                 .bg(old_bg.unwrap_or(Color::Reset)),
                         ));
                         old_spans.extend(highlight_line_spans(text, &diff.filename, old_bg));
                     }
                     None => {
-                        old_spans.push(Span::styled("     |", Style::default().fg(Color::DarkGray)));
+                        old_spans.push(Span::styled("     |", Style::default().fg(t.ui.line_number)));
                     }
                 }
                 old_lines.push(Line::from(old_spans));
@@ -279,13 +281,13 @@ pub fn render_diff(
                         new_spans.push(Span::styled(
                             prefix,
                             Style::default()
-                                .fg(Color::DarkGray)
+                                .fg(t.ui.line_number)
                                 .bg(new_bg.unwrap_or(Color::Reset)),
                         ));
                         new_spans.extend(highlight_line_spans(text, &diff.filename, new_bg));
                     }
                     None => {
-                        new_spans.push(Span::styled("     |", Style::default().fg(Color::DarkGray)));
+                        new_spans.push(Span::styled("     |", Style::default().fg(t.ui.line_number)));
                     }
                 }
                 new_lines.push(Line::from(new_spans));
@@ -299,7 +301,7 @@ pub fn render_diff(
                     Block::default()
                         .title(" [2] Old ")
                         .borders(Borders::ALL)
-                        .border_style(diff_title_style.patch(Style::default().fg(Color::Red))),
+                        .border_style(diff_title_style.patch(Style::default().fg(t.ui.status_deleted))),
                 );
             frame.render_widget(old_para, area);
         }
@@ -311,7 +313,7 @@ pub fn render_diff(
                     Block::default()
                         .title(" New ")
                         .borders(Borders::ALL)
-                        .border_style(diff_title_style.patch(Style::default().fg(Color::Green))),
+                        .border_style(diff_title_style.patch(Style::default().fg(t.ui.status_added))),
                 );
             frame.render_widget(new_para, area);
         }
@@ -321,7 +323,7 @@ pub fn render_diff(
     let watch_indicator = if watching { " watching" } else { "" };
     let max_filename_len = (area.width as usize).saturating_sub(60).min(50);
     let truncated_filename = truncate_middle(&diff.filename, max_filename_len);
-    let bg = Color::Rgb(30, 30, 40);
+    let bg = t.ui.footer_bg;
 
     // Left section: branch + filename + viewed + watch
     let viewed_indicator = if viewed_files.contains(&current_file) { " ✓" } else { "" };
@@ -329,29 +331,29 @@ pub fn render_diff(
         Span::styled(" ", Style::default().bg(bg)),
         Span::styled(
             format!(" {} ", branch),
-            Style::default().fg(Color::Rgb(180, 180, 220)).bg(Color::Rgb(50, 50, 70)),
+            Style::default().fg(t.ui.footer_branch_fg).bg(t.ui.footer_branch_bg),
         ),
         Span::styled(" ", Style::default().bg(bg)),
-        Span::styled(truncated_filename, Style::default().fg(Color::Rgb(200, 200, 200)).bg(bg)),
-        Span::styled(viewed_indicator, Style::default().fg(Color::Green).bg(bg)),
-        Span::styled(watch_indicator, Style::default().fg(Color::Yellow).bg(bg)),
+        Span::styled(truncated_filename, Style::default().fg(t.ui.text_secondary).bg(bg)),
+        Span::styled(viewed_indicator, Style::default().fg(t.ui.viewed).bg(bg)),
+        Span::styled(watch_indicator, Style::default().fg(t.ui.watching).bg(bg)),
     ];
 
     // Center section: +N -N (X hunks)
     let center_spans = vec![
-        Span::styled(format!("+{}", line_stats.added), Style::default().fg(Color::Rgb(80, 200, 120)).bg(bg)),
+        Span::styled(format!("+{}", line_stats.added), Style::default().fg(t.ui.stats_added).bg(bg)),
         Span::styled(" ", Style::default().bg(bg)),
-        Span::styled(format!("-{}", line_stats.removed), Style::default().fg(Color::Rgb(240, 80, 80)).bg(bg)),
+        Span::styled(format!("-{}", line_stats.removed), Style::default().fg(t.ui.stats_removed).bg(bg)),
         Span::styled(" ", Style::default().bg(bg)),
         Span::styled(
             format!("({} {})", hunk_count, if hunk_count == 1 { "hunk" } else { "hunks" }),
-            Style::default().fg(Color::Rgb(140, 140, 160)).bg(bg),
+            Style::default().fg(t.ui.text_muted).bg(bg),
         ),
     ];
 
     // Right section: help hint
     let right_spans = vec![
-        Span::styled(" ? help ", Style::default().fg(Color::Rgb(120, 120, 140)).bg(bg)),
+        Span::styled(" ? help ", Style::default().fg(t.ui.text_muted).bg(bg)),
     ];
 
     let left_line = Line::from(left_spans);
@@ -386,14 +388,15 @@ fn render_context_lines(
     lines: &mut Vec<Line>,
     filename: &str,
 ) {
-    let context_bg = Color::Rgb(40, 40, 50);
+    let t = theme::get();
+    let context_bg = t.diff.context_bg;
     
     for i in 0..total_count {
         if let Some(cl) = context.get(i) {
             let prefix = format!("{:4} ~ ", cl.line_number);
             let mut spans: Vec<Span> = vec![Span::styled(
                 prefix,
-                Style::default().fg(Color::DarkGray).bg(context_bg),
+                Style::default().fg(t.ui.line_number).bg(context_bg),
             )];
             spans.extend(highlight_line_spans(&cl.content, filename, Some(context_bg)));
             lines.push(Line::from(spans));
@@ -401,7 +404,7 @@ fn render_context_lines(
             // Empty context line placeholder (when other panel has more context lines)
             lines.push(Line::from(vec![Span::styled(
                 "     ~".to_string(),
-                Style::default().fg(Color::DarkGray).bg(context_bg),
+                Style::default().fg(t.ui.line_number).bg(context_bg),
             )]));
         }
     }
@@ -418,6 +421,7 @@ fn render_sidebar(
     viewed_files: &HashSet<usize>,
     is_focused: bool,
 ) {
+    let t = theme::get();
     let visible_height = area.height.saturating_sub(2) as usize;
     let lines: Vec<Line> = sidebar_items
         .iter()
@@ -464,9 +468,9 @@ fn render_sidebar(
                     let viewed = viewed_files.contains(file_index);
                     let marker = if viewed { "✓ " } else { "  " };
                     let status_color = match status {
-                        crate::diff_ui::types::FileStatus::Modified => Some(Color::Yellow),
-                        crate::diff_ui::types::FileStatus::Added => Some(Color::Green),
-                        crate::diff_ui::types::FileStatus::Deleted => Some(Color::Red),
+                        crate::diff_ui::types::FileStatus::Modified => Some(t.ui.status_modified),
+                        crate::diff_ui::types::FileStatus::Added => Some(t.ui.status_added),
+                        crate::diff_ui::types::FileStatus::Deleted => Some(t.ui.status_deleted),
                     };
                     let status_symbol = status.symbol().to_string();
                     (
@@ -483,16 +487,16 @@ fn render_sidebar(
             let is_selected = i == sidebar_selected;
             let base_style = if is_selected {
                 Style::default()
-                    .fg(Color::Black)
+                    .fg(t.ui.selection_fg)
                     .bg(if is_focused {
-                        Color::Cyan
+                        t.ui.selection_bg
                     } else {
-                        Color::DarkGray
+                        t.ui.border_unfocused
                     })
             } else if is_current_file {
-                Style::default().fg(Color::Yellow)
+                Style::default().fg(t.ui.highlight)
             } else if is_viewed {
-                Style::default().fg(Color::Green)
+                Style::default().fg(t.ui.viewed)
             } else {
                 Style::default()
             };
@@ -514,9 +518,9 @@ fn render_sidebar(
         .collect();
 
     let border_color = if is_focused {
-        Color::Cyan
+        t.ui.border_focused
     } else {
-        Color::DarkGray
+        t.ui.border_unfocused
     };
 
     let visible_lines: Vec<Line> = lines

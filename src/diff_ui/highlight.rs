@@ -4,6 +4,8 @@ use once_cell::sync::Lazy;
 use ratatui::prelude::*;
 use tree_sitter_highlight::{HighlightConfiguration, HighlightEvent, Highlighter};
 
+use super::theme;
+
 pub const HIGHLIGHT_NAMES: &[&str] = &[
     "attribute",
     "comment",
@@ -35,25 +37,27 @@ pub const HIGHLIGHT_NAMES: &[&str] = &[
 ];
 
 pub fn highlight_color(index: usize) -> Color {
+    let t = theme::get();
+    let syntax = &t.syntax;
     match HIGHLIGHT_NAMES.get(index) {
-        Some(&"comment") => Color::Rgb(106, 115, 125),
-        Some(&"keyword") => Color::Rgb(255, 123, 114),
-        Some(&"string" | &"string.special") => Color::Rgb(165, 214, 255),
-        Some(&"number" | &"constant" | &"constant.builtin") => Color::Rgb(121, 192, 255),
-        Some(&"function" | &"function.builtin" | &"function.method") => Color::Rgb(210, 168, 255),
-        Some(&"function.macro") => Color::Rgb(86, 182, 194),
-        Some(&"type" | &"type.builtin" | &"constructor") => Color::Rgb(255, 203, 107),
-        Some(&"variable.builtin") => Color::Rgb(255, 123, 114),
-        Some(&"variable.member" | &"property") => Color::Rgb(121, 192, 255),
-        Some(&"module") => Color::Rgb(230, 192, 123),
-        Some(&"operator") => Color::Rgb(255, 123, 114),
-        Some(&"tag") => Color::Rgb(126, 231, 135),
-        Some(&"attribute") => Color::Rgb(121, 192, 255),
-        Some(&"label") => Color::Rgb(255, 160, 122),
+        Some(&"comment") => syntax.comment,
+        Some(&"keyword") => syntax.keyword,
+        Some(&"string" | &"string.special") => syntax.string,
+        Some(&"number" | &"constant" | &"constant.builtin") => syntax.number,
+        Some(&"function" | &"function.builtin" | &"function.method") => syntax.function,
+        Some(&"function.macro") => syntax.function_macro,
+        Some(&"type" | &"type.builtin" | &"constructor") => syntax.r#type,
+        Some(&"variable.builtin") => syntax.variable_builtin,
+        Some(&"variable.member" | &"property") => syntax.variable_member,
+        Some(&"module") => syntax.module,
+        Some(&"operator") => syntax.operator,
+        Some(&"tag") => syntax.tag,
+        Some(&"attribute") => syntax.attribute,
+        Some(&"label") => syntax.label,
         Some(&"punctuation" | &"punctuation.bracket" | &"punctuation.delimiter") => {
-            Color::Rgb(200, 200, 200)
+            syntax.punctuation
         }
-        _ => Color::Rgb(230, 230, 230),
+        _ => syntax.default_text,
     }
 }
 
@@ -681,13 +685,14 @@ fn highlight_code(code: &str, filename: &str) -> Vec<(String, Option<usize>)> {
 pub fn highlight_line_spans<'a>(line: &str, filename: &str, bg: Option<Color>) -> Vec<Span<'a>> {
     let highlighted = highlight_code(line, filename);
     let bg_color = bg.unwrap_or(Color::Reset);
+    let default_fg = theme::get().syntax.default_text;
 
     highlighted
         .into_iter()
         .map(|(text, highlight_idx)| {
             let fg = highlight_idx
                 .map(highlight_color)
-                .unwrap_or(Color::Rgb(230, 230, 230));
+                .unwrap_or(default_fg);
             Span::styled(text, Style::default().fg(fg).bg(bg_color))
         })
         .collect()

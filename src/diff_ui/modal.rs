@@ -4,6 +4,8 @@ use ratatui::{
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph},
 };
 
+use super::theme;
+
 #[derive(Clone)]
 pub struct KeyBind {
     pub key: &'static str,
@@ -179,19 +181,20 @@ impl Modal {
     }
 
     fn render_info(&self, frame: &mut Frame, area: Rect, title: &str, message: &str) {
+        let t = theme::get();
         let block = Block::default()
             .title(format!(" {} ", title))
-            .title_style(Style::default().fg(Color::Cyan).bold())
+            .title_style(Style::default().fg(t.ui.border_focused).bold())
             .borders(Borders::ALL)
             .border_type(ratatui::widgets::BorderType::Rounded)
-            .border_style(Style::default().fg(Color::DarkGray));
+            .border_style(Style::default().fg(t.ui.border_unfocused));
 
         let inner = block.inner(area);
         frame.render_widget(block, area);
 
         let lines: Vec<Line> = message
             .lines()
-            .map(|line| Line::from(Span::styled(line, Style::default().fg(Color::White))))
+            .map(|line| Line::from(Span::styled(line, Style::default().fg(t.ui.text_primary))))
             .collect();
 
         let para = Paragraph::new(lines);
@@ -206,12 +209,13 @@ impl Modal {
         items: &[String],
         selected: usize,
     ) {
+        let t = theme::get();
         let block = Block::default()
             .title(format!(" {} ", title))
-            .title_style(Style::default().fg(Color::Cyan).bold())
+            .title_style(Style::default().fg(t.ui.border_focused).bold())
             .borders(Borders::ALL)
             .border_type(ratatui::widgets::BorderType::Rounded)
-            .border_style(Style::default().fg(Color::DarkGray));
+            .border_style(Style::default().fg(t.ui.border_unfocused));
 
         let inner = block.inner(area);
         frame.render_widget(block, area);
@@ -221,9 +225,9 @@ impl Modal {
             .enumerate()
             .map(|(i, item)| {
                 let style = if i == selected {
-                    Style::default().fg(Color::Black).bg(Color::Cyan)
+                    Style::default().fg(t.ui.selection_fg).bg(t.ui.selection_bg)
                 } else {
-                    Style::default().fg(Color::White)
+                    Style::default().fg(t.ui.text_primary)
                 };
                 ListItem::new(format!("  {} ", item)).style(style)
             })
@@ -240,12 +244,13 @@ impl Modal {
         title: &str,
         sections: &[KeyBindSection],
     ) {
+        let t = theme::get();
         let block = Block::default()
             .title(format!(" {} ", title))
-            .title_style(Style::default().fg(Color::Cyan).bold())
+            .title_style(Style::default().fg(t.ui.border_focused).bold())
             .borders(Borders::ALL)
             .border_type(ratatui::widgets::BorderType::Rounded)
-            .border_style(Style::default().fg(Color::DarkGray));
+            .border_style(Style::default().fg(t.ui.border_unfocused));
 
         let inner = block.inner(area);
         frame.render_widget(block, area);
@@ -265,16 +270,16 @@ impl Modal {
             let section_label = format!("[{}]", section.title);
             lines.push(Line::from(Span::styled(
                 format!("{:>width$}", section_label, width = key_width),
-                Style::default().fg(Color::Yellow).bold(),
+                Style::default().fg(t.ui.highlight).bold(),
             )));
             for bind in &section.bindings {
                 lines.push(Line::from(vec![
                     Span::styled(
                         format!("{:>width$}", bind.key, width = key_width),
-                        Style::default().fg(Color::Green),
+                        Style::default().fg(t.ui.status_added),
                     ),
                     Span::styled("   ", Style::default()),
-                    Span::styled(bind.description, Style::default().fg(Color::White)),
+                    Span::styled(bind.description, Style::default().fg(t.ui.text_primary)),
                 ]));
             }
         }
@@ -293,12 +298,13 @@ impl Modal {
         query: &str,
         selected: usize,
     ) {
+        let t = theme::get();
         let block = Block::default()
             .title(format!(" {} ", title))
-            .title_style(Style::default().fg(Color::Cyan).bold())
+            .title_style(Style::default().fg(t.ui.border_focused).bold())
             .borders(Borders::ALL)
             .border_type(ratatui::widgets::BorderType::Rounded)
-            .border_style(Style::default().fg(Color::DarkGray));
+            .border_style(Style::default().fg(t.ui.border_unfocused));
 
         let inner = block.inner(area);
         frame.render_widget(block, area);
@@ -310,9 +316,9 @@ impl Modal {
             .split(inner);
 
         let input_line = Line::from(vec![
-            Span::styled("> ", Style::default().fg(Color::Green)),
-            Span::styled(query, Style::default().fg(Color::White)),
-            Span::styled("_", Style::default().fg(Color::Gray)),
+            Span::styled("> ", Style::default().fg(t.ui.status_added)),
+            Span::styled(query, Style::default().fg(t.ui.text_primary)),
+            Span::styled("_", Style::default().fg(t.ui.text_muted)),
         ]);
         frame.render_widget(Paragraph::new(input_line), chunks[0]);
 
@@ -333,15 +339,15 @@ impl Modal {
                 let is_selected = i == selected;
 
                 let (status_char, status_color) = match item.status {
-                    FileStatus::Added => ("A", Color::Green),
-                    FileStatus::Modified => ("M", Color::Yellow),
-                    FileStatus::Deleted => ("D", Color::Red),
+                    FileStatus::Added => ("A", t.ui.status_added),
+                    FileStatus::Modified => ("M", t.ui.status_modified),
+                    FileStatus::Deleted => ("D", t.ui.status_deleted),
                 };
 
                 let viewed_char = if item.viewed { "✓" } else { " " };
 
                 let spans = if is_selected {
-                    let selected_style = Style::default().fg(Color::Black).bg(Color::Cyan);
+                    let selected_style = Style::default().fg(t.ui.selection_fg).bg(t.ui.selection_bg);
                     vec![
                         Span::styled(format!(" {} ", viewed_char), selected_style),
                         Span::styled(format!("{} ", status_char), selected_style),
@@ -349,9 +355,9 @@ impl Modal {
                     ]
                 } else {
                     vec![
-                        Span::styled(format!(" {} ", viewed_char), Style::default().fg(Color::Green)),
+                        Span::styled(format!(" {} ", viewed_char), Style::default().fg(t.ui.viewed)),
                         Span::styled(format!("{} ", status_char), Style::default().fg(status_color)),
-                        Span::styled(item.name.clone(), Style::default().fg(Color::White)),
+                        Span::styled(item.name.clone(), Style::default().fg(t.ui.text_primary)),
                     ]
                 };
 

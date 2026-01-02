@@ -4,6 +4,7 @@ mod git;
 mod highlight;
 mod modal;
 mod sticky_lines;
+pub mod theme;
 mod types;
 mod ui;
 mod watcher;
@@ -44,6 +45,7 @@ pub struct DiffOptions {
 }
 
 pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
+    theme::init();
     highlight::init();
 
     enable_raw_mode()?;
