@@ -11,6 +11,7 @@ use crate::git_entity::GitEntity;
 use crate::provider::LumenProvider;
 
 pub mod configure;
+pub mod diff;
 pub mod draft;
 pub mod explain;
 pub mod list;

@@ -11,7 +11,6 @@ mod ai_prompt;
 mod command;
 mod commit_reference;
 mod config;
-mod diff_ui;
 mod error;
 mod git_entity;
 mod provider;
@@ -83,12 +82,12 @@ async fn run() -> Result<(), LumenError> {
             file,
             watch,
         } => {
-            let options = diff_ui::DiffOptions {
+            let options = command::diff::DiffOptions {
                 reference,
                 file,
                 watch,
             };
-            diff_ui::run_diff_ui(options)?;
+            command::diff::run_diff_ui(options)?;
         }
         Commands::Configure => {
             command::configure::ConfigureCommand::execute()?;

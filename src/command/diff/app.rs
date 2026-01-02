@@ -1,0 +1,858 @@
+use std::io;
+use std::sync::mpsc::TryRecvError;
+use std::time::Duration;
+
+use crossterm::{
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
+        MouseEventKind,
+    },
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    ExecutableCommand,
+};
+use ratatui::prelude::*;
+
+use super::diff_algo::{compute_side_by_side, find_hunk_starts};
+use super::git::{get_current_branch, load_file_diffs};
+use super::highlight;
+use super::render::{
+    render_diff, render_empty_state, FilePickerItem, KeyBind, KeyBindSection, Modal,
+    ModalFileStatus, ModalResult,
+};
+use super::state::{adjust_scroll_to_line, AppState, PendingKey};
+use super::theme;
+use super::types::{DiffFullscreen, FileStatus, FocusedPanel, SidebarItem};
+use super::watcher::setup_watcher;
+use super::DiffOptions;
+
+pub fn run_app(options: DiffOptions) -> io::Result<()> {
+    theme::init();
+    highlight::init();
+
+    enable_raw_mode()?;
+    io::stdout().execute(EnterAlternateScreen)?;
+    io::stdout().execute(EnableMouseCapture)?;
+
+    let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
+
+    let watch_rx = if options.watch {
+        setup_watcher()
+    } else {
+        None
+    };
+
+    let file_diffs = load_file_diffs(&options);
+    let mut state = AppState::new(file_diffs);
+    let mut active_modal: Option<Modal> = None;
+
+    loop {
+        if let Some(ref rx) = watch_rx {
+            match rx.try_recv() {
+                Ok(()) => state.needs_reload = true,
+                Err(TryRecvError::Empty) => {}
+                Err(TryRecvError::Disconnected) => {}
+            }
+        }
+
+        if state.needs_reload {
+            let file_diffs = load_file_diffs(&options);
+            state.reload(file_diffs);
+        }
+
+        if state.file_diffs.is_empty() {
+            terminal.draw(|frame| {
+                render_empty_state(frame, options.watch);
+                if let Some(ref modal) = active_modal {
+                    modal.render(frame);
+                }
+            })?;
+        } else {
+            let diff = &state.file_diffs[state.current_file];
+            let side_by_side = compute_side_by_side(
+                &diff.old_content,
+                &diff.new_content,
+                state.settings.tab_width,
+            );
+            let hunk_count = find_hunk_starts(&side_by_side).len();
+            state
+                .search_state
+                .update_matches(&side_by_side, state.diff_fullscreen);
+            let branch = get_current_branch();
+            terminal.draw(|frame| {
+                render_diff(
+                    frame,
+                    diff,
+                    &state.file_diffs,
+                    &state.sidebar_items,
+                    state.current_file,
+                    state.scroll,
+                    state.h_scroll,
+                    options.watch,
+                    state.show_sidebar,
+                    state.focused_panel,
+                    state.sidebar_selected,
+                    state.sidebar_scroll,
+                    state.sidebar_h_scroll,
+                    &state.viewed_files,
+                    &state.settings,
+                    hunk_count,
+                    state.diff_fullscreen,
+                    &state.search_state,
+                    &branch,
+                );
+                if let Some(ref modal) = active_modal {
+                    modal.render(frame);
+                }
+            })?;
+        }
+
+        if event::poll(Duration::from_millis(100))? {
+            let visible_height = terminal.size()?.height.saturating_sub(2) as usize;
+            let bottom_padding = 5;
+            let max_scroll = if !state.file_diffs.is_empty() {
+                let diff = &state.file_diffs[state.current_file];
+                let total_lines = compute_side_by_side(
+                    &diff.old_content,
+                    &diff.new_content,
+                    state.settings.tab_width,
+                )
+                .len();
+                total_lines.saturating_sub(visible_height.saturating_sub(bottom_padding))
+            } else {
+                0
+            };
+
+            match event::read()? {
+                Event::Key(key)
+                    if key.kind == KeyEventKind::Press && state.search_state.is_active() =>
+                {
+                    match key.code {
+                        KeyCode::Esc => {
+                            state.search_state.cancel();
+                        }
+                        KeyCode::Enter => {
+                            state.search_state.confirm();
+                            if state.search_state.has_query() {
+                                if let Some(line) =
+                                    state.search_state.jump_to_first_match(state.scroll as usize)
+                                {
+                                    state.scroll = line.saturating_sub(5) as u16;
+                                }
+                            }
+                        }
+                        KeyCode::Backspace => {
+                            state.search_state.pop_char();
+                        }
+                        KeyCode::Char(c) => {
+                            state.search_state.push_char(c);
+                        }
+                        _ => {}
+                    }
+                }
+                Event::Key(key)
+                    if key.kind == KeyEventKind::Press && active_modal.is_some() =>
+                {
+                    if let Some(ref mut modal) = active_modal {
+                        if let Some(result) = modal.handle_input(key) {
+                            if let ModalResult::FileSelected(file_index) = result {
+                                state.select_file(file_index);
+                                if let Some(idx) = state.sidebar_items.iter().position(|item| {
+                                    matches!(item, SidebarItem::File { file_index: fi, .. } if *fi == state.current_file)
+                                }) {
+                                    state.sidebar_selected = idx;
+                                    let visible_height =
+                                        terminal.size()?.height.saturating_sub(5) as usize;
+                                    if state.sidebar_selected
+                                        >= state.sidebar_scroll + visible_height
+                                    {
+                                        state.sidebar_scroll = state
+                                            .sidebar_selected
+                                            .saturating_sub(visible_height)
+                                            + 1;
+                                    } else if state.sidebar_selected < state.sidebar_scroll {
+                                        state.sidebar_scroll = state.sidebar_selected;
+                                    }
+                                }
+                            }
+                            active_modal = None;
+                        }
+                    }
+                }
+                Event::Mouse(mouse) if active_modal.is_none() => {
+                    let term_size = terminal.size()?;
+                    let footer_height = 1u16;
+                    let sidebar_width = if state.show_sidebar { 40u16 } else { 0u16 };
+
+                    match mouse.kind {
+                        MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
+                            if state.show_sidebar
+                                && mouse.column < sidebar_width
+                                && mouse.row < term_size.height.saturating_sub(footer_height)
+                            {
+                                let clicked_row =
+                                    (mouse.row.saturating_sub(1)) as usize + state.sidebar_scroll;
+                                if clicked_row < state.sidebar_items.len() {
+                                    if matches!(
+                                        state.sidebar_items[clicked_row],
+                                        SidebarItem::File { .. }
+                                    ) {
+                                        state.sidebar_selected = clicked_row;
+                                        state.focused_panel = FocusedPanel::DiffView;
+                                        if let SidebarItem::File { file_index, .. } =
+                                            &state.sidebar_items[state.sidebar_selected]
+                                        {
+                                            state.select_file(*file_index);
+                                        }
+                                    }
+                                }
+                            } else if mouse.column >= sidebar_width {
+                                state.focused_panel = FocusedPanel::DiffView;
+                            }
+                        }
+                        MouseEventKind::ScrollDown => {
+                            if state.show_sidebar
+                                && mouse.column < sidebar_width
+                                && mouse.row < term_size.height.saturating_sub(footer_height)
+                            {
+                                let max_sidebar_scroll =
+                                    state.sidebar_items.len().saturating_sub(1);
+                                state.sidebar_scroll =
+                                    (state.sidebar_scroll + 3).min(max_sidebar_scroll);
+                            } else if mouse.column >= sidebar_width
+                                && mouse.row < term_size.height.saturating_sub(footer_height)
+                            {
+                                state.scroll = (state.scroll + 3).min(max_scroll as u16);
+                            }
+                        }
+                        MouseEventKind::ScrollUp => {
+                            if state.show_sidebar
+                                && mouse.column < sidebar_width
+                                && mouse.row < term_size.height.saturating_sub(footer_height)
+                            {
+                                state.sidebar_scroll = state.sidebar_scroll.saturating_sub(3);
+                            } else if mouse.column >= sidebar_width
+                                && mouse.row < term_size.height.saturating_sub(footer_height)
+                            {
+                                state.scroll = state.scroll.saturating_sub(3);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                Event::Key(key)
+                    if key.kind == KeyEventKind::Press && active_modal.is_none() =>
+                {
+                    if key.code != KeyCode::Char('g') {
+                        state.pending_key = PendingKey::None;
+                    }
+                    match key.code {
+                        KeyCode::Esc | KeyCode::Char('c')
+                            if (key.code == KeyCode::Esc
+                                || key.modifiers.contains(KeyModifiers::CONTROL))
+                                && state.search_state.has_query() =>
+                        {
+                            state.search_state.clear();
+                        }
+                        KeyCode::Char('q') | KeyCode::Esc => break,
+                        KeyCode::Char('c')
+                            if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
+                            break
+                        }
+                        KeyCode::Char('1') => {
+                            state.focused_panel = FocusedPanel::Sidebar;
+                            state.show_sidebar = true;
+                            if !matches!(
+                                state.sidebar_items.get(state.sidebar_selected),
+                                Some(SidebarItem::File { .. })
+                            ) {
+                                if let Some(idx) = state
+                                    .sidebar_items
+                                    .iter()
+                                    .position(|item| matches!(item, SidebarItem::File { .. }))
+                                {
+                                    state.sidebar_selected = idx;
+                                }
+                            }
+                        }
+                        KeyCode::Char('2') => {
+                            state.focused_panel = FocusedPanel::DiffView;
+                        }
+                        KeyCode::Tab => {
+                            state.show_sidebar = !state.show_sidebar;
+                            if !state.show_sidebar {
+                                state.focused_panel = FocusedPanel::DiffView;
+                            }
+                        }
+                        KeyCode::Char('j')
+                            if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
+                            if !state.file_diffs.is_empty() {
+                                let mut next = state.sidebar_selected + 1;
+                                while next < state.sidebar_items.len() {
+                                    if let SidebarItem::File { file_index, .. } =
+                                        &state.sidebar_items[next]
+                                    {
+                                        state.sidebar_selected = next;
+                                        state.select_file(*file_index);
+                                        let visible_height =
+                                            terminal.size()?.height.saturating_sub(5) as usize;
+                                        if state.sidebar_selected
+                                            >= state.sidebar_scroll + visible_height
+                                        {
+                                            state.sidebar_scroll = state
+                                                .sidebar_selected
+                                                .saturating_sub(visible_height)
+                                                + 1;
+                                        } else if state.sidebar_selected < state.sidebar_scroll {
+                                            state.sidebar_scroll = state.sidebar_selected;
+                                        }
+                                        break;
+                                    }
+                                    next += 1;
+                                }
+                            }
+                        }
+                        KeyCode::Char('k')
+                            if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
+                            if !state.file_diffs.is_empty() && state.sidebar_selected > 0 {
+                                let mut prev = state.sidebar_selected - 1;
+                                loop {
+                                    if let SidebarItem::File { file_index, .. } =
+                                        &state.sidebar_items[prev]
+                                    {
+                                        state.sidebar_selected = prev;
+                                        state.select_file(*file_index);
+                                        if state.sidebar_selected < state.sidebar_scroll {
+                                            state.sidebar_scroll = state.sidebar_selected;
+                                        }
+                                        break;
+                                    }
+                                    if prev == 0 {
+                                        break;
+                                    }
+                                    prev -= 1;
+                                }
+                            }
+                        }
+                        KeyCode::Char('d')
+                            if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
+                            let half_screen = (visible_height / 2) as u16;
+                            state.scroll = (state.scroll + half_screen).min(max_scroll as u16);
+                        }
+                        KeyCode::Char('u')
+                            if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
+                            let half_screen = (visible_height / 2) as u16;
+                            state.scroll = state.scroll.saturating_sub(half_screen);
+                        }
+                        KeyCode::Char('p')
+                            if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
+                            if !state.file_diffs.is_empty() {
+                                let items: Vec<FilePickerItem> = state
+                                    .file_diffs
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(i, diff)| {
+                                        let status = match diff.status {
+                                            FileStatus::Added => ModalFileStatus::Added,
+                                            FileStatus::Modified => ModalFileStatus::Modified,
+                                            FileStatus::Deleted => ModalFileStatus::Deleted,
+                                        };
+                                        FilePickerItem {
+                                            name: diff.filename.clone(),
+                                            file_index: i,
+                                            status,
+                                            viewed: state.viewed_files.contains(&i),
+                                        }
+                                    })
+                                    .collect();
+                                active_modal = Some(Modal::file_picker("Find File", items));
+                            }
+                        }
+                        KeyCode::Char(']') => {
+                            if !state.file_diffs.is_empty() {
+                                let diff = &state.file_diffs[state.current_file];
+                                if !diff.new_content.is_empty() {
+                                    state.diff_fullscreen = match state.diff_fullscreen {
+                                        DiffFullscreen::NewOnly => DiffFullscreen::None,
+                                        _ => DiffFullscreen::NewOnly,
+                                    };
+                                }
+                            }
+                        }
+                        KeyCode::Char('[') => {
+                            if !state.file_diffs.is_empty() {
+                                let diff = &state.file_diffs[state.current_file];
+                                if !diff.old_content.is_empty() {
+                                    state.diff_fullscreen = match state.diff_fullscreen {
+                                        DiffFullscreen::OldOnly => DiffFullscreen::None,
+                                        _ => DiffFullscreen::OldOnly,
+                                    };
+                                }
+                            }
+                        }
+                        KeyCode::Char('=') => {
+                            state.diff_fullscreen = DiffFullscreen::None;
+                        }
+                        KeyCode::Down
+                            if state.search_state.has_query()
+                                && state.focused_panel == FocusedPanel::DiffView =>
+                        {
+                            if let Some(line) = state.search_state.find_next() {
+                                state.scroll = adjust_scroll_to_line(
+                                    line,
+                                    state.scroll,
+                                    visible_height,
+                                    max_scroll,
+                                );
+                            }
+                        }
+                        KeyCode::Up
+                            if state.search_state.has_query()
+                                && state.focused_panel == FocusedPanel::DiffView =>
+                        {
+                            if let Some(line) = state.search_state.find_prev() {
+                                state.scroll = adjust_scroll_to_line(
+                                    line,
+                                    state.scroll,
+                                    visible_height,
+                                    max_scroll,
+                                );
+                            }
+                        }
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            if state.focused_panel == FocusedPanel::Sidebar {
+                                let mut next = state.sidebar_selected + 1;
+                                while next < state.sidebar_items.len() {
+                                    if matches!(
+                                        state.sidebar_items[next],
+                                        SidebarItem::File { .. }
+                                    ) {
+                                        state.sidebar_selected = next;
+                                        break;
+                                    }
+                                    next += 1;
+                                }
+                                let visible_height =
+                                    terminal.size()?.height.saturating_sub(5) as usize;
+                                if state.sidebar_selected
+                                    >= state.sidebar_scroll + visible_height
+                                {
+                                    state.sidebar_scroll = state
+                                        .sidebar_selected
+                                        .saturating_sub(visible_height)
+                                        + 1;
+                                }
+                            } else {
+                                state.scroll = (state.scroll + 1).min(max_scroll as u16);
+                            }
+                        }
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            if state.focused_panel == FocusedPanel::Sidebar {
+                                if state.sidebar_selected > 0 {
+                                    let mut prev = state.sidebar_selected - 1;
+                                    loop {
+                                        if matches!(
+                                            state.sidebar_items[prev],
+                                            SidebarItem::File { .. }
+                                        ) {
+                                            state.sidebar_selected = prev;
+                                            break;
+                                        }
+                                        if prev == 0 {
+                                            break;
+                                        }
+                                        prev -= 1;
+                                    }
+                                }
+                                if state.sidebar_selected < state.sidebar_scroll {
+                                    state.sidebar_scroll = state.sidebar_selected;
+                                }
+                            } else {
+                                state.scroll = state.scroll.saturating_sub(1);
+                            }
+                        }
+                        KeyCode::Char('h') | KeyCode::Left => {
+                            if state.focused_panel == FocusedPanel::DiffView {
+                                state.h_scroll = state.h_scroll.saturating_sub(4);
+                            } else if state.focused_panel == FocusedPanel::Sidebar {
+                                state.sidebar_h_scroll = state.sidebar_h_scroll.saturating_sub(4);
+                            }
+                        }
+                        KeyCode::Char('l') | KeyCode::Right => {
+                            if state.focused_panel == FocusedPanel::DiffView {
+                                state.h_scroll = state.h_scroll.saturating_add(4);
+                            } else if state.focused_panel == FocusedPanel::Sidebar {
+                                state.sidebar_h_scroll = state.sidebar_h_scroll.saturating_add(4);
+                            }
+                        }
+                        KeyCode::Enter => {
+                            if state.focused_panel == FocusedPanel::Sidebar
+                                && state.sidebar_selected < state.sidebar_items.len()
+                            {
+                                if let SidebarItem::File { file_index, .. } =
+                                    &state.sidebar_items[state.sidebar_selected]
+                                {
+                                    state.select_file(*file_index);
+                                    state.focused_panel = FocusedPanel::DiffView;
+                                }
+                            }
+                        }
+                        KeyCode::Char(' ') => {
+                            if state.focused_panel == FocusedPanel::Sidebar
+                                && state.sidebar_selected < state.sidebar_items.len()
+                            {
+                                match &state.sidebar_items[state.sidebar_selected] {
+                                    SidebarItem::File { file_index, .. } => {
+                                        if state.viewed_files.contains(file_index) {
+                                            state.viewed_files.remove(file_index);
+                                        } else {
+                                            state.viewed_files.insert(*file_index);
+                                        }
+                                    }
+                                    SidebarItem::Directory { path, .. } => {
+                                        let dir_prefix = format!("{}/", path);
+                                        let child_indices: Vec<usize> = state
+                                            .sidebar_items
+                                            .iter()
+                                            .filter_map(|item| {
+                                                if let SidebarItem::File {
+                                                    path: file_path,
+                                                    file_index,
+                                                    ..
+                                                } = item
+                                                {
+                                                    if file_path.starts_with(&dir_prefix) {
+                                                        return Some(*file_index);
+                                                    }
+                                                }
+                                                None
+                                            })
+                                            .collect();
+
+                                        let all_viewed = child_indices
+                                            .iter()
+                                            .all(|i| state.viewed_files.contains(i));
+                                        if all_viewed {
+                                            for idx in child_indices {
+                                                state.viewed_files.remove(&idx);
+                                            }
+                                        } else {
+                                            for idx in child_indices {
+                                                state.viewed_files.insert(idx);
+                                            }
+                                        }
+                                    }
+                                }
+                            } else if state.focused_panel == FocusedPanel::DiffView {
+                                if state.viewed_files.contains(&state.current_file) {
+                                    state.viewed_files.remove(&state.current_file);
+                                } else {
+                                    state.viewed_files.insert(state.current_file);
+                                    let mut next_file: Option<(usize, usize)> = None;
+                                    for (idx, item) in state
+                                        .sidebar_items
+                                        .iter()
+                                        .enumerate()
+                                        .skip(state.sidebar_selected + 1)
+                                    {
+                                        if let SidebarItem::File { file_index, .. } = item {
+                                            if !state.viewed_files.contains(file_index) {
+                                                next_file = Some((idx, *file_index));
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    if next_file.is_none() {
+                                        for (idx, item) in state
+                                            .sidebar_items
+                                            .iter()
+                                            .enumerate()
+                                            .take(state.sidebar_selected)
+                                        {
+                                            if let SidebarItem::File { file_index, .. } = item {
+                                                if !state.viewed_files.contains(file_index) {
+                                                    next_file = Some((idx, *file_index));
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if let Some((idx, file_idx)) = next_file {
+                                        state.sidebar_selected = idx;
+                                        state.select_file(file_idx);
+                                        let visible_height =
+                                            terminal.size()?.height.saturating_sub(5) as usize;
+                                        if state.sidebar_selected
+                                            >= state.sidebar_scroll + visible_height
+                                        {
+                                            state.sidebar_scroll = state
+                                                .sidebar_selected
+                                                .saturating_sub(visible_height)
+                                                + 1;
+                                        } else if state.sidebar_selected < state.sidebar_scroll {
+                                            state.sidebar_scroll = state.sidebar_selected;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        KeyCode::PageDown => {
+                            state.scroll = (state.scroll + 20).min(max_scroll as u16);
+                        }
+                        KeyCode::PageUp => {
+                            state.scroll = state.scroll.saturating_sub(20);
+                        }
+                        KeyCode::Char('}') => {
+                            if !state.file_diffs.is_empty() {
+                                let diff = &state.file_diffs[state.current_file];
+                                let side_by_side = compute_side_by_side(
+                                    &diff.old_content,
+                                    &diff.new_content,
+                                    state.settings.tab_width,
+                                );
+                                let hunks = find_hunk_starts(&side_by_side);
+                                if let Some(&next) =
+                                    hunks.iter().find(|&&h| h > state.scroll as usize + 5)
+                                {
+                                    state.scroll = (next as u16).saturating_sub(5);
+                                }
+                            }
+                        }
+                        KeyCode::Char('{') => {
+                            if !state.file_diffs.is_empty() {
+                                let diff = &state.file_diffs[state.current_file];
+                                let side_by_side = compute_side_by_side(
+                                    &diff.old_content,
+                                    &diff.new_content,
+                                    state.settings.tab_width,
+                                );
+                                let hunks = find_hunk_starts(&side_by_side);
+                                if let Some(&prev) = hunks
+                                    .iter()
+                                    .rev()
+                                    .find(|&&h| (h as u16) < state.scroll.saturating_sub(5))
+                                {
+                                    state.scroll = (prev as u16).saturating_sub(5);
+                                }
+                            }
+                        }
+                        KeyCode::Char('r') => {
+                            state.needs_reload = true;
+                        }
+                        KeyCode::Char('y') => {
+                            if !state.file_diffs.is_empty() {
+                                if let Ok(mut clipboard) = arboard::Clipboard::new() {
+                                    let _ = clipboard
+                                        .set_text(&state.file_diffs[state.current_file].filename);
+                                }
+                            }
+                        }
+                        KeyCode::Char('e') => {
+                            if !state.file_diffs.is_empty() {
+                                io::stdout().execute(DisableMouseCapture)?;
+                                io::stdout().execute(LeaveAlternateScreen)?;
+                                disable_raw_mode()?;
+
+                                let editor =
+                                    std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
+                                let _ = std::process::Command::new(&editor)
+                                    .arg(&state.file_diffs[state.current_file].filename)
+                                    .status();
+
+                                enable_raw_mode()?;
+                                io::stdout().execute(EnterAlternateScreen)?;
+                                io::stdout().execute(EnableMouseCapture)?;
+                                terminal.clear()?;
+                            }
+                        }
+                        KeyCode::Char('g') => {
+                            if state.pending_key == PendingKey::G {
+                                state.scroll = 0;
+                                state.pending_key = PendingKey::None;
+                            } else {
+                                state.pending_key = PendingKey::G;
+                            }
+                        }
+                        KeyCode::Char('G') => {
+                            state.scroll = max_scroll as u16;
+                        }
+                        KeyCode::Char('/') | KeyCode::Char('f')
+                            if key.code == KeyCode::Char('/')
+                                || key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
+                            state.search_state.start_forward();
+                        }
+                        KeyCode::Char('n') if state.search_state.has_query() => {
+                            if let Some(line) = state.search_state.find_next() {
+                                state.scroll = adjust_scroll_to_line(
+                                    line,
+                                    state.scroll,
+                                    visible_height,
+                                    max_scroll,
+                                );
+                            }
+                        }
+                        KeyCode::Char('N') if state.search_state.has_query() => {
+                            if let Some(line) = state.search_state.find_prev() {
+                                state.scroll = adjust_scroll_to_line(
+                                    line,
+                                    state.scroll,
+                                    visible_height,
+                                    max_scroll,
+                                );
+                            }
+                        }
+                        KeyCode::Char('?') => {
+                            active_modal = Some(Modal::keybindings(
+                                "Keybindings",
+                                vec![
+                                    KeyBindSection {
+                                        title: "Global",
+                                        bindings: vec![
+                                            KeyBind {
+                                                key: "q / esc",
+                                                description: "Quit",
+                                            },
+                                            KeyBind {
+                                                key: "tab",
+                                                description: "Toggle sidebar",
+                                            },
+                                            KeyBind {
+                                                key: "1 / 2",
+                                                description: "Focus sidebar / diff",
+                                            },
+                                            KeyBind {
+                                                key: "ctrl+j / ctrl+k",
+                                                description: "Next / previous file",
+                                            },
+                                            KeyBind {
+                                                key: "ctrl+d / ctrl+u",
+                                                description: "Scroll half page down / up",
+                                            },
+                                            KeyBind {
+                                                key: "ctrl+p",
+                                                description: "Open file picker",
+                                            },
+                                            KeyBind {
+                                                key: "r",
+                                                description: "Reload diff",
+                                            },
+                                            KeyBind {
+                                                key: "y",
+                                                description: "Copy current filename",
+                                            },
+                                            KeyBind {
+                                                key: "e",
+                                                description: "Open current file in editor",
+                                            },
+                                            KeyBind {
+                                                key: "?",
+                                                description: "Show keybindings",
+                                            },
+                                        ],
+                                    },
+                                    KeyBindSection {
+                                        title: "Sidebar",
+                                        bindings: vec![
+                                            KeyBind {
+                                                key: "j/k or up/down",
+                                                description: "Navigate files",
+                                            },
+                                            KeyBind {
+                                                key: "h/l or left/right",
+                                                description: "Scroll horizontally",
+                                            },
+                                            KeyBind {
+                                                key: "enter",
+                                                description: "Open file in diff view",
+                                            },
+                                            KeyBind {
+                                                key: "space",
+                                                description: "Toggle file as viewed",
+                                            },
+                                        ],
+                                    },
+                                    KeyBindSection {
+                                        title: "Diff View",
+                                        bindings: vec![
+                                            KeyBind {
+                                                key: "j/k or up/down",
+                                                description: "Scroll vertically",
+                                            },
+                                            KeyBind {
+                                                key: "h/l or left/right",
+                                                description: "Scroll horizontally",
+                                            },
+                                            KeyBind {
+                                                key: "gg / G",
+                                                description: "Scroll to top / bottom",
+                                            },
+                                            KeyBind {
+                                                key: "{ / }",
+                                                description: "Previous / next hunk",
+                                            },
+                                            KeyBind {
+                                                key: "pageup / pagedown",
+                                                description: "Scroll by page",
+                                            },
+                                            KeyBind {
+                                                key: "space",
+                                                description: "Mark viewed & next file",
+                                            },
+                                            KeyBind {
+                                                key: "]",
+                                                description: "Toggle new panel fullscreen",
+                                            },
+                                            KeyBind {
+                                                key: "[",
+                                                description: "Toggle old panel fullscreen",
+                                            },
+                                            KeyBind {
+                                                key: "=",
+                                                description: "Reset fullscreen to side-by-side",
+                                            },
+                                        ],
+                                    },
+                                    KeyBindSection {
+                                        title: "Search",
+                                        bindings: vec![
+                                            KeyBind {
+                                                key: "/ or ctrl+f",
+                                                description: "Start search",
+                                            },
+                                            KeyBind {
+                                                key: "n or down",
+                                                description: "Next match",
+                                            },
+                                            KeyBind {
+                                                key: "N or up",
+                                                description: "Previous match",
+                                            },
+                                            KeyBind {
+                                                key: "ctrl+c or esc",
+                                                description: "Cancel search",
+                                            },
+                                        ],
+                                    },
+                                ],
+                            ));
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    io::stdout().execute(DisableMouseCapture)?;
+    disable_raw_mode()?;
+    io::stdout().execute(LeaveAlternateScreen)?;
+
+    Ok(())
+}
