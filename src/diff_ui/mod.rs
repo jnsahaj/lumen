@@ -3,6 +3,7 @@ mod diff;
 mod git;
 mod highlight;
 mod modal;
+mod search;
 mod sticky_lines;
 pub mod theme;
 mod types;
@@ -28,8 +29,30 @@ use crate::commit_reference::CommitReference;
 use diff::{compute_side_by_side, find_hunk_starts};
 use git::load_file_diffs;
 pub use modal::{FilePickerItem, FileStatus as ModalFileStatus, KeyBind, KeyBindSection, Modal, ModalResult};
-use types::{build_file_tree, DiffFullscreen, DiffViewSettings, FocusedPanel, SidebarItem};
+use search::SearchState;
+use types::{build_file_tree, DiffFullscreen, DiffViewSettings, FileDiff, FocusedPanel, SidebarItem};
 use watcher::setup_watcher;
+
+fn calc_initial_scroll(diff: &FileDiff, tab_width: usize) -> u16 {
+    let side_by_side = compute_side_by_side(&diff.old_content, &diff.new_content, tab_width);
+    let hunks = find_hunk_starts(&side_by_side);
+    hunks.first().map(|&h| (h as u16).saturating_sub(5)).unwrap_or(0)
+}
+
+fn adjust_scroll_to_line(line: usize, scroll: u16, visible_height: usize, max_scroll: usize) -> u16 {
+    let margin = 10usize;
+    let scroll_usize = scroll as usize;
+    let content_height = visible_height.saturating_sub(2);
+    
+    let new_scroll = if line < scroll_usize + margin {
+        line.saturating_sub(margin) as u16
+    } else if line >= scroll_usize + content_height.saturating_sub(margin) {
+        (line.saturating_sub(content_height.saturating_sub(margin).saturating_sub(1))) as u16
+    } else {
+        scroll
+    };
+    new_scroll.min(max_scroll as u16)
+}
 
 #[derive(Default, Clone, Copy, PartialEq)]
 enum PendingKey {
@@ -83,13 +106,7 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
     let settings = DiffViewSettings::default();
     let mut diff_fullscreen = DiffFullscreen::default();
     let mut scroll: u16 = if !file_diffs.is_empty() && current_file < file_diffs.len() {
-        let diff = &file_diffs[current_file];
-        let side_by_side = compute_side_by_side(&diff.old_content, &diff.new_content, settings.tab_width);
-        let hunks = find_hunk_starts(&side_by_side);
-        hunks
-            .first()
-            .map(|&h| (h as u16).saturating_sub(5))
-            .unwrap_or(0)
+        calc_initial_scroll(&file_diffs[current_file], settings.tab_width)
     } else {
         0
     };
@@ -98,6 +115,7 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
     let mut h_scroll: u16 = 0;
     let mut active_modal: Option<Modal> = None;
     let mut pending_key = PendingKey::default();
+    let mut search_state = SearchState::default();
 
     loop {
         if let Some(ref rx) = watch_rx {
@@ -133,13 +151,7 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                     .unwrap_or(0);
             }
             if !file_diffs.is_empty() {
-                let diff = &file_diffs[current_file];
-                let side_by_side = compute_side_by_side(&diff.old_content, &diff.new_content, settings.tab_width);
-                let hunks = find_hunk_starts(&side_by_side);
-                scroll = hunks
-                    .first()
-                    .map(|&h| (h as u16).saturating_sub(5))
-                    .unwrap_or(0);
+                scroll = calc_initial_scroll(&file_diffs[current_file], settings.tab_width);
                 h_scroll = 0;
             }
             needs_reload = false;
@@ -156,6 +168,7 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
             let diff = &file_diffs[current_file];
             let side_by_side = compute_side_by_side(&diff.old_content, &diff.new_content, settings.tab_width);
             let hunk_count = find_hunk_starts(&side_by_side).len();
+            search_state.update_matches(&side_by_side, diff_fullscreen);
             terminal.draw(|frame| {
                 ui::render_diff(
                     frame,
@@ -175,6 +188,7 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                     &settings,
                     hunk_count,
                     diff_fullscreen,
+                    &search_state,
                 );
                 if let Some(ref modal) = active_modal {
                     modal.render(frame);
@@ -194,6 +208,28 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
             };
 
             match event::read()? {
+                Event::Key(key) if key.kind == KeyEventKind::Press && search_state.is_active() => {
+                    match key.code {
+                        KeyCode::Esc => {
+                            search_state.cancel();
+                        }
+                        KeyCode::Enter => {
+                            search_state.confirm();
+                            if search_state.has_query() {
+                                if let Some(line) = search_state.jump_to_first_match(scroll as usize) {
+                                    scroll = line.saturating_sub(5) as u16;
+                                }
+                            }
+                        }
+                        KeyCode::Backspace => {
+                            search_state.pop_char();
+                        }
+                        KeyCode::Char(c) => {
+                            search_state.push_char(c);
+                        }
+                        _ => {}
+                    }
+                }
                 Event::Key(key) if key.kind == KeyEventKind::Press && active_modal.is_some() => {
                     if let Some(ref mut modal) = active_modal {
                         if let Some(result) = modal.handle_input(key) {
@@ -211,10 +247,7 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                                         sidebar_scroll = sidebar_selected;
                                     }
                                 }
-                                let diff = &file_diffs[current_file];
-                                let side_by_side = compute_side_by_side(&diff.old_content, &diff.new_content, settings.tab_width);
-                                let hunks = find_hunk_starts(&side_by_side);
-                                scroll = hunks.first().map(|&h| (h as u16).saturating_sub(5)).unwrap_or(0);
+                                scroll = calc_initial_scroll(&file_diffs[current_file], settings.tab_width);
                                 h_scroll = 0;
                             }
                             active_modal = None;
@@ -243,17 +276,7 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                                         {
                                             current_file = *file_index;
                                             diff_fullscreen = DiffFullscreen::None;
-                                            let diff = &file_diffs[current_file];
-                                            let side_by_side = compute_side_by_side(
-                                                &diff.old_content,
-                                                &diff.new_content,
-                                                settings.tab_width,
-                                            );
-                                            let hunks = find_hunk_starts(&side_by_side);
-                                            scroll = hunks
-                                                .first()
-                                                .map(|&h| (h as u16).saturating_sub(5))
-                                                .unwrap_or(0);
+                                            scroll = calc_initial_scroll(&file_diffs[current_file], settings.tab_width);
                                             h_scroll = 0;
                                         }
                                     }
@@ -296,6 +319,9 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                         pending_key = PendingKey::None;
                     }
                     match key.code {
+                        KeyCode::Esc | KeyCode::Char('c') if (key.code == KeyCode::Esc || key.modifiers.contains(KeyModifiers::CONTROL)) && search_state.has_query() => {
+                            search_state.clear();
+                        }
                         KeyCode::Char('q') | KeyCode::Esc => break,
                         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => break,
                         KeyCode::Char('1') => {
@@ -343,14 +369,7 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                                         } else if sidebar_selected < sidebar_scroll {
                                             sidebar_scroll = sidebar_selected;
                                         }
-                                        let diff = &file_diffs[current_file];
-                                        let side_by_side =
-                                            compute_side_by_side(&diff.old_content, &diff.new_content, settings.tab_width);
-                                        let hunks = find_hunk_starts(&side_by_side);
-                                        scroll = hunks
-                                            .first()
-                                            .map(|&h| (h as u16).saturating_sub(5))
-                                            .unwrap_or(0);
+                                        scroll = calc_initial_scroll(&file_diffs[current_file], settings.tab_width);
                                         h_scroll = 0;
                                         break;
                                     }
@@ -374,14 +393,7 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                                         if sidebar_selected < sidebar_scroll {
                                             sidebar_scroll = sidebar_selected;
                                         }
-                                        let diff = &file_diffs[current_file];
-                                        let side_by_side =
-                                            compute_side_by_side(&diff.old_content, &diff.new_content, settings.tab_width);
-                                        let hunks = find_hunk_starts(&side_by_side);
-                                        scroll = hunks
-                                            .first()
-                                            .map(|&h| (h as u16).saturating_sub(5))
-                                            .unwrap_or(0);
+                                        scroll = calc_initial_scroll(&file_diffs[current_file], settings.tab_width);
                                         h_scroll = 0;
                                         break;
                                     }
@@ -459,6 +471,16 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                             // Reset to side-by-side view
                             diff_fullscreen = DiffFullscreen::None;
                         }
+                        KeyCode::Down if search_state.has_query() && focused_panel == FocusedPanel::DiffView => {
+                            if let Some(line) = search_state.find_next() {
+                                scroll = adjust_scroll_to_line(line, scroll, visible_height, max_scroll);
+                            }
+                        }
+                        KeyCode::Up if search_state.has_query() && focused_panel == FocusedPanel::DiffView => {
+                            if let Some(line) = search_state.find_prev() {
+                                scroll = adjust_scroll_to_line(line, scroll, visible_height, max_scroll);
+                            }
+                        }
                         KeyCode::Down | KeyCode::Char('j') => {
                             if focused_panel == FocusedPanel::Sidebar {
                                 let mut next = sidebar_selected + 1;
@@ -526,14 +548,7 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                                 {
                                     current_file = *file_index;
                                     diff_fullscreen = DiffFullscreen::None;
-                                    let diff = &file_diffs[current_file];
-                                    let side_by_side =
-                                        compute_side_by_side(&diff.old_content, &diff.new_content, settings.tab_width);
-                                    let hunks = find_hunk_starts(&side_by_side);
-                                    scroll = hunks
-                                        .first()
-                                        .map(|&h| (h as u16).saturating_sub(5))
-                                        .unwrap_or(0);
+                                    scroll = calc_initial_scroll(&file_diffs[current_file], settings.tab_width);
                                     h_scroll = 0;
                                     focused_panel = FocusedPanel::DiffView;
                                 }
@@ -624,14 +639,7 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                                         } else if sidebar_selected < sidebar_scroll {
                                             sidebar_scroll = sidebar_selected;
                                         }
-                                        let diff = &file_diffs[current_file];
-                                        let side_by_side =
-                                            compute_side_by_side(&diff.old_content, &diff.new_content, settings.tab_width);
-                                        let hunks = find_hunk_starts(&side_by_side);
-                                        scroll = hunks
-                                            .first()
-                                            .map(|&h| (h as u16).saturating_sub(5))
-                                            .unwrap_or(0);
+                                        scroll = calc_initial_scroll(&file_diffs[current_file], settings.tab_width);
                                         h_scroll = 0;
                                     }
                                 }
@@ -709,6 +717,19 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                         KeyCode::Char('G') => {
                             scroll = max_scroll as u16;
                         }
+                        KeyCode::Char('/') | KeyCode::Char('f') if key.code == KeyCode::Char('/') || key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            search_state.start_forward();
+                        }
+                        KeyCode::Char('n') if search_state.has_query() => {
+                            if let Some(line) = search_state.find_next() {
+                                scroll = adjust_scroll_to_line(line, scroll, visible_height, max_scroll);
+                            }
+                        }
+                        KeyCode::Char('N') if search_state.has_query() => {
+                            if let Some(line) = search_state.find_prev() {
+                                scroll = adjust_scroll_to_line(line, scroll, visible_height, max_scroll);
+                            }
+                        }
                         KeyCode::Char('?') => {
                             active_modal = Some(Modal::keybindings(
                                 "Keybindings",
@@ -749,6 +770,15 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                                             KeyBind { key: "]", description: "Toggle new panel fullscreen" },
                                             KeyBind { key: "[", description: "Toggle old panel fullscreen" },
                                             KeyBind { key: "=", description: "Reset fullscreen to side-by-side" },
+                                        ],
+                                    },
+                                    KeyBindSection {
+                                        title: "Search",
+                                        bindings: vec![
+                                            KeyBind { key: "/ or ctrl+f", description: "Start search" },
+                                            KeyBind { key: "n or down", description: "Next match" },
+                                            KeyBind { key: "N or up", description: "Previous match" },
+                                            KeyBind { key: "ctrl+c or esc", description: "Cancel search" },
                                         ],
                                     },
                                 ],

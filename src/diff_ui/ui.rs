@@ -9,12 +9,93 @@ use crate::diff_ui::context::{compute_context_lines, ContextLine};
 use crate::diff_ui::diff::compute_side_by_side;
 use crate::diff_ui::git::get_current_branch;
 use crate::diff_ui::highlight::highlight_line_spans;
+use crate::diff_ui::search::{MatchPanel, SearchState};
 use crate::diff_ui::theme;
 use crate::diff_ui::types::{ChangeType, DiffFullscreen, DiffLine, DiffViewSettings, FileDiff, FocusedPanel, SidebarItem};
 
 pub struct LineStats {
     pub added: usize,
     pub removed: usize,
+}
+
+/// Apply search highlighting to text. match_ranges contains (start_col, end_col, is_current_match)
+fn apply_search_highlight<'a>(
+    text: &str,
+    filename: &str,
+    bg: Option<Color>,
+    match_ranges: &[(usize, usize, bool)],
+) -> Vec<Span<'a>> {
+    let t = theme::get();
+    
+    if match_ranges.is_empty() {
+        return highlight_line_spans(text, filename, bg);
+    }
+    
+    // Get base highlighted spans
+    let base_spans = highlight_line_spans(text, filename, bg);
+    
+    // Now we need to split spans at match boundaries and apply search highlight
+    let mut result: Vec<Span<'a>> = Vec::new();
+    let mut char_pos = 0;
+    
+    for span in base_spans {
+        let span_text = span.content.to_string();
+        let span_len = span_text.len();
+        let span_end = char_pos + span_len;
+        
+        // Check if any match overlaps with this span
+        let mut current_pos = 0;
+        let mut remaining = span_text.as_str();
+        
+        for &(match_start, match_end, is_current) in match_ranges {
+            if match_end <= char_pos || match_start >= span_end {
+                // No overlap
+                continue;
+            }
+            
+            // Calculate overlap within this span
+            let rel_start = match_start.saturating_sub(char_pos);
+            let rel_end = (match_end - char_pos).min(span_len);
+            
+            // Add text before match (if any)
+            if rel_start > current_pos {
+                let before = &remaining[..(rel_start - current_pos)];
+                if !before.is_empty() {
+                    result.push(Span::styled(before.to_string(), span.style));
+                }
+            }
+            
+            // Add highlighted match portion
+            let match_portion_start = rel_start.max(current_pos) - current_pos;
+            let match_portion_end = rel_end - current_pos;
+            if match_portion_end > match_portion_start {
+                let match_text = &remaining[match_portion_start..match_portion_end];
+                if !match_text.is_empty() {
+                    let (fg, bg) = if is_current {
+                        (t.ui.search_current_fg, t.ui.search_current_bg)
+                    } else {
+                        (t.ui.search_match_fg, t.ui.search_match_bg)
+                    };
+                    result.push(Span::styled(
+                        match_text.to_string(),
+                        Style::default().fg(fg).bg(bg).bold(),
+                    ));
+                }
+            }
+            
+            remaining = &remaining[(rel_end - current_pos).min(remaining.len())..];
+            current_pos = rel_end;
+        }
+        
+        // Add any remaining text after matches
+        if !remaining.is_empty() {
+            result.push(Span::styled(remaining.to_string(), span.style));
+        }
+        
+        char_pos = span_end;
+    }
+    
+    result
 }
 
 pub fn compute_line_stats(side_by_side: &[DiffLine]) -> LineStats {
@@ -75,6 +156,7 @@ pub fn render_diff(
     settings: &DiffViewSettings,
     hunk_count: usize,
     diff_fullscreen: DiffFullscreen,
+    search_state: &SearchState,
 ) {
     let area = frame.area();
     let side_by_side = compute_side_by_side(&diff.old_content, &diff.new_content, settings.tab_width);
@@ -138,7 +220,8 @@ pub fn render_diff(
             render_context_lines(&new_context, context_count, &mut new_lines, &diff.filename);
         }
 
-        for diff_line in &visible_lines {
+        for (i, diff_line) in visible_lines.iter().enumerate() {
+            let line_idx = scroll as usize + i;
             if let Some((num, text)) = &diff_line.new_line {
                 let prefix = format!("{:4} | ", num);
                 let mut spans: Vec<Span> = vec![Span::styled(
@@ -147,7 +230,8 @@ pub fn render_diff(
                         .fg(t.ui.line_number)
                         .bg(t.diff.added_bg),
                 )];
-                spans.extend(highlight_line_spans(text, &diff.filename, Some(t.diff.added_bg)));
+                let matches = search_state.get_matches_for_line(line_idx, MatchPanel::New);
+                spans.extend(apply_search_highlight(text, &diff.filename, Some(t.diff.added_bg), &matches));
                 new_lines.push(Line::from(spans));
             }
         }
@@ -179,7 +263,8 @@ pub fn render_diff(
             render_context_lines(&old_context, context_count, &mut old_lines, &diff.filename);
         }
 
-        for diff_line in &visible_lines {
+        for (i, diff_line) in visible_lines.iter().enumerate() {
+            let line_idx = scroll as usize + i;
             if let Some((num, text)) = &diff_line.old_line {
                 let prefix = format!("{:4} | ", num);
                 let mut spans: Vec<Span> = vec![Span::styled(
@@ -188,7 +273,8 @@ pub fn render_diff(
                         .fg(t.ui.line_number)
                         .bg(t.diff.deleted_bg),
                 )];
-                spans.extend(highlight_line_spans(text, &diff.filename, Some(t.diff.deleted_bg)));
+                let matches = search_state.get_matches_for_line(line_idx, MatchPanel::Old);
+                spans.extend(apply_search_highlight(text, &diff.filename, Some(t.diff.deleted_bg), &matches));
                 old_lines.push(Line::from(spans));
             }
         }
@@ -246,7 +332,8 @@ pub fn render_diff(
             }
         }
 
-        for diff_line in &visible_lines {
+        for (i, diff_line) in visible_lines.iter().enumerate() {
+            let line_idx = scroll_usize + i;
             let (old_bg, new_bg) = match diff_line.change_type {
                 ChangeType::Equal => (None, None),
                 ChangeType::Delete => (Some(t.diff.deleted_bg), None),
@@ -264,7 +351,8 @@ pub fn render_diff(
                                 .fg(t.ui.line_number)
                                 .bg(old_bg.unwrap_or(Color::Reset)),
                         ));
-                        old_spans.extend(highlight_line_spans(text, &diff.filename, old_bg));
+                        let matches = search_state.get_matches_for_line(line_idx, MatchPanel::Old);
+                        old_spans.extend(apply_search_highlight(text, &diff.filename, old_bg, &matches));
                     }
                     None => {
                         old_spans.push(Span::styled("     |", Style::default().fg(t.ui.line_number)));
@@ -284,7 +372,8 @@ pub fn render_diff(
                                 .fg(t.ui.line_number)
                                 .bg(new_bg.unwrap_or(Color::Reset)),
                         ));
-                        new_spans.extend(highlight_line_spans(text, &diff.filename, new_bg));
+                        let matches = search_state.get_matches_for_line(line_idx, MatchPanel::New);
+                        new_spans.extend(apply_search_highlight(text, &diff.filename, new_bg, &matches));
                     }
                     None => {
                         new_spans.push(Span::styled("     |", Style::default().fg(t.ui.line_number)));
@@ -320,66 +409,101 @@ pub fn render_diff(
     }
 
     // Render footer
-    let watch_indicator = if watching { " watching" } else { "" };
-    let max_filename_len = (area.width as usize).saturating_sub(60).min(50);
-    let truncated_filename = truncate_middle(&diff.filename, max_filename_len);
+    let footer_area = chunks[1];
     let bg = t.ui.footer_bg;
 
-    // Left section: branch + filename + viewed + watch
-    let viewed_indicator = if viewed_files.contains(&current_file) { " ✓" } else { "" };
-    let left_spans = vec![
-        Span::styled(" ", Style::default().bg(bg)),
-        Span::styled(
-            format!(" {} ", branch),
-            Style::default().fg(t.ui.footer_branch_fg).bg(t.ui.footer_branch_bg),
-        ),
-        Span::styled(" ", Style::default().bg(bg)),
-        Span::styled(truncated_filename, Style::default().fg(t.ui.text_secondary).bg(bg)),
-        Span::styled(viewed_indicator, Style::default().fg(t.ui.viewed).bg(bg)),
-        Span::styled(watch_indicator, Style::default().fg(t.ui.watching).bg(bg)),
-    ];
+    if search_state.is_active() {
+        // Show search input in footer
+        use crate::diff_ui::search::SearchMode;
+        let prefix = match search_state.mode {
+            SearchMode::InputForward => "/",
+            SearchMode::InputBackward => "?",
+            SearchMode::Inactive => "",
+        };
+        let search_spans = vec![
+            Span::styled(prefix, Style::default().fg(t.ui.highlight).bg(bg)),
+            Span::styled(&search_state.query, Style::default().fg(t.ui.text_primary).bg(bg)),
+            Span::styled("_", Style::default().fg(t.ui.text_muted).bg(bg)),
+        ];
+        let remaining_width = footer_area.width as usize - prefix.len() - search_state.query.len() - 1;
+        let mut spans = search_spans;
+        spans.push(Span::styled(" ".repeat(remaining_width), Style::default().bg(bg)));
+        let footer = Paragraph::new(Line::from(spans)).style(Style::default().bg(bg));
+        frame.render_widget(footer, footer_area);
+    } else {
+        // Build left spans (common to both search results and normal footer)
+        let watch_indicator = if watching { " watching" } else { "" };
+        let max_filename_len = if search_state.has_query() {
+            (area.width as usize).saturating_sub(80).min(40)
+        } else {
+            (area.width as usize).saturating_sub(60).min(50)
+        };
+        let truncated_filename = truncate_middle(&diff.filename, max_filename_len);
+        let viewed_indicator = if viewed_files.contains(&current_file) { " ✓" } else { "" };
 
-    // Center section: +N -N (X hunks)
-    let center_spans = vec![
-        Span::styled(format!("+{}", line_stats.added), Style::default().fg(t.ui.stats_added).bg(bg)),
-        Span::styled(" ", Style::default().bg(bg)),
-        Span::styled(format!("-{}", line_stats.removed), Style::default().fg(t.ui.stats_removed).bg(bg)),
-        Span::styled(" ", Style::default().bg(bg)),
-        Span::styled(
-            format!("({} {})", hunk_count, if hunk_count == 1 { "hunk" } else { "hunks" }),
-            Style::default().fg(t.ui.text_muted).bg(bg),
-        ),
-    ];
+        let left_spans = vec![
+            Span::styled(" ", Style::default().bg(bg)),
+            Span::styled(
+                format!(" {} ", branch),
+                Style::default().fg(t.ui.footer_branch_fg).bg(t.ui.footer_branch_bg),
+            ),
+            Span::styled(" ", Style::default().bg(bg)),
+            Span::styled(truncated_filename, Style::default().fg(t.ui.text_secondary).bg(bg)),
+            Span::styled(viewed_indicator, Style::default().fg(t.ui.viewed).bg(bg)),
+            Span::styled(watch_indicator, Style::default().fg(t.ui.watching).bg(bg)),
+        ];
 
-    // Right section: help hint
-    let right_spans = vec![
-        Span::styled(" ? help ", Style::default().fg(t.ui.text_muted).bg(bg)),
-    ];
+        let (center_spans, right_spans) = if search_state.has_query() {
+            let match_count = search_state.match_count();
+            let current_idx = search_state.current_match_index().map(|i| i + 1).unwrap_or(0);
+            let search_info = if match_count > 0 {
+                format!("[{}/{}] /{}", current_idx, match_count, search_state.query)
+            } else {
+                format!("[0/0] /{}", search_state.query)
+            };
+            (
+                vec![Span::styled(search_info, Style::default().fg(t.ui.highlight).bg(bg))],
+                vec![Span::styled(" n/N navigate ", Style::default().fg(t.ui.text_muted).bg(bg))],
+            )
+        } else {
+            (
+                vec![
+                    Span::styled(format!("+{}", line_stats.added), Style::default().fg(t.ui.stats_added).bg(bg)),
+                    Span::styled(" ", Style::default().bg(bg)),
+                    Span::styled(format!("-{}", line_stats.removed), Style::default().fg(t.ui.stats_removed).bg(bg)),
+                    Span::styled(" ", Style::default().bg(bg)),
+                    Span::styled(
+                        format!("({} {})", hunk_count, if hunk_count == 1 { "hunk" } else { "hunks" }),
+                        Style::default().fg(t.ui.text_muted).bg(bg),
+                    ),
+                ],
+                vec![Span::styled(" ? help ", Style::default().fg(t.ui.text_muted).bg(bg))],
+            )
+        };
 
-    let left_line = Line::from(left_spans);
-    let center_line = Line::from(center_spans);
-    let right_line = Line::from(right_spans);
+        let left_line = Line::from(left_spans);
+        let center_line = Line::from(center_spans);
+        let right_line = Line::from(right_spans);
 
-    let footer_area = chunks[1];
-    let footer_width = footer_area.width as usize;
-    let left_len = left_line.width();
-    let center_len = center_line.width();
-    let right_len = right_line.width();
+        let footer_width = footer_area.width as usize;
+        let left_len = left_line.width();
+        let center_len = center_line.width();
+        let right_len = right_line.width();
 
-    // Calculate padding to center the middle section
-    let center_pos = footer_width / 2;
-    let center_start = center_pos.saturating_sub(center_len / 2);
-    let left_padding = center_start.saturating_sub(left_len);
-    let right_padding = footer_width.saturating_sub(center_start + center_len + right_len);
+        let center_pos = footer_width / 2;
+        let center_start = center_pos.saturating_sub(center_len / 2);
+        let left_padding = center_start.saturating_sub(left_len);
+        let right_padding = footer_width.saturating_sub(center_start + center_len + right_len);
 
-    let mut final_spans: Vec<Span> = left_line.spans;
-    final_spans.push(Span::styled(" ".repeat(left_padding), Style::default().bg(bg)));
-    final_spans.extend(center_line.spans);
-    final_spans.push(Span::styled(" ".repeat(right_padding), Style::default().bg(bg)));
-    final_spans.extend(right_line.spans);
+        let mut final_spans: Vec<Span> = left_line.spans;
+        final_spans.push(Span::styled(" ".repeat(left_padding), Style::default().bg(bg)));
+        final_spans.extend(center_line.spans);
+        final_spans.push(Span::styled(" ".repeat(right_padding), Style::default().bg(bg)));
+        final_spans.extend(right_line.spans);
 
-    let footer = Paragraph::new(Line::from(final_spans)).style(Style::default().bg(bg));
-    frame.render_widget(footer, footer_area);
+        let footer = Paragraph::new(Line::from(final_spans)).style(Style::default().bg(bg));
+        frame.render_widget(footer, footer_area);
+    }
 }
 
 fn render_context_lines(

@@ -67,6 +67,10 @@ pub struct UiColors {
     pub highlight: Color,
     pub viewed: Color,
     pub watching: Color,
+    pub search_match_bg: Color,
+    pub search_match_fg: Color,
+    pub search_current_bg: Color,
+    pub search_current_fg: Color,
 }
 
 #[derive(Debug, Clone)]
@@ -125,6 +129,10 @@ impl Theme {
                 highlight: Color::Yellow,
                 viewed: Color::Green,
                 watching: Color::Yellow,
+                search_match_bg: Color::Rgb(100, 80, 20),
+                search_match_fg: Color::Rgb(255, 220, 120),
+                search_current_bg: Color::Rgb(255, 165, 0),
+                search_current_fg: Color::Black,
             },
         }
     }
@@ -175,6 +183,10 @@ impl Theme {
                 highlight: Color::Rgb(154, 103, 0),
                 viewed: Color::Rgb(26, 127, 55),
                 watching: Color::Rgb(154, 103, 0),
+                search_match_bg: Color::Rgb(255, 235, 150),
+                search_match_fg: Color::Black,
+                search_current_bg: Color::Rgb(255, 140, 0),
+                search_current_fg: Color::Black,
             },
         }
     }
