@@ -123,12 +123,18 @@ lumen diff HEAD~1
 # View changes between branches
 lumen diff main..feature/A
 
+# View changes in a GitHub Pull Request
+lumen diff --pr 123 # (--pr is optional)
+lumen diff https://github.com/owner/repo/pull/123
+
 # Filter to specific files
 lumen diff --file src/main.rs --file src/lib.rs
 
 # Watch mode - auto-refresh on file changes
 lumen diff --watch
 ```
+
+When viewing a PR, you can mark files as viewed (syncs with GitHub) using the `space` keybinding.
 
 Keybindings in the diff viewer:
 - `j/k` or arrow keys: Navigate
