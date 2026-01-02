@@ -249,7 +249,11 @@ pub fn compute_context_lines(
             // 2. End at or after the scroll position (still contains current view)
             if start_line < scroll_position && end_line >= scroll_position {
                 if let Some(line_content) = lines.get(start_line) {
-                    context_nodes.push((start_line, end_line, expand_tabs(line_content, tab_width)));
+                    context_nodes.push((
+                        start_line,
+                        end_line,
+                        expand_tabs(line_content, tab_width),
+                    ));
                 }
             }
         }

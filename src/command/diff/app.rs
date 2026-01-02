@@ -13,7 +13,7 @@ use crossterm::{
 use ratatui::prelude::*;
 
 use super::diff_algo::{compute_side_by_side, find_hunk_starts};
-use super::git::{get_current_branch, load_file_diffs};
+use super::git::{get_current_branch, load_file_diffs, load_pr_file_diffs};
 use super::highlight;
 use super::render::{
     render_diff, render_empty_state, FilePickerItem, KeyBind, KeyBindSection, Modal,
@@ -23,9 +23,42 @@ use super::state::{adjust_scroll_to_line, AppState, PendingKey};
 use super::theme;
 use super::types::{DiffFullscreen, FileStatus, FocusedPanel, SidebarItem};
 use super::watcher::setup_watcher;
-use super::DiffOptions;
+use super::{
+    fetch_viewed_files, mark_file_as_viewed_async, unmark_file_as_viewed_async, DiffOptions, PrInfo,
+};
 
-pub fn run_app(options: DiffOptions) -> io::Result<()> {
+pub fn run_app_with_pr(options: DiffOptions, pr_info: PrInfo) -> io::Result<()> {
+    match load_pr_file_diffs(&pr_info) {
+        Ok(file_diffs) => run_app_internal(options, Some(pr_info), file_diffs),
+        Err(e) => {
+            eprintln!("\x1b[91merror:\x1b[0m {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+pub fn run_app(options: DiffOptions, pr_info: Option<PrInfo>) -> io::Result<()> {
+    let file_diffs = load_file_diffs(&options);
+    run_app_internal(options, pr_info, file_diffs)
+}
+
+/// Sync viewed files from GitHub to local state
+fn sync_viewed_files_from_github(pr_info: &PrInfo, state: &mut AppState) {
+    if let Ok(viewed_paths) = fetch_viewed_files(pr_info) {
+        state.viewed_files.clear();
+        for (idx, diff) in state.file_diffs.iter().enumerate() {
+            if viewed_paths.contains(&diff.filename) {
+                state.viewed_files.insert(idx);
+            }
+        }
+    }
+}
+
+fn run_app_internal(
+    options: DiffOptions,
+    pr_info: Option<PrInfo>,
+    file_diffs: Vec<super::types::FileDiff>,
+) -> io::Result<()> {
     theme::init();
     highlight::init();
 
@@ -35,15 +68,19 @@ pub fn run_app(options: DiffOptions) -> io::Result<()> {
 
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
 
-    let watch_rx = if options.watch {
+    let watch_rx = if options.watch && pr_info.is_none() {
         setup_watcher()
     } else {
         None
     };
 
-    let file_diffs = load_file_diffs(&options);
     let mut state = AppState::new(file_diffs);
     let mut active_modal: Option<Modal> = None;
+
+    // Load viewed files from GitHub on startup in PR mode
+    if let Some(ref pr) = pr_info {
+        sync_viewed_files_from_github(pr, &mut state);
+    }
 
     loop {
         if let Some(ref rx) = watch_rx {
@@ -55,8 +92,21 @@ pub fn run_app(options: DiffOptions) -> io::Result<()> {
         }
 
         if state.needs_reload {
-            let file_diffs = load_file_diffs(&options);
+            let file_diffs = if let Some(ref pr) = pr_info {
+                // In PR mode, reload from GitHub
+                match load_pr_file_diffs(pr) {
+                    Ok(diffs) => diffs,
+                    Err(_) => Vec::new(), // On error, show empty state
+                }
+            } else {
+                load_file_diffs(&options)
+            };
             state.reload(file_diffs);
+
+            // Re-sync viewed files from GitHub in PR mode
+            if let Some(ref pr) = pr_info {
+                sync_viewed_files_from_github(pr, &mut state);
+            }
         }
 
         if state.file_diffs.is_empty() {
@@ -133,8 +183,9 @@ pub fn run_app(options: DiffOptions) -> io::Result<()> {
                         KeyCode::Enter => {
                             state.search_state.confirm();
                             if state.search_state.has_query() {
-                                if let Some(line) =
-                                    state.search_state.jump_to_first_match(state.scroll as usize)
+                                if let Some(line) = state
+                                    .search_state
+                                    .jump_to_first_match(state.scroll as usize)
                                 {
                                     state.scroll = line.saturating_sub(5) as u16;
                                 }
@@ -149,9 +200,7 @@ pub fn run_app(options: DiffOptions) -> io::Result<()> {
                         _ => {}
                     }
                 }
-                Event::Key(key)
-                    if key.kind == KeyEventKind::Press && active_modal.is_some() =>
-                {
+                Event::Key(key) if key.kind == KeyEventKind::Press && active_modal.is_some() => {
                     if let Some(ref mut modal) = active_modal {
                         if let Some(result) = modal.handle_input(key) {
                             if let ModalResult::FileSelected(file_index) = result {
@@ -239,9 +288,7 @@ pub fn run_app(options: DiffOptions) -> io::Result<()> {
                         _ => {}
                     }
                 }
-                Event::Key(key)
-                    if key.kind == KeyEventKind::Press && active_modal.is_none() =>
-                {
+                Event::Key(key) if key.kind == KeyEventKind::Press && active_modal.is_none() => {
                     if key.code != KeyCode::Char('g') {
                         state.pending_key = PendingKey::None;
                     }
@@ -254,9 +301,7 @@ pub fn run_app(options: DiffOptions) -> io::Result<()> {
                             state.search_state.clear();
                         }
                         KeyCode::Char('q') | KeyCode::Esc => break,
-                        KeyCode::Char('c')
-                            if key.modifiers.contains(KeyModifiers::CONTROL) =>
-                        {
+                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                             break
                         }
                         KeyCode::Char('1') => {
@@ -284,9 +329,7 @@ pub fn run_app(options: DiffOptions) -> io::Result<()> {
                                 state.focused_panel = FocusedPanel::DiffView;
                             }
                         }
-                        KeyCode::Char('j')
-                            if key.modifiers.contains(KeyModifiers::CONTROL) =>
-                        {
+                        KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                             if !state.file_diffs.is_empty() {
                                 let mut next = state.sidebar_selected + 1;
                                 while next < state.sidebar_items.len() {
@@ -313,9 +356,7 @@ pub fn run_app(options: DiffOptions) -> io::Result<()> {
                                 }
                             }
                         }
-                        KeyCode::Char('k')
-                            if key.modifiers.contains(KeyModifiers::CONTROL) =>
-                        {
+                        KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                             if !state.file_diffs.is_empty() && state.sidebar_selected > 0 {
                                 let mut prev = state.sidebar_selected - 1;
                                 loop {
@@ -336,21 +377,15 @@ pub fn run_app(options: DiffOptions) -> io::Result<()> {
                                 }
                             }
                         }
-                        KeyCode::Char('d')
-                            if key.modifiers.contains(KeyModifiers::CONTROL) =>
-                        {
+                        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                             let half_screen = (visible_height / 2) as u16;
                             state.scroll = (state.scroll + half_screen).min(max_scroll as u16);
                         }
-                        KeyCode::Char('u')
-                            if key.modifiers.contains(KeyModifiers::CONTROL) =>
-                        {
+                        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                             let half_screen = (visible_height / 2) as u16;
                             state.scroll = state.scroll.saturating_sub(half_screen);
                         }
-                        KeyCode::Char('p')
-                            if key.modifiers.contains(KeyModifiers::CONTROL) =>
-                        {
+                        KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                             if !state.file_diffs.is_empty() {
                                 let items: Vec<FilePickerItem> = state
                                     .file_diffs
@@ -428,10 +463,8 @@ pub fn run_app(options: DiffOptions) -> io::Result<()> {
                             if state.focused_panel == FocusedPanel::Sidebar {
                                 let mut next = state.sidebar_selected + 1;
                                 while next < state.sidebar_items.len() {
-                                    if matches!(
-                                        state.sidebar_items[next],
-                                        SidebarItem::File { .. }
-                                    ) {
+                                    if matches!(state.sidebar_items[next], SidebarItem::File { .. })
+                                    {
                                         state.sidebar_selected = next;
                                         break;
                                     }
@@ -439,13 +472,9 @@ pub fn run_app(options: DiffOptions) -> io::Result<()> {
                                 }
                                 let visible_height =
                                     terminal.size()?.height.saturating_sub(5) as usize;
-                                if state.sidebar_selected
-                                    >= state.sidebar_scroll + visible_height
-                                {
-                                    state.sidebar_scroll = state
-                                        .sidebar_selected
-                                        .saturating_sub(visible_height)
-                                        + 1;
+                                if state.sidebar_selected >= state.sidebar_scroll + visible_height {
+                                    state.sidebar_scroll =
+                                        state.sidebar_selected.saturating_sub(visible_height) + 1;
                                 }
                             } else {
                                 state.scroll = (state.scroll + 1).min(max_scroll as u16);
@@ -508,10 +537,24 @@ pub fn run_app(options: DiffOptions) -> io::Result<()> {
                             {
                                 match &state.sidebar_items[state.sidebar_selected] {
                                     SidebarItem::File { file_index, .. } => {
-                                        if state.viewed_files.contains(file_index) {
-                                            state.viewed_files.remove(file_index);
+                                        let file_idx = *file_index;
+                                        let filename = state.file_diffs[file_idx].filename.clone();
+                                        let was_viewed = state.viewed_files.contains(&file_idx);
+
+                                        // Optimistic update - update local state immediately
+                                        if was_viewed {
+                                            state.viewed_files.remove(&file_idx);
                                         } else {
-                                            state.viewed_files.insert(*file_index);
+                                            state.viewed_files.insert(file_idx);
+                                        }
+
+                                        // Fire off async API call if in PR mode
+                                        if let Some(ref pr) = pr_info {
+                                            if was_viewed {
+                                                unmark_file_as_viewed_async(pr, &filename);
+                                            } else {
+                                                mark_file_as_viewed_async(pr, &filename);
+                                            }
                                         }
                                     }
                                     SidebarItem::Directory { path, .. } => {
@@ -537,22 +580,42 @@ pub fn run_app(options: DiffOptions) -> io::Result<()> {
                                         let all_viewed = child_indices
                                             .iter()
                                             .all(|i| state.viewed_files.contains(i));
+
+                                        // Optimistic update - update local state immediately
                                         if all_viewed {
-                                            for idx in child_indices {
-                                                state.viewed_files.remove(&idx);
+                                            for idx in &child_indices {
+                                                state.viewed_files.remove(idx);
                                             }
                                         } else {
-                                            for idx in child_indices {
-                                                state.viewed_files.insert(idx);
+                                            for idx in &child_indices {
+                                                state.viewed_files.insert(*idx);
+                                            }
+                                        }
+
+                                        // Fire off async API calls if in PR mode
+                                        if let Some(ref pr) = pr_info {
+                                            for &idx in &child_indices {
+                                                let filename = &state.file_diffs[idx].filename;
+                                                if all_viewed {
+                                                    unmark_file_as_viewed_async(pr, filename);
+                                                } else {
+                                                    mark_file_as_viewed_async(pr, filename);
+                                                }
                                             }
                                         }
                                     }
                                 }
                             } else if state.focused_panel == FocusedPanel::DiffView {
-                                if state.viewed_files.contains(&state.current_file) {
-                                    state.viewed_files.remove(&state.current_file);
+                                let current_file = state.current_file;
+                                let filename = state.file_diffs[current_file].filename.clone();
+                                let was_viewed = state.viewed_files.contains(&current_file);
+
+                                // Optimistic update - update local state immediately
+                                if was_viewed {
+                                    state.viewed_files.remove(&current_file);
                                 } else {
-                                    state.viewed_files.insert(state.current_file);
+                                    state.viewed_files.insert(current_file);
+                                    // Move to next unviewed file
                                     let mut next_file: Option<(usize, usize)> = None;
                                     for (idx, item) in state
                                         .sidebar_items
@@ -597,6 +660,15 @@ pub fn run_app(options: DiffOptions) -> io::Result<()> {
                                         } else if state.sidebar_selected < state.sidebar_scroll {
                                             state.sidebar_scroll = state.sidebar_selected;
                                         }
+                                    }
+                                }
+
+                                // Fire off async API call if in PR mode
+                                if let Some(ref pr) = pr_info {
+                                    if was_viewed {
+                                        unmark_file_as_viewed_async(pr, &filename);
+                                    } else {
+                                        mark_file_as_viewed_async(pr, &filename);
                                     }
                                 }
                             }
@@ -670,6 +742,21 @@ pub fn run_app(options: DiffOptions) -> io::Result<()> {
                                 terminal.clear()?;
                             }
                         }
+                        KeyCode::Char('o') => {
+                            if let Some(ref pr) = pr_info {
+                                if !state.file_diffs.is_empty() {
+                                    let filename = &state.file_diffs[state.current_file].filename;
+                                    let file_url = format!(
+                                        "https://github.com/{}/{}/pull/{}/files#diff-{}",
+                                        pr.repo_owner,
+                                        pr.repo_name,
+                                        pr.number,
+                                        generate_file_anchor(filename)
+                                    );
+                                    let _ = open_url(&file_url);
+                                }
+                            }
+                        }
                         KeyCode::Char('g') => {
                             if state.pending_key == PendingKey::G {
                                 state.scroll = 0;
@@ -740,7 +827,7 @@ pub fn run_app(options: DiffOptions) -> io::Result<()> {
                                             },
                                             KeyBind {
                                                 key: "r",
-                                                description: "Reload diff",
+                                                description: "Refresh diff / PR",
                                             },
                                             KeyBind {
                                                 key: "y",
@@ -749,6 +836,10 @@ pub fn run_app(options: DiffOptions) -> io::Result<()> {
                                             KeyBind {
                                                 key: "e",
                                                 description: "Open current file in editor",
+                                            },
+                                            KeyBind {
+                                                key: "o",
+                                                description: "Open file in browser (PR mode)",
                                             },
                                             KeyBind {
                                                 key: "?",
@@ -855,4 +946,30 @@ pub fn run_app(options: DiffOptions) -> io::Result<()> {
     io::stdout().execute(LeaveAlternateScreen)?;
 
     Ok(())
+}
+
+fn open_url(url: &str) -> io::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open").arg(url).spawn()?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open").arg(url).spawn()?;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(["/C", "start", url])
+            .spawn()?;
+    }
+    Ok(())
+}
+
+fn generate_file_anchor(filename: &str) -> String {
+    use sha2::{Digest, Sha256};
+
+    let mut hasher = Sha256::new();
+    hasher.update(filename.as_bytes());
+    format!("{:x}", hasher.finalize())
 }

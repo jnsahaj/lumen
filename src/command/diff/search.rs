@@ -93,11 +93,7 @@ impl SearchState {
         !self.query.is_empty()
     }
 
-    pub fn update_matches(
-        &mut self,
-        lines: &[DiffLine],
-        fullscreen: DiffFullscreen,
-    ) {
+    pub fn update_matches(&mut self, lines: &[DiffLine], fullscreen: DiffFullscreen) {
         if self.query.is_empty() {
             self.matches.clear();
             self.current_match = None;
@@ -105,7 +101,8 @@ impl SearchState {
         }
 
         // Remember current match identity before rebuilding
-        let prev_match = self.current_match
+        let prev_match = self
+            .current_match
             .and_then(|idx| self.matches.get(idx))
             .map(|m| (m.line_index, m.start_col, m.end_col, m.panel));
 
@@ -154,14 +151,18 @@ impl SearchState {
 
         // Restore current match by identity, or find next visible one
         if let Some((line_idx, start, end, panel)) = prev_match {
-            self.current_match = self.matches
-                .iter()
-                .position(|m| m.line_index == line_idx && m.start_col == start && m.end_col == end && m.panel == panel);
-            
+            self.current_match = self.matches.iter().position(|m| {
+                m.line_index == line_idx
+                    && m.start_col == start
+                    && m.end_col == end
+                    && m.panel == panel
+            });
+
             // If previous match not found (filtered out), find next visible match
             if self.current_match.is_none() && !self.matches.is_empty() {
                 // Find first match at or after the previous line
-                self.current_match = self.matches
+                self.current_match = self
+                    .matches
                     .iter()
                     .position(|m| m.line_index >= line_idx)
                     .or(Some(0));
@@ -236,7 +237,11 @@ impl SearchState {
         self.current_match
     }
 
-    pub fn get_matches_for_line(&self, line_index: usize, panel: MatchPanel) -> Vec<(usize, usize, bool)> {
+    pub fn get_matches_for_line(
+        &self,
+        line_index: usize,
+        panel: MatchPanel,
+    ) -> Vec<(usize, usize, bool)> {
         self.matches
             .iter()
             .enumerate()

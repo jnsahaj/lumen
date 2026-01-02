@@ -1,9 +1,6 @@
 use std::collections::HashSet;
 
-use ratatui::{
-    prelude::*,
-    widgets::Paragraph,
-};
+use ratatui::{prelude::*, widgets::Paragraph};
 
 use crate::command::diff::search::{SearchMode, SearchState};
 use crate::command::diff::theme;

@@ -218,7 +218,9 @@ pub fn build_file_tree(file_diffs: &[FileDiff]) -> Vec<SidebarItem> {
                 let collapsed_parts: Vec<&str> = collapsed_path.split('/').collect();
                 for j in 0..collapsed_parts.len() {
                     let intermediate = collapsed_parts[..=j].join("/");
-                    path_to_collapsed.entry(intermediate).or_insert(collapsed_path.clone());
+                    path_to_collapsed
+                        .entry(intermediate)
+                        .or_insert(collapsed_path.clone());
                 }
 
                 // Calculate depth based on parent's collapsed path
@@ -227,7 +229,10 @@ pub fn build_file_tree(file_diffs: &[FileDiff]) -> Vec<SidebarItem> {
                 } else {
                     let parent_dir = parts[..i].join("/");
                     if let Some(parent_collapsed) = path_to_collapsed.get(&parent_dir) {
-                        collapsed_depth.get(parent_collapsed).map(|d| d + 1).unwrap_or(0)
+                        collapsed_depth
+                            .get(parent_collapsed)
+                            .map(|d| d + 1)
+                            .unwrap_or(0)
                     } else {
                         0
                     }
@@ -272,7 +277,10 @@ pub fn build_file_tree(file_diffs: &[FileDiff]) -> Vec<SidebarItem> {
         let file_depth = if parts.len() > 1 {
             let parent_dir = parts[..parts.len() - 1].join("/");
             if let Some(parent_collapsed) = path_to_collapsed.get(&parent_dir) {
-                collapsed_depth.get(parent_collapsed).map(|d| d + 1).unwrap_or(0)
+                collapsed_depth
+                    .get(parent_collapsed)
+                    .map(|d| d + 1)
+                    .unwrap_or(0)
             } else {
                 0
             }

@@ -66,36 +66,53 @@ fn is_block_opener(line: &str) -> bool {
     let lower = trimmed.to_lowercase();
 
     // Function/method definitions
-    if lower.contains("fn ") || lower.contains("func ") || lower.contains("function ")
-        || lower.contains("def ") || lower.starts_with("pub fn ")
-        || lower.starts_with("async fn ") || lower.starts_with("pub async fn ")
+    if lower.contains("fn ")
+        || lower.contains("func ")
+        || lower.contains("function ")
+        || lower.contains("def ")
+        || lower.starts_with("pub fn ")
+        || lower.starts_with("async fn ")
+        || lower.starts_with("pub async fn ")
     {
         return true;
     }
 
     // Class/struct/impl/trait definitions
-    if lower.contains("impl ") || lower.contains("struct ") || lower.contains("enum ")
-        || lower.contains("trait ") || lower.contains("class ") || lower.contains("interface ")
-        || lower.starts_with("pub struct ") || lower.starts_with("pub enum ")
+    if lower.contains("impl ")
+        || lower.contains("struct ")
+        || lower.contains("enum ")
+        || lower.contains("trait ")
+        || lower.contains("class ")
+        || lower.contains("interface ")
+        || lower.starts_with("pub struct ")
+        || lower.starts_with("pub enum ")
         || lower.starts_with("pub trait ")
     {
         return true;
     }
 
     // Control flow
-    if lower.starts_with("if ") || lower.starts_with("} else if ")
-        || lower.starts_with("else if ") || lower == "else {"
-        || lower.starts_with("for ") || lower.starts_with("while ")
-        || lower.starts_with("loop ") || lower.starts_with("match ")
-        || lower.starts_with("switch ") || lower.starts_with("try ")
-        || lower.starts_with("catch ") || lower.starts_with("finally ")
+    if lower.starts_with("if ")
+        || lower.starts_with("} else if ")
+        || lower.starts_with("else if ")
+        || lower == "else {"
+        || lower.starts_with("for ")
+        || lower.starts_with("while ")
+        || lower.starts_with("loop ")
+        || lower.starts_with("match ")
+        || lower.starts_with("switch ")
+        || lower.starts_with("try ")
+        || lower.starts_with("catch ")
+        || lower.starts_with("finally ")
     {
         return true;
     }
 
     // Module/namespace
-    if lower.starts_with("mod ") || lower.starts_with("pub mod ")
-        || lower.starts_with("namespace ") || lower.starts_with("module ")
+    if lower.starts_with("mod ")
+        || lower.starts_with("pub mod ")
+        || lower.starts_with("namespace ")
+        || lower.starts_with("module ")
     {
         return true;
     }
@@ -128,8 +145,10 @@ fn is_multiline_fn_start(line: &str) -> bool {
     let lower = trimmed.to_lowercase();
 
     // Rust functions
-    if lower.contains("fn ") || lower.starts_with("pub fn ") 
-        || lower.starts_with("async fn ") || lower.starts_with("pub async fn ")
+    if lower.contains("fn ")
+        || lower.starts_with("pub fn ")
+        || lower.starts_with("async fn ")
+        || lower.starts_with("pub async fn ")
     {
         return true;
     }
@@ -141,8 +160,10 @@ fn is_multiline_fn_start(line: &str) -> bool {
 
     // Class methods with modifiers (private, public, async, static, etc.)
     // Pattern: optional modifiers followed by method name and (
-    if (lower.contains("private ") || lower.contains("public ") 
-        || lower.contains("protected ") || lower.contains("static ")
+    if (lower.contains("private ")
+        || lower.contains("public ")
+        || lower.contains("protected ")
+        || lower.contains("static ")
         || lower.contains("async "))
         && trimmed.ends_with('(')
     {
@@ -162,7 +183,7 @@ fn is_multiline_fn_start(line: &str) -> bool {
 #[allow(dead_code)]
 fn is_multiline_fn_end(line: &str) -> bool {
     let trimmed = line.trim();
-    
+
     // Must end with {
     if !trimmed.ends_with('{') {
         return false;
@@ -193,7 +214,7 @@ pub fn compute_sticky_lines(
 
     // Stack to track open blocks: (line_index, line_number, content, indent)
     let mut open_blocks: Vec<(usize, usize, String, usize)> = Vec::new();
-    
+
     // Track pending multi-line function definition: (line_index, line_number, content, indent)
     let mut pending_multiline_fn: Option<(usize, usize, String, usize)> = None;
 
@@ -212,7 +233,9 @@ pub fn compute_sticky_lines(
         }
         // Check for multi-line function end - use the start line as the block opener
         else if is_multiline_fn_end(content) {
-            if let Some((start_idx, start_line_num, start_content, start_indent)) = pending_multiline_fn.take() {
+            if let Some((start_idx, start_line_num, start_content, start_indent)) =
+                pending_multiline_fn.take()
+            {
                 open_blocks.push((start_idx, start_line_num, start_content, start_indent));
             } else {
                 // No pending start, might be single-line or arrow function
@@ -337,7 +360,10 @@ mod tests {
             (2, "    private async syncFilesFromGitPayload(".to_string()),
             (3, "        payload: VMPayloadWithGit,".to_string()),
             (4, "        env: string | undefined,".to_string()),
-            (5, "        options?: { skipSyncAndRuntime?: boolean },".to_string()),
+            (
+                5,
+                "        options?: { skipSyncAndRuntime?: boolean },".to_string(),
+            ),
             (6, "    ): Promise<Map<string, Buffer>> {".to_string()),
             (7, "        const { git } = payload;".to_string()),
             (8, "        return new Map();".to_string()),
@@ -350,6 +376,9 @@ mod tests {
         assert_eq!(sticky.len(), 2);
         assert_eq!(sticky[0].content, "class MyClass {");
         // Should show the first line of the function, not the line with {
-        assert_eq!(sticky[1].content, "    private async syncFilesFromGitPayload(");
+        assert_eq!(
+            sticky[1].content,
+            "    private async syncFilesFromGitPayload("
+        );
     }
 }

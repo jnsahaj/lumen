@@ -77,7 +77,10 @@ impl AppState {
     }
 
     pub fn reload(&mut self, file_diffs: Vec<FileDiff>) {
-        let old_filename = self.file_diffs.get(self.current_file).map(|f| f.filename.clone());
+        let old_filename = self
+            .file_diffs
+            .get(self.current_file)
+            .map(|f| f.filename.clone());
         self.file_diffs = file_diffs;
         self.sidebar_items = build_file_tree(&self.file_diffs);
 
@@ -103,7 +106,8 @@ impl AppState {
                 .unwrap_or(0);
         }
         if !self.file_diffs.is_empty() {
-            self.scroll = calc_initial_scroll(&self.file_diffs[self.current_file], self.settings.tab_width);
+            self.scroll =
+                calc_initial_scroll(&self.file_diffs[self.current_file], self.settings.tab_width);
             self.h_scroll = 0;
         }
         self.needs_reload = false;
@@ -112,7 +116,8 @@ impl AppState {
     pub fn select_file(&mut self, file_index: usize) {
         self.current_file = file_index;
         self.diff_fullscreen = DiffFullscreen::None;
-        self.scroll = calc_initial_scroll(&self.file_diffs[self.current_file], self.settings.tab_width);
+        self.scroll =
+            calc_initial_scroll(&self.file_diffs[self.current_file], self.settings.tab_width);
         self.h_scroll = 0;
     }
 }
@@ -120,10 +125,18 @@ impl AppState {
 pub fn calc_initial_scroll(diff: &FileDiff, tab_width: usize) -> u16 {
     let side_by_side = compute_side_by_side(&diff.old_content, &diff.new_content, tab_width);
     let hunks = find_hunk_starts(&side_by_side);
-    hunks.first().map(|&h| (h as u16).saturating_sub(5)).unwrap_or(0)
+    hunks
+        .first()
+        .map(|&h| (h as u16).saturating_sub(5))
+        .unwrap_or(0)
 }
 
-pub fn adjust_scroll_to_line(line: usize, scroll: u16, visible_height: usize, max_scroll: usize) -> u16 {
+pub fn adjust_scroll_to_line(
+    line: usize,
+    scroll: u16,
+    visible_height: usize,
+    max_scroll: usize,
+) -> u16 {
     let margin = 10usize;
     let scroll_usize = scroll as usize;
     let content_height = visible_height.saturating_sub(2);

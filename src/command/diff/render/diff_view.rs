@@ -111,11 +111,8 @@ pub fn render_empty_state(frame: &mut Frame, watching: bool) {
     } else {
         ""
     };
-    let msg = Paragraph::new(format!("No changes detected.{}", watch_hint)).block(
-        Block::default()
-            .title(" Git Review ")
-            .borders(Borders::ALL),
-    );
+    let msg = Paragraph::new(format!("No changes detected.{}", watch_hint))
+        .block(Block::default().title(" Git Review ").borders(Borders::ALL));
     frame.render_widget(msg, frame.area());
 }
 
@@ -135,7 +132,11 @@ fn render_context_lines(
                 prefix,
                 Style::default().fg(t.ui.line_number).bg(context_bg),
             )];
-            spans.extend(highlight_line_spans(&cl.content, filename, Some(context_bg)));
+            spans.extend(highlight_line_spans(
+                &cl.content,
+                filename,
+                Some(context_bg),
+            ));
             lines.push(Line::from(spans));
         } else {
             lines.push(Line::from(vec![Span::styled(
@@ -240,9 +241,7 @@ pub fn render_diff(
                 let prefix = format!("{:4} | ", num);
                 let mut spans: Vec<Span> = vec![Span::styled(
                     prefix,
-                    Style::default()
-                        .fg(t.ui.line_number)
-                        .bg(t.diff.added_bg),
+                    Style::default().fg(t.ui.line_number).bg(t.diff.added_bg),
                 )];
                 let matches = search_state.get_matches_for_line(line_idx, MatchPanel::New);
                 spans.extend(apply_search_highlight(
@@ -291,9 +290,7 @@ pub fn render_diff(
                 let prefix = format!("{:4} | ", num);
                 let mut spans: Vec<Span> = vec![Span::styled(
                     prefix,
-                    Style::default()
-                        .fg(t.ui.line_number)
-                        .bg(t.diff.deleted_bg),
+                    Style::default().fg(t.ui.line_number).bg(t.diff.deleted_bg),
                 )];
                 let matches = search_state.get_matches_for_line(line_idx, MatchPanel::Old);
                 spans.extend(apply_search_highlight(
@@ -393,8 +390,10 @@ pub fn render_diff(
                         ));
                     }
                     None => {
-                        old_spans
-                            .push(Span::styled("     |", Style::default().fg(t.ui.line_number)));
+                        old_spans.push(Span::styled(
+                            "     |",
+                            Style::default().fg(t.ui.line_number),
+                        ));
                     }
                 }
                 old_lines.push(Line::from(old_spans));
@@ -420,8 +419,10 @@ pub fn render_diff(
                         ));
                     }
                     None => {
-                        new_spans
-                            .push(Span::styled("     |", Style::default().fg(t.ui.line_number)));
+                        new_spans.push(Span::styled(
+                            "     |",
+                            Style::default().fg(t.ui.line_number),
+                        ));
                     }
                 }
                 new_lines.push(Line::from(new_spans));

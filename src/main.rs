@@ -79,11 +79,13 @@ async fn run() -> Result<(), LumenError> {
         }
         Commands::Diff {
             reference,
+            pr,
             file,
             watch,
         } => {
             let options = command::diff::DiffOptions {
                 reference,
+                pr,
                 file,
                 watch,
             };

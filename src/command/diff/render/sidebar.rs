@@ -45,7 +45,10 @@ pub fn render_sidebar(
                         true
                     });
                     let has_children = sidebar_items.iter().any(|child| {
-                        if let SidebarItem::File { path: file_path, .. } = child {
+                        if let SidebarItem::File {
+                            path: file_path, ..
+                        } = child
+                        {
                             file_path.starts_with(&format!("{}/", path))
                         } else {
                             false
@@ -94,13 +97,11 @@ pub fn render_sidebar(
 
             let is_selected = i == sidebar_selected;
             let base_style = if is_selected {
-                Style::default()
-                    .fg(t.ui.selection_fg)
-                    .bg(if is_focused {
-                        t.ui.selection_bg
-                    } else {
-                        t.ui.border_unfocused
-                    })
+                Style::default().fg(t.ui.selection_fg).bg(if is_focused {
+                    t.ui.selection_bg
+                } else {
+                    t.ui.border_unfocused
+                })
             } else if is_current_file {
                 Style::default().fg(t.ui.highlight)
             } else if is_viewed {

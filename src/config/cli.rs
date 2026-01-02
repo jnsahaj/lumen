@@ -89,8 +89,13 @@ pub enum Commands {
     /// Launch interactive side-by-side diff viewer
     Diff {
         /// Commit reference: SHA, HEAD, HEAD~3..HEAD, main..feature, main...feature
+        /// Can also be a PR number or URL (e.g., 123 or https://github.com/owner/repo/pull/123)
         #[arg(value_parser = clap::value_parser!(CommitReference))]
         reference: Option<CommitReference>,
+
+        /// View a GitHub pull request (number or URL)
+        #[arg(long)]
+        pr: Option<String>,
 
         /// Filter to specific files
         #[arg(short, long)]
