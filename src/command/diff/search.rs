@@ -1,18 +1,10 @@
 use super::types::{DiffFullscreen, DiffLine};
 
 #[derive(Default, Clone, Copy, PartialEq)]
-pub enum SearchDirection {
-    #[default]
-    Forward,
-    Backward,
-}
-
-#[derive(Default, Clone, Copy, PartialEq)]
 pub enum SearchMode {
     #[default]
     Inactive,
     InputForward,
-    InputBackward,
 }
 
 #[derive(Clone, Debug)]
@@ -33,7 +25,6 @@ pub enum MatchPanel {
 pub struct SearchState {
     pub mode: SearchMode,
     pub query: String,
-    pub direction: SearchDirection,
     pub matches: Vec<SearchMatch>,
     pub current_match: Option<usize>,
 }
@@ -41,13 +32,6 @@ pub struct SearchState {
 impl SearchState {
     pub fn start_forward(&mut self) {
         self.mode = SearchMode::InputForward;
-        self.query.clear();
-        self.matches.clear();
-        self.current_match = None;
-    }
-
-    pub fn start_backward(&mut self) {
-        self.mode = SearchMode::InputBackward;
         self.query.clear();
         self.matches.clear();
         self.current_match = None;
@@ -67,13 +51,6 @@ impl SearchState {
     }
 
     pub fn confirm(&mut self) {
-        if !self.query.is_empty() {
-            self.direction = match self.mode {
-                SearchMode::InputForward => SearchDirection::Forward,
-                SearchMode::InputBackward => SearchDirection::Backward,
-                SearchMode::Inactive => self.direction,
-            };
-        }
         self.mode = SearchMode::Inactive;
     }
 
@@ -207,26 +184,13 @@ impl SearchState {
             return None;
         }
 
-        match self.direction {
-            SearchDirection::Forward => {
-                let idx = self
-                    .matches
-                    .iter()
-                    .position(|m| m.line_index >= current_scroll)
-                    .unwrap_or(0);
-                self.current_match = Some(idx);
-                Some(self.matches[idx].line_index)
-            }
-            SearchDirection::Backward => {
-                let idx = self
-                    .matches
-                    .iter()
-                    .rposition(|m| m.line_index <= current_scroll)
-                    .unwrap_or(self.matches.len() - 1);
-                self.current_match = Some(idx);
-                Some(self.matches[idx].line_index)
-            }
-        }
+        let idx = self
+            .matches
+            .iter()
+            .position(|m| m.line_index >= current_scroll)
+            .unwrap_or(0);
+        self.current_match = Some(idx);
+        Some(self.matches[idx].line_index)
     }
 
     pub fn match_count(&self) -> usize {

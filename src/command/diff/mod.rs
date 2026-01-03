@@ -29,7 +29,6 @@ pub struct DiffOptions {
 pub struct PrInfo {
     pub number: u64,
     pub node_id: String,
-    pub url: String,
     pub repo_owner: String,
     pub repo_name: String,
 }
@@ -135,13 +134,9 @@ fn fetch_pr_info(pr_input: &str) -> Result<PrInfo, String> {
     let node_id = extract_json_string(&json_str, "id")
         .ok_or_else(|| "Could not parse PR node ID from GraphQL response".to_string())?;
 
-    let url = extract_json_string(&json_str, "url")
-        .ok_or_else(|| "Could not parse PR URL from GraphQL response".to_string())?;
-
     Ok(PrInfo {
         number,
         node_id,
-        url,
         repo_owner,
         repo_name,
     })

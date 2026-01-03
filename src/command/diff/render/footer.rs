@@ -38,7 +38,6 @@ pub fn render_footer(frame: &mut Frame, footer_area: Rect, data: FooterData) {
     if data.search_state.is_active() {
         let prefix = match data.search_state.mode {
             SearchMode::InputForward => "/",
-            SearchMode::InputBackward => "?",
             SearchMode::Inactive => "",
         };
         let search_spans = vec![

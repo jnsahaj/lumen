@@ -450,5 +450,3 @@ pub const MD_HIGHLIGHTS: &str = r#"
 (link_destination) @string
 (link_title) @string
 "#;
-
-
