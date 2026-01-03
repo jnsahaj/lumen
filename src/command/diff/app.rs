@@ -22,7 +22,7 @@ use super::render::{
 use super::state::{adjust_scroll_to_line, AppState, PendingKey};
 use super::theme;
 use super::types::{DiffFullscreen, FileStatus, FocusedPanel, SidebarItem};
-use super::watcher::setup_watcher;
+use super::watcher::{setup_watcher, WatchEvent};
 use super::{
     fetch_viewed_files, mark_file_as_viewed_async, unmark_file_as_viewed_async, DiffOptions, PrInfo,
 };
@@ -76,6 +76,7 @@ fn run_app_internal(
 
     let mut state = AppState::new(file_diffs);
     let mut active_modal: Option<Modal> = None;
+    let mut pending_watch_event: Option<WatchEvent> = None;
 
     // Load viewed files from GitHub on startup in PR mode
     if let Some(ref pr) = pr_info {
@@ -85,7 +86,10 @@ fn run_app_internal(
     loop {
         if let Some(ref rx) = watch_rx {
             match rx.try_recv() {
-                Ok(()) => state.needs_reload = true,
+                Ok(event) => {
+                    state.needs_reload = true;
+                    pending_watch_event = Some(event);
+                }
                 Err(TryRecvError::Empty) => {}
                 Err(TryRecvError::Disconnected) => {}
             }
@@ -101,7 +105,10 @@ fn run_app_internal(
             } else {
                 load_file_diffs(&options)
             };
-            state.reload(file_diffs);
+
+            // Pass changed files to reload so it can unmark them from viewed
+            let changed_files = pending_watch_event.take().map(|e| e.changed_files);
+            state.reload(file_diffs, changed_files.as_ref());
 
             // Re-sync viewed files from GitHub in PR mode
             if let Some(ref pr) = pr_info {

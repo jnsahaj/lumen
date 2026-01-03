@@ -76,14 +76,44 @@ impl AppState {
         }
     }
 
-    pub fn reload(&mut self, file_diffs: Vec<FileDiff>) {
+    /// Reload file diffs, optionally unmarking changed files from viewed set.
+    /// Preserves scroll position and current file when possible.
+    pub fn reload(&mut self, file_diffs: Vec<FileDiff>, changed_files: Option<&HashSet<String>>) {
+        // Store current state to preserve
         let old_filename = self
             .file_diffs
             .get(self.current_file)
             .map(|f| f.filename.clone());
+        let old_scroll = self.scroll;
+        let old_h_scroll = self.h_scroll;
+
+        // Convert viewed_files indices to filenames (to handle index changes after reload)
+        let mut viewed_filenames: HashSet<String> = self
+            .viewed_files
+            .iter()
+            .filter_map(|&idx| self.file_diffs.get(idx).map(|f| f.filename.clone()))
+            .collect();
+
+        // Remove changed files from viewed set
+        if let Some(changed) = changed_files {
+            for filename in changed {
+                viewed_filenames.remove(filename);
+            }
+        }
+
         self.file_diffs = file_diffs;
         self.sidebar_items = build_file_tree(&self.file_diffs);
 
+        // Convert viewed filenames back to indices in the new file_diffs
+        self.viewed_files = self
+            .file_diffs
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| viewed_filenames.contains(&f.filename))
+            .map(|(i, _)| i)
+            .collect();
+
+        // Preserve current file selection
         if let Some(name) = old_filename {
             self.current_file = self
                 .file_diffs
@@ -94,6 +124,8 @@ impl AppState {
         if self.current_file >= self.file_diffs.len() && !self.file_diffs.is_empty() {
             self.current_file = self.file_diffs.len() - 1;
         }
+
+        // Update sidebar selection to match current file
         if let Some(idx) = self.sidebar_items.iter().position(|item| {
             matches!(item, SidebarItem::File { file_index, .. } if *file_index == self.current_file)
         }) {
@@ -105,11 +137,21 @@ impl AppState {
                 .position(|item| matches!(item, SidebarItem::File { .. }))
                 .unwrap_or(0);
         }
+
+        // Preserve scroll position instead of resetting
         if !self.file_diffs.is_empty() {
-            self.scroll =
-                calc_initial_scroll(&self.file_diffs[self.current_file], self.settings.tab_width);
-            self.h_scroll = 0;
+            // Keep the old scroll position, but clamp to valid range
+            let diff = &self.file_diffs[self.current_file];
+            let side_by_side = compute_side_by_side(
+                &diff.old_content,
+                &diff.new_content,
+                self.settings.tab_width,
+            );
+            let max_scroll = side_by_side.len().saturating_sub(10);
+            self.scroll = old_scroll.min(max_scroll as u16);
+            self.h_scroll = old_h_scroll;
         }
+
         self.needs_reload = false;
     }
 
