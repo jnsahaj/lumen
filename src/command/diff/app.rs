@@ -156,6 +156,7 @@ fn run_app_internal(
                     state.diff_fullscreen,
                     &state.search_state,
                     &branch,
+                    pr_info.as_ref(),
                 );
                 if let Some(ref modal) = active_modal {
                     modal.render(frame);

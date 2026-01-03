@@ -31,6 +31,10 @@ pub struct PrInfo {
     pub node_id: String,
     pub repo_owner: String,
     pub repo_name: String,
+    pub base_ref: String,
+    pub head_ref: String,
+    pub base_repo_owner: String,
+    pub head_repo_owner: Option<String>, // None if head repo was deleted (fork deleted)
 }
 
 fn parse_pr_input(input: &str) -> Option<(Option<String>, Option<String>, u64)> {
@@ -112,9 +116,9 @@ fn fetch_pr_info(pr_input: &str) -> Result<PrInfo, String> {
         )
     };
 
-    // Use GraphQL to get the PR node ID
+    // Use GraphQL to get the PR node ID, branch refs, and repo owners
     let query = format!(
-        r#"query {{ repository(owner: "{}", name: "{}") {{ pullRequest(number: {}) {{ id url }} }} }}"#,
+        r#"query {{ repository(owner: "{}", name: "{}") {{ pullRequest(number: {}) {{ id url baseRefName headRefName baseRepository {{ owner {{ login }} }} headRepository {{ owner {{ login }} }} }} }} }}"#,
         repo_owner, repo_name, number
     );
 
@@ -133,12 +137,25 @@ fn fetch_pr_info(pr_input: &str) -> Result<PrInfo, String> {
     // Parse the GraphQL response
     let node_id = extract_json_string(&json_str, "id")
         .ok_or_else(|| "Could not parse PR node ID from GraphQL response".to_string())?;
+    let base_ref =
+        extract_json_string(&json_str, "baseRefName").unwrap_or_else(|| "base".to_string());
+    let head_ref =
+        extract_json_string(&json_str, "headRefName").unwrap_or_else(|| "head".to_string());
+
+    // Extract repo owners from nested structure
+    let base_repo_owner =
+        extract_nested_login(&json_str, "baseRepository").unwrap_or_else(|| repo_owner.clone());
+    let head_repo_owner = extract_nested_login(&json_str, "headRepository");
 
     Ok(PrInfo {
         number,
         node_id,
         repo_owner,
         repo_name,
+        base_ref,
+        head_ref,
+        base_repo_owner,
+        head_repo_owner,
     })
 }
 
@@ -148,6 +165,28 @@ fn extract_json_string(json: &str, key: &str) -> Option<String> {
         let value_start = start + pattern.len();
         if let Some(end) = json[value_start..].find('"') {
             return Some(json[value_start..value_start + end].to_string());
+        }
+    }
+    None
+}
+
+fn extract_nested_login(json: &str, parent_key: &str) -> Option<String> {
+    // Look for pattern like "baseRepository":{"owner":{"login":"username"}}
+    // or handle null case like "headRepository":null
+    let pattern = format!("\"{}\":", parent_key);
+    if let Some(start) = json.find(&pattern) {
+        let after_key = &json[start + pattern.len()..];
+        // Check if it's null
+        if after_key.trim_start().starts_with("null") {
+            return None;
+        }
+        // Look for login within this section
+        if let Some(login_start) = after_key.find("\"login\":\"") {
+            let value_start = login_start + 9;
+            let after_login = &after_key[value_start..];
+            if let Some(end) = after_login.find('"') {
+                return Some(after_login[..end].to_string());
+            }
         }
     }
     None

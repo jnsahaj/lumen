@@ -13,6 +13,7 @@ use crate::command::diff::theme;
 use crate::command::diff::types::{
     ChangeType, DiffFullscreen, DiffLine, DiffViewSettings, FileDiff, FocusedPanel, SidebarItem,
 };
+use crate::command::diff::PrInfo;
 
 use super::footer::{render_footer, FooterData};
 use super::sidebar::render_sidebar;
@@ -173,6 +174,7 @@ pub fn render_diff(
     diff_fullscreen: DiffFullscreen,
     search_state: &SearchState,
     branch: &str,
+    pr_info: Option<&PrInfo>,
 ) {
     let area = frame.area();
     let side_by_side =
@@ -463,6 +465,7 @@ pub fn render_diff(
         FooterData {
             filename: &diff.filename,
             branch,
+            pr_info,
             watching,
             current_file,
             viewed_files,

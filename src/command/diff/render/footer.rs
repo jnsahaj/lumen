@@ -4,10 +4,12 @@ use ratatui::{prelude::*, widgets::Paragraph};
 
 use crate::command::diff::search::{SearchMode, SearchState};
 use crate::command::diff::theme;
+use crate::command::diff::PrInfo;
 
 pub struct FooterData<'a> {
     pub filename: &'a str,
     pub branch: &'a str,
+    pub pr_info: Option<&'a PrInfo>,
     pub watching: bool,
     pub current_file: usize,
     pub viewed_files: &'a HashSet<usize>,
@@ -71,22 +73,69 @@ pub fn render_footer(frame: &mut Frame, footer_area: Rect, data: FooterData) {
             ""
         };
 
-        let left_spans = vec![
-            Span::styled(" ", Style::default().bg(bg)),
-            Span::styled(
-                format!(" {} ", data.branch),
-                Style::default()
-                    .fg(t.ui.footer_branch_fg)
-                    .bg(t.ui.footer_branch_bg),
-            ),
-            Span::styled(" ", Style::default().bg(bg)),
-            Span::styled(
-                truncated_filename,
-                Style::default().fg(t.ui.text_secondary).bg(bg),
-            ),
-            Span::styled(viewed_indicator, Style::default().fg(t.ui.viewed).bg(bg)),
-            Span::styled(watch_indicator, Style::default().fg(t.ui.watching).bg(bg)),
-        ];
+        let left_spans = if let Some(pr) = data.pr_info {
+            // PR mode: show "base <- head #123" or "owner:base <- owner:head #123" for forks
+            let is_fork = pr
+                .head_repo_owner
+                .as_ref()
+                .map_or(true, |head_owner| head_owner != &pr.base_repo_owner);
+
+            let base_label = if is_fork {
+                format!(" {}:{} ", pr.base_repo_owner, pr.base_ref)
+            } else {
+                format!(" {} ", pr.base_ref)
+            };
+
+            let head_label = if is_fork {
+                match &pr.head_repo_owner {
+                    Some(owner) => format!(" {}:{} ", owner, pr.head_ref),
+                    None => format!(" {} ", pr.head_ref), // Fork was deleted
+                }
+            } else {
+                format!(" {} ", pr.head_ref)
+            };
+
+            vec![
+                Span::styled(" ", Style::default().bg(bg)),
+                Span::styled(
+                    base_label,
+                    Style::default()
+                        .fg(t.ui.footer_branch_fg)
+                        .bg(t.ui.footer_branch_bg),
+                ),
+                Span::styled(" <- ", Style::default().fg(t.ui.text_muted).bg(bg)),
+                Span::styled(
+                    head_label,
+                    Style::default()
+                        .fg(t.ui.footer_branch_fg)
+                        .bg(t.ui.footer_branch_bg),
+                ),
+                Span::styled(" ", Style::default().bg(bg)),
+                Span::styled(
+                    truncated_filename,
+                    Style::default().fg(t.ui.text_secondary).bg(bg),
+                ),
+                Span::styled(viewed_indicator, Style::default().fg(t.ui.viewed).bg(bg)),
+            ]
+        } else {
+            // Normal diff mode: show branch name
+            vec![
+                Span::styled(" ", Style::default().bg(bg)),
+                Span::styled(
+                    format!(" {} ", data.branch),
+                    Style::default()
+                        .fg(t.ui.footer_branch_fg)
+                        .bg(t.ui.footer_branch_bg),
+                ),
+                Span::styled(" ", Style::default().bg(bg)),
+                Span::styled(
+                    truncated_filename,
+                    Style::default().fg(t.ui.text_secondary).bg(bg),
+                ),
+                Span::styled(viewed_indicator, Style::default().fg(t.ui.viewed).bg(bg)),
+                Span::styled(watch_indicator, Style::default().fg(t.ui.watching).bg(bg)),
+            ]
+        };
 
         let (center_spans, right_spans) = if data.search_state.has_query() {
             let match_count = data.search_state.match_count();
