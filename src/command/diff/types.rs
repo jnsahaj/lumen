@@ -73,6 +73,8 @@ pub enum ChangeType {
     Equal,
     Delete,
     Insert,
+    /// A paired delete+insert, shown on the same row (GitHub-style)
+    Modified,
 }
 
 #[derive(Clone, Copy, PartialEq)]

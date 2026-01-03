@@ -99,6 +99,11 @@ pub fn compute_line_stats(side_by_side: &[DiffLine]) -> LineStats {
         match line.change_type {
             ChangeType::Insert => added += 1,
             ChangeType::Delete => removed += 1,
+            ChangeType::Modified => {
+                // A modified line counts as both a removal and an addition
+                added += 1;
+                removed += 1;
+            }
             ChangeType::Equal => {}
         }
     }
@@ -369,6 +374,7 @@ pub fn render_diff(
                 ChangeType::Equal => (None, None),
                 ChangeType::Delete => (Some(t.diff.deleted_bg), None),
                 ChangeType::Insert => (None, Some(t.diff.added_bg)),
+                ChangeType::Modified => (Some(t.diff.deleted_bg), Some(t.diff.added_bg)),
             };
 
             if old_area.is_some() {
