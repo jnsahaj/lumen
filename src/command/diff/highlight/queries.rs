@@ -434,3 +434,21 @@ pub const BASH_HIGHLIGHTS: &str = r#"
 (command_name) @function
 (variable_name) @variable
 "#;
+
+pub const MD_HIGHLIGHTS: &str = r#"
+(atx_heading) @keyword
+(setext_heading) @keyword
+(thematic_break) @punctuation.delimiter
+(fenced_code_block) @string
+(indented_code_block) @string
+(block_quote) @comment
+(list_marker_plus) @punctuation
+(list_marker_minus) @punctuation
+(list_marker_star) @punctuation
+(list_marker_dot) @punctuation
+(list_marker_parenthesis) @punctuation
+(link_destination) @string
+(link_title) @string
+"#;
+
+
