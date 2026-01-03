@@ -42,7 +42,7 @@ A command-line tool that uses AI to streamline your git workflow - generate comm
 ### Prerequisites
 Before you begin, ensure you have:
 1. `git` installed on your system
-2. [fzf](https://github.com/junegunn/fzf) (optional) - Required for `lumen list` command
+2. [fzf](https://github.com/junegunn/fzf) (optional) - Required for `lumen explain --list` command
 3. [mdcat](https://github.com/swsnr/mdcat) (optional) - Required for pretty output formatting
 
 ### Installation
@@ -163,12 +163,17 @@ lumen explain main...feature/A        # Branch comparison (merge base)
 # Ask specific questions about changes
 lumen explain --query "What's the performance impact of these changes?"
 lumen explain HEAD --query "What are the potential side effects?"
+
+# Interactive commit selection
+lumen explain --list                  # Select commit interactively
 ```
 
 ### Interactive Mode
 ```bash
 # Launch interactive fuzzy finder to search through commits (requires: fzf)
-lumen list
+lumen explain --list
+
+# Deprecated: lumen list (use lumen explain --list instead)
 ```
 
 ### Tips & Tricks

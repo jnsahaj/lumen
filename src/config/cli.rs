@@ -59,7 +59,7 @@ impl FromStr for ProviderType {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Explain the changes in a commit, or the current diff (default)
+    /// Explain the changes in a commit, or the current diff (default). Use --list to select commit interactively
     Explain {
         /// Commit reference: SHA, HEAD, HEAD~3..HEAD, main..feature, main...feature
         #[arg(value_parser = clap::value_parser!(CommitReference))]
@@ -72,6 +72,10 @@ pub enum Commands {
         /// Ask a question instead of summary
         #[arg(short, long)]
         query: Option<String>,
+
+        /// Select commit interactively using fuzzy finder
+        #[arg(long)]
+        list: bool,
     },
     /// List all commits in an interactive fuzzy-finder, and summarize the changes
     List,
