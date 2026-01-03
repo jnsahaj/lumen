@@ -180,9 +180,10 @@ pub fn render_diff(
         .split(area);
 
     let main_area = if show_sidebar {
+        let sidebar_width = (area.width / 4).min(35).max(20);
         let main_chunks = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Length(45), Constraint::Min(0)])
+            .constraints([Constraint::Length(sidebar_width), Constraint::Min(0)])
             .split(chunks[0]);
 
         render_sidebar(
@@ -238,7 +239,7 @@ pub fn render_diff(
         for (i, diff_line) in visible_lines.iter().enumerate() {
             let line_idx = scroll as usize + i;
             if let Some((num, text)) = &diff_line.new_line {
-                let prefix = format!("{:4} | ", num);
+                let prefix = format!("{:4}  ", num);
                 let mut spans: Vec<Span> = vec![Span::styled(
                     prefix,
                     Style::default().fg(t.ui.line_number).bg(t.diff.added_bg),
@@ -287,7 +288,7 @@ pub fn render_diff(
         for (i, diff_line) in visible_lines.iter().enumerate() {
             let line_idx = scroll as usize + i;
             if let Some((num, text)) = &diff_line.old_line {
-                let prefix = format!("{:4} | ", num);
+                let prefix = format!("{:4}  ", num);
                 let mut spans: Vec<Span> = vec![Span::styled(
                     prefix,
                     Style::default().fg(t.ui.line_number).bg(t.diff.deleted_bg),
@@ -374,7 +375,7 @@ pub fn render_diff(
                 let mut old_spans: Vec<Span> = Vec::new();
                 match &diff_line.old_line {
                     Some((num, text)) => {
-                        let prefix = format!("{:4} | ", num);
+                        let prefix = format!("{:4}  ", num);
                         old_spans.push(Span::styled(
                             prefix,
                             Style::default()
@@ -391,7 +392,7 @@ pub fn render_diff(
                     }
                     None => {
                         old_spans.push(Span::styled(
-                            "     |",
+                            "      ",
                             Style::default().fg(t.ui.line_number),
                         ));
                     }
@@ -403,7 +404,7 @@ pub fn render_diff(
                 let mut new_spans: Vec<Span> = Vec::new();
                 match &diff_line.new_line {
                     Some((num, text)) => {
-                        let prefix = format!("{:4} | ", num);
+                        let prefix = format!("{:4}  ", num);
                         new_spans.push(Span::styled(
                             prefix,
                             Style::default()
@@ -420,7 +421,7 @@ pub fn render_diff(
                     }
                     None => {
                         new_spans.push(Span::styled(
-                            "     |",
+                            "      ",
                             Style::default().fg(t.ui.line_number),
                         ));
                     }
