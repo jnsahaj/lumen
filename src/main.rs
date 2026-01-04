@@ -1,4 +1,5 @@
 use clap::Parser;
+use command::LumenCommand;
 use commit_reference::CommitReference;
 use config::cli::{Cli, Commands};
 use config::LumenConfig;
@@ -43,7 +44,7 @@ async fn run() -> Result<(), LumenError> {
             list,
         } => {
             let git_entity = if list {
-                let sha = command.get_sha_from_fzf()?;
+                let sha = LumenCommand::get_sha_from_fzf()?;
                 GitEntity::Commit(Commit::new(sha)?)
             } else {
                 match reference {
