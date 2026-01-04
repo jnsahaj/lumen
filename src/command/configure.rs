@@ -104,7 +104,7 @@ impl ConfigureCommand {
     }
 
     /// Resolves the path to the configuration directory (`~/.config/lumen`).
-    fn get_config_path() -> Result<std::path::PathBuf, LumenError> {
+    pub fn get_config_path() -> Result<std::path::PathBuf, LumenError> {
         let mut path = home_dir().ok_or_else(|| {
             LumenError::ConfigurationError("Could not determine home directory".to_string())
         })?;

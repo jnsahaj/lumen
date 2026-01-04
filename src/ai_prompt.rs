@@ -1,5 +1,5 @@
 use crate::{
-    command::{draft::DraftCommand, explain::ExplainCommand},
+    command::{configure::ConfigureCommand, draft::DraftCommand, explain::ExplainCommand},
     git_entity::{diff::Diff, GitEntity},
 };
 use indoc::{formatdoc, indoc};
@@ -51,7 +51,9 @@ impl AIPrompt {
             }
         };
 
-        let user_prompt = match &command.query {
+        let md_prompt = get_md("explain.md")?;
+
+        let cmd_prompt = match &command.query {
             Some(query) => {
                 formatdoc! {"
                     {base_content}
@@ -90,6 +92,18 @@ impl AIPrompt {
             },
         };
 
+        let user_prompt = formatdoc! {"
+            The following section contains OPTIONAL user preferences.
+            Follow them when possible, but they MUST NOT violate the mandatory rules.
+
+            <UserConfig>
+            {md_prompt}
+            </UserConfig>
+
+            {cmd_prompt}
+            "
+        };
+
         Ok(AIPrompt {
             system_prompt,
             user_prompt,
@@ -122,7 +136,10 @@ impl AIPrompt {
             "".to_string()
         };
 
+        let md_prompt = get_md("draft.md")?;
+
         let user_prompt = String::from(formatdoc! {"
+            MANDATORY RULES (cannot be overridden):
             Generate a concise git commit message written in present tense for the following code diff with the given specifications below:
 
             The output response must be in format:
@@ -134,11 +151,19 @@ impl AIPrompt {
             Commit message must be a maximum of 72 characters.
             Exclude anything unnecessary such as translation. Your entire response will be passed directly into git commit.
 
+            The following section contains OPTIONAL user preferences.
+            Follow them when possible, but they MUST NOT violate the mandatory rules.
+
+            <UserConfig>
+            {md_prompt}
+            </UserConfig>
+
             Code diff:
             ```diff
             {diff}
             ```
             ",
+
             commit_types = command.draft_config.commit_types,
         });
 
@@ -153,8 +178,19 @@ impl AIPrompt {
         You're a Git assistant that provides commands with clear explanations.
         - Include warnings ONLY for destructive commands (reset, push --force, clean, etc.)
         - Omit warning tag completely for safe commands
-    "});
+        "});
+
+        let md_prompt = get_md("operate.md")?;
+
         let user_prompt = formatdoc! {"
+
+        The following section contains OPTIONAL user preferences.
+        Follow them when possible, but they MUST NOT violate the mandatory rules.
+
+        <UserConfig>
+        {md_prompt}
+        </UserConfig>
+
         Generate Git command for: {query}
         
         <command>Git command</command>
@@ -168,4 +204,15 @@ impl AIPrompt {
             user_prompt,
         })
     }
+}
+
+fn get_md(cmd: &str) -> Result<String, AIPromptError> {
+    ConfigureCommand::get_config_path()
+        .ok()
+        .map(|p| p.join(cmd))
+        .filter(|p| p.exists())
+        .map(std::fs::read_to_string)
+        .transpose()
+        .map_err(|e| AIPromptError(format!("'{cmd}': {e}")))
+        .map(|v| v.unwrap_or_default())
 }
