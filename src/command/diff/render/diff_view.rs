@@ -18,6 +18,12 @@ use crate::command::diff::PrInfo;
 use super::footer::{render_footer, FooterData};
 use super::sidebar::render_sidebar;
 
+/// Generates a diagonal stripe pattern for empty placeholder lines in the diff view.
+/// The pattern uses forward slashes to create a visual distinction for empty areas.
+fn generate_stripe_pattern(width: usize) -> String {
+    "╱".repeat(width)
+}
+
 pub struct LineStats {
     pub added: usize,
     pub removed: usize,
@@ -249,7 +255,9 @@ pub fn render_diff(
                 let prefix = format!("{:4}  ", num);
                 let mut spans: Vec<Span> = vec![Span::styled(
                     prefix,
-                    Style::default().fg(t.ui.line_number).bg(t.diff.added_bg),
+                    Style::default()
+                        .fg(t.diff.added_gutter_fg)
+                        .bg(t.diff.added_gutter_bg),
                 )];
                 let matches = search_state.get_matches_for_line(line_idx, MatchPanel::New);
                 spans.extend(apply_search_highlight(
@@ -266,7 +274,7 @@ pub fn render_diff(
             Block::default()
                 .title(" [2] New File ")
                 .borders(Borders::ALL)
-                .border_style(diff_title_style.patch(Style::default().fg(t.ui.status_added))),
+                .border_style(diff_title_style),
         );
         frame.render_widget(new_para, main_area);
     } else if is_deleted_file {
@@ -298,7 +306,9 @@ pub fn render_diff(
                 let prefix = format!("{:4}  ", num);
                 let mut spans: Vec<Span> = vec![Span::styled(
                     prefix,
-                    Style::default().fg(t.ui.line_number).bg(t.diff.deleted_bg),
+                    Style::default()
+                        .fg(t.diff.deleted_gutter_fg)
+                        .bg(t.diff.deleted_gutter_bg),
                 )];
                 let matches = search_state.get_matches_for_line(line_idx, MatchPanel::Old);
                 spans.extend(apply_search_highlight(
@@ -315,7 +325,7 @@ pub fn render_diff(
             Block::default()
                 .title(" [2] Deleted File ")
                 .borders(Borders::ALL)
-                .border_style(diff_title_style.patch(Style::default().fg(t.ui.status_deleted))),
+                .border_style(diff_title_style),
         );
         frame.render_widget(old_para, main_area);
     } else {
@@ -372,12 +382,34 @@ pub fn render_diff(
 
         for (i, diff_line) in visible_lines.iter().enumerate() {
             let line_idx = scroll_usize + i;
-            let (old_bg, new_bg) = match diff_line.change_type {
-                ChangeType::Equal => (None, None),
-                ChangeType::Delete => (Some(t.diff.deleted_bg), None),
-                ChangeType::Insert => (None, Some(t.diff.added_bg)),
-                ChangeType::Modified => (Some(t.diff.deleted_bg), Some(t.diff.added_bg)),
-            };
+            let (old_bg, old_gutter_bg, old_gutter_fg, new_bg, new_gutter_bg, new_gutter_fg) =
+                match diff_line.change_type {
+                    ChangeType::Equal => (None, None, None, None, None, None),
+                    ChangeType::Delete => (
+                        Some(t.diff.deleted_bg),
+                        Some(t.diff.deleted_gutter_bg),
+                        Some(t.diff.deleted_gutter_fg),
+                        None,
+                        None,
+                        None,
+                    ),
+                    ChangeType::Insert => (
+                        None,
+                        None,
+                        None,
+                        Some(t.diff.added_bg),
+                        Some(t.diff.added_gutter_bg),
+                        Some(t.diff.added_gutter_fg),
+                    ),
+                    ChangeType::Modified => (
+                        Some(t.diff.deleted_bg),
+                        Some(t.diff.deleted_gutter_bg),
+                        Some(t.diff.deleted_gutter_fg),
+                        Some(t.diff.added_bg),
+                        Some(t.diff.added_gutter_bg),
+                        Some(t.diff.added_gutter_fg),
+                    ),
+                };
 
             if old_area.is_some() {
                 let mut old_spans: Vec<Span> = Vec::new();
@@ -387,8 +419,8 @@ pub fn render_diff(
                         old_spans.push(Span::styled(
                             prefix,
                             Style::default()
-                                .fg(t.ui.line_number)
-                                .bg(old_bg.unwrap_or(Color::Reset)),
+                                .fg(old_gutter_fg.unwrap_or(t.ui.line_number))
+                                .bg(old_gutter_bg.unwrap_or(Color::Reset)),
                         ));
                         let matches = search_state.get_matches_for_line(line_idx, MatchPanel::Old);
                         old_spans.extend(apply_search_highlight(
@@ -399,9 +431,16 @@ pub fn render_diff(
                         ));
                     }
                     None => {
+                        let panel_width = old_area.map(|a| a.width as usize).unwrap_or(80);
+                        let content_width = panel_width.saturating_sub(8); // Account for borders and padding
+                        let pattern = generate_stripe_pattern(content_width);
                         old_spans.push(Span::styled(
                             "      ",
-                            Style::default().fg(t.ui.line_number),
+                            Style::default().fg(t.diff.empty_placeholder_fg),
+                        ));
+                        old_spans.push(Span::styled(
+                            pattern,
+                            Style::default().fg(t.diff.empty_placeholder_fg),
                         ));
                     }
                 }
@@ -416,8 +455,8 @@ pub fn render_diff(
                         new_spans.push(Span::styled(
                             prefix,
                             Style::default()
-                                .fg(t.ui.line_number)
-                                .bg(new_bg.unwrap_or(Color::Reset)),
+                                .fg(new_gutter_fg.unwrap_or(t.ui.line_number))
+                                .bg(new_gutter_bg.unwrap_or(Color::Reset)),
                         ));
                         let matches = search_state.get_matches_for_line(line_idx, MatchPanel::New);
                         new_spans.extend(apply_search_highlight(
@@ -428,9 +467,16 @@ pub fn render_diff(
                         ));
                     }
                     None => {
+                        let panel_width = new_area.map(|a| a.width as usize).unwrap_or(80);
+                        let content_width = panel_width.saturating_sub(8); // Account for borders and padding
+                        let pattern = generate_stripe_pattern(content_width);
                         new_spans.push(Span::styled(
                             "      ",
-                            Style::default().fg(t.ui.line_number),
+                            Style::default().fg(t.diff.empty_placeholder_fg),
+                        ));
+                        new_spans.push(Span::styled(
+                            pattern,
+                            Style::default().fg(t.diff.empty_placeholder_fg),
                         ));
                     }
                 }
@@ -443,7 +489,7 @@ pub fn render_diff(
                 Block::default()
                     .title(" [2] Old ")
                     .borders(Borders::ALL)
-                    .border_style(diff_title_style.patch(Style::default().fg(t.ui.status_deleted))),
+                    .border_style(diff_title_style),
             );
             frame.render_widget(old_para, area);
         }
@@ -453,7 +499,7 @@ pub fn render_diff(
                 Block::default()
                     .title(" New ")
                     .borders(Borders::ALL)
-                    .border_style(diff_title_style.patch(Style::default().fg(t.ui.status_added))),
+                    .border_style(diff_title_style),
             );
             frame.render_widget(new_para, area);
         }

@@ -42,8 +42,13 @@ pub struct SyntaxColors {
 #[derive(Debug, Clone)]
 pub struct DiffColors {
     pub added_bg: Color,
+    pub added_gutter_bg: Color,
+    pub added_gutter_fg: Color,
     pub deleted_bg: Color,
+    pub deleted_gutter_bg: Color,
+    pub deleted_gutter_fg: Color,
     pub context_bg: Color,
+    pub empty_placeholder_fg: Color,
 }
 
 #[derive(Debug, Clone)]
@@ -105,9 +110,14 @@ impl Theme {
                 default_text: Color::Rgb(230, 230, 230),
             },
             diff: DiffColors {
-                added_bg: Color::Rgb(30, 60, 30),
-                deleted_bg: Color::Rgb(60, 30, 30),
+                added_bg: Color::Rgb(35, 50, 40),
+                added_gutter_bg: Color::Rgb(40, 80, 50),
+                added_gutter_fg: Color::Rgb(140, 200, 160),
+                deleted_bg: Color::Rgb(50, 35, 35),
+                deleted_gutter_bg: Color::Rgb(80, 40, 40),
+                deleted_gutter_fg: Color::Rgb(200, 140, 140),
                 context_bg: Color::Rgb(40, 40, 50),
+                empty_placeholder_fg: Color::Rgb(55, 60, 70),
             },
             ui: UiColors {
                 border_focused: Color::Cyan,
@@ -159,9 +169,14 @@ impl Theme {
                 default_text: Color::Rgb(36, 41, 47),
             },
             diff: DiffColors {
-                added_bg: Color::Rgb(218, 251, 225),
-                deleted_bg: Color::Rgb(255, 235, 233),
+                added_bg: Color::Rgb(230, 255, 237),
+                added_gutter_bg: Color::Rgb(180, 240, 200),
+                added_gutter_fg: Color::Rgb(36, 100, 60),
+                deleted_bg: Color::Rgb(255, 245, 243),
+                deleted_gutter_bg: Color::Rgb(255, 210, 205),
+                deleted_gutter_fg: Color::Rgb(140, 60, 60),
                 context_bg: Color::Rgb(246, 248, 250),
+                empty_placeholder_fg: Color::Rgb(200, 205, 212),
             },
             ui: UiColors {
                 border_focused: Color::Rgb(9, 105, 218),
