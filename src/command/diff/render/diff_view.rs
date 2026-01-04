@@ -220,7 +220,8 @@ pub fn render_diff(
     let is_deleted_file = !diff.old_content.is_empty() && diff.new_content.is_empty();
 
     let t = theme::get();
-    let diff_title_style = if focused_panel == FocusedPanel::DiffView {
+    let border_style = Style::default().fg(t.ui.border_unfocused);
+    let title_style = if focused_panel == FocusedPanel::DiffView {
         Style::default().fg(t.ui.border_focused)
     } else {
         Style::default().fg(t.ui.border_unfocused)
@@ -272,9 +273,9 @@ pub fn render_diff(
 
         let new_para = Paragraph::new(new_lines).scroll((0, h_scroll)).block(
             Block::default()
-                .title(" [2] New File ")
+                .title(Line::styled(" [2] New File ", title_style))
                 .borders(Borders::ALL)
-                .border_style(diff_title_style),
+                .border_style(border_style),
         );
         frame.render_widget(new_para, main_area);
     } else if is_deleted_file {
@@ -323,9 +324,9 @@ pub fn render_diff(
 
         let old_para = Paragraph::new(old_lines).scroll((0, h_scroll)).block(
             Block::default()
-                .title(" [2] Deleted File ")
+                .title(Line::styled(" [2] Deleted File ", title_style))
                 .borders(Borders::ALL)
-                .border_style(diff_title_style),
+                .border_style(border_style),
         );
         frame.render_widget(old_para, main_area);
     } else {
@@ -487,19 +488,25 @@ pub fn render_diff(
         if let Some(area) = old_area {
             let old_para = Paragraph::new(old_lines).scroll((0, h_scroll)).block(
                 Block::default()
-                    .title(" [2] Old ")
+                    .title(Line::styled(" [2] Old ", title_style))
                     .borders(Borders::ALL)
-                    .border_style(diff_title_style),
+                    .border_style(border_style),
             );
             frame.render_widget(old_para, area);
         }
 
         if let Some(area) = new_area {
+            // When both panels are shown, new panel has no left border to share with old panel
+            let new_borders = if old_area.is_some() {
+                Borders::TOP | Borders::RIGHT | Borders::BOTTOM
+            } else {
+                Borders::ALL
+            };
             let new_para = Paragraph::new(new_lines).scroll((0, h_scroll)).block(
                 Block::default()
-                    .title(" New ")
-                    .borders(Borders::ALL)
-                    .border_style(diff_title_style),
+                    .title(Line::styled(" New ", title_style))
+                    .borders(new_borders)
+                    .border_style(border_style),
             );
             frame.render_widget(new_para, area);
         }

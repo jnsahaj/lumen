@@ -126,11 +126,12 @@ pub fn render_sidebar(
         })
         .collect();
 
-    let border_color = if is_focused {
-        t.ui.border_focused
+    let title_style = if is_focused {
+        Style::default().fg(t.ui.border_focused)
     } else {
-        t.ui.border_unfocused
+        Style::default().fg(t.ui.border_unfocused)
     };
+    let border_style = Style::default().fg(t.ui.border_unfocused);
 
     let visible_lines: Vec<Line> = lines
         .into_iter()
@@ -142,9 +143,9 @@ pub fn render_sidebar(
         .scroll((0, sidebar_h_scroll))
         .block(
             Block::default()
-                .title(" [1] Files ")
+                .title(Line::styled(" [1] Files ", title_style))
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(border_color)),
+                .border_style(border_style),
         );
 
     frame.render_widget(para, area);
