@@ -136,6 +136,33 @@ lumen diff --watch
 
 When viewing a PR, you can mark files as viewed (syncs with GitHub) using the `space` keybinding.
 
+#### Theme Configuration
+
+Customize the diff viewer colors with preset themes:
+
+```bash
+# Using environment variable
+LUMEN_THEME=catppuccin-mocha lumen diff
+
+# Or set permanently in config file (~/.config/lumen/lumen.config.json)
+{
+  "theme": "dracula"
+}
+```
+
+**Available themes:**
+| Theme | Value |
+|-------|-------|
+| Default (auto-detect) | `dark`, `light` |
+| Catppuccin | `catppuccin-mocha`, `catppuccin-latte` |
+| Dracula | `dracula` |
+| Nord | `nord` |
+| One Dark | `one-dark` |
+| Gruvbox | `gruvbox-dark`, `gruvbox-light` |
+| Solarized | `solarized-dark`, `solarized-light` |
+
+Priority: config file > `LUMEN_THEME` env var > OS auto-detect.
+
 Keybindings in the diff viewer:
 - `j/k` or arrow keys: Navigate
 - `{/}`: Jump between hunks
@@ -263,6 +290,7 @@ Lumen will load configurations in the following order of priority:
   "provider": "openai",
   "model": "gpt-5-mini",
   "api_key": "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "theme": "catppuccin-mocha",
   "draft": {
     "commit_types": {
       "docs": "Documentation only changes",
