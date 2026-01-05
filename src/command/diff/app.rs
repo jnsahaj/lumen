@@ -59,7 +59,7 @@ fn run_app_internal(
     pr_info: Option<PrInfo>,
     file_diffs: Vec<super::types::FileDiff>,
 ) -> io::Result<()> {
-    theme::init();
+    theme::init(options.theme.as_deref());
     highlight::init();
 
     enable_raw_mode()?;

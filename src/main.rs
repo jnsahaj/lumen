@@ -98,6 +98,7 @@ async fn run() -> Result<(), LumenError> {
                 pr,
                 file,
                 watch,
+                theme: config.theme.clone(),
             };
             command::diff::run_diff_ui(options)?;
         }

@@ -26,6 +26,9 @@ pub struct LumenConfig {
 
     #[serde(default = "default_draft_config")]
     pub draft: DraftConfig,
+
+    #[serde(default)]
+    pub theme: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -122,6 +125,7 @@ impl LumenConfig {
             model,
             api_key,
             draft: config.draft,
+            theme: config.theme,
         })
     }
 
@@ -146,6 +150,7 @@ impl Default for LumenConfig {
             model: default_model(),
             api_key: default_api_key(),
             draft: default_draft_config(),
+            theme: None,
         }
     }
 }
