@@ -269,31 +269,55 @@ fn run_app_internal(
                                 state.focused_panel = FocusedPanel::DiffView;
                             }
                         }
-                        MouseEventKind::ScrollDown => {
-                            if state.show_sidebar
+                        MouseEventKind::ScrollDown | MouseEventKind::ScrollUp => {
+                            // Coalesce consecutive scroll events (like Neovim does for drags)
+                            // to handle fast scrolling smoothly. We accumulate all pending
+                            // scroll events and apply them in one go.
+                            let mut scroll_delta: i32 = match mouse.kind {
+                                MouseEventKind::ScrollDown => 3,
+                                MouseEventKind::ScrollUp => -3,
+                                _ => 0,
+                            };
+
+                            // Drain all pending scroll events from the queue
+                            while event::poll(Duration::from_millis(0))? {
+                                match event::read()? {
+                                    Event::Mouse(next_mouse) => match next_mouse.kind {
+                                        MouseEventKind::ScrollDown => scroll_delta += 3,
+                                        MouseEventKind::ScrollUp => scroll_delta -= 3,
+                                        _ => break, // Stop on non-scroll mouse events
+                                    },
+                                    _ => break, // Stop on non-mouse events
+                                }
+                            }
+
+                            // Apply the accumulated scroll delta
+                            let in_sidebar = state.show_sidebar
                                 && mouse.column < sidebar_width
-                                && mouse.row < term_size.height.saturating_sub(footer_height)
-                            {
+                                && mouse.row < term_size.height.saturating_sub(footer_height);
+                            let in_diff = mouse.column >= sidebar_width
+                                && mouse.row < term_size.height.saturating_sub(footer_height);
+
+                            if in_sidebar {
                                 let max_sidebar_scroll =
                                     state.sidebar_items.len().saturating_sub(1);
-                                state.sidebar_scroll =
-                                    (state.sidebar_scroll + 3).min(max_sidebar_scroll);
-                            } else if mouse.column >= sidebar_width
-                                && mouse.row < term_size.height.saturating_sub(footer_height)
-                            {
-                                state.scroll = (state.scroll + 3).min(max_scroll as u16);
-                            }
-                        }
-                        MouseEventKind::ScrollUp => {
-                            if state.show_sidebar
-                                && mouse.column < sidebar_width
-                                && mouse.row < term_size.height.saturating_sub(footer_height)
-                            {
-                                state.sidebar_scroll = state.sidebar_scroll.saturating_sub(3);
-                            } else if mouse.column >= sidebar_width
-                                && mouse.row < term_size.height.saturating_sub(footer_height)
-                            {
-                                state.scroll = state.scroll.saturating_sub(3);
+                                if scroll_delta > 0 {
+                                    state.sidebar_scroll = (state.sidebar_scroll
+                                        + scroll_delta as usize)
+                                        .min(max_sidebar_scroll);
+                                } else {
+                                    state.sidebar_scroll = state
+                                        .sidebar_scroll
+                                        .saturating_sub((-scroll_delta) as usize);
+                                }
+                            } else if in_diff {
+                                if scroll_delta > 0 {
+                                    state.scroll =
+                                        (state.scroll + scroll_delta as u16).min(max_scroll as u16);
+                                } else {
+                                    state.scroll =
+                                        state.scroll.saturating_sub((-scroll_delta) as u16);
+                                }
                             }
                         }
                         _ => {}
