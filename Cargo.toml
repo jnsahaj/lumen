@@ -1,6 +1,6 @@
 [package]
 name = "lumen"
-version = "2.8.1"
+version = "2.9.0"
 edition = "2021"
 license = "MIT"
 description = "lumen is a command-line tool that uses AI to generate commit messages, summarise git diffs or past commits, and more."
