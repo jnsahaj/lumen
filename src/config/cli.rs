@@ -108,6 +108,10 @@ pub enum Commands {
         /// Watch for file changes and auto-reload
         #[arg(short, long)]
         watch: bool,
+
+        /// Color theme (e.g., dracula, nord, gruvbox-dark, catppuccin-mocha)
+        #[arg(short, long)]
+        theme: Option<String>,
     },
     /// Interactively configure Lumen (provider, API key)
     Configure,

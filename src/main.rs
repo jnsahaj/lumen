@@ -91,13 +91,14 @@ async fn run() -> Result<(), LumenError> {
             pr,
             file,
             watch,
+            theme,
         } => {
             let options = command::diff::DiffOptions {
                 reference,
                 pr,
                 file,
                 watch,
-                theme: config.theme.clone(),
+                theme: theme.or(config.theme.clone()),
             };
             command::diff::run_diff_ui(options)?;
         }

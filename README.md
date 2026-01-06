@@ -141,6 +141,9 @@ When viewing a PR, you can mark files as viewed (syncs with GitHub) using the `s
 Customize the diff viewer colors with preset themes:
 
 ```bash
+# Using CLI flag
+lumen diff --theme dracula
+
 # Using environment variable
 LUMEN_THEME=catppuccin-mocha lumen diff
 
@@ -161,7 +164,7 @@ LUMEN_THEME=catppuccin-mocha lumen diff
 | Gruvbox | `gruvbox-dark`, `gruvbox-light` |
 | Solarized | `solarized-dark`, `solarized-light` |
 
-Priority: config file > `LUMEN_THEME` env var > OS auto-detect.
+Priority: CLI flag > config file > `LUMEN_THEME` env var > OS auto-detect.
 
 Keybindings in the diff viewer:
 - `j/k` or arrow keys: Navigate
