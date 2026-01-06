@@ -6,9 +6,9 @@ use std::process::Stdio;
 
 use crate::config::configuration::DraftConfig;
 use crate::error::LumenError;
-use crate::git_entity::diff::Diff;
 use crate::git_entity::GitEntity;
 use crate::provider::LumenProvider;
+use crate::vcs::VcsBackend;
 
 pub mod configure;
 pub mod diff;
@@ -17,14 +17,19 @@ pub mod explain;
 pub mod list;
 pub mod operate;
 
-#[derive(Debug)]
-pub enum CommandType {
+pub enum CommandType<'a> {
     Explain {
         git_entity: GitEntity,
         query: Option<String>,
     },
-    List,
-    Draft(Option<String>, DraftConfig),
+    List {
+        backend: &'a dyn VcsBackend,
+    },
+    Draft {
+        git_entity: GitEntity,
+        context: Option<String>,
+        draft_config: DraftConfig,
+    },
     Operate {
         query: String,
     },
@@ -39,17 +44,21 @@ impl LumenCommand {
         LumenCommand { provider }
     }
 
-    pub async fn execute(&self, command_type: CommandType) -> Result<(), LumenError> {
+    pub async fn execute(&self, command_type: CommandType<'_>) -> Result<(), LumenError> {
         match command_type {
             CommandType::Explain { git_entity, query } => {
                 ExplainCommand { git_entity, query }
                     .execute(&self.provider)
                     .await
             }
-            CommandType::List => ListCommand.execute(&self.provider).await,
-            CommandType::Draft(context, draft_config) => {
+            CommandType::List { backend } => ListCommand.execute(&self.provider, backend).await,
+            CommandType::Draft {
+                git_entity,
+                context,
+                draft_config,
+            } => {
                 DraftCommand {
-                    git_entity: GitEntity::Diff(Diff::from_working_tree(true)?),
+                    git_entity,
                     draft_config,
                     context,
                 }
@@ -62,16 +71,25 @@ impl LumenCommand {
         }
     }
 
-    pub(crate) fn get_sha_from_fzf() -> Result<String, LumenError> {
-        let command = "git log --color=always --format='%C(auto)%h%d %s %C(black)%C(bold)%cr' | fzf --ansi --reverse --bind='enter:become(echo {1})'";
+    pub(crate) fn get_sha_from_fzf(backend: &dyn VcsBackend) -> Result<String, LumenError> {
+        // Get commit log from backend (supports both git and jj)
+        let log = backend.get_commit_log_for_fzf()?;
 
-        let output = std::process::Command::new("sh")
-            .arg("-c")
-            .arg(command)
-            .stdin(Stdio::null())
+        // Pipe to fzf for selection
+        let mut fzf = std::process::Command::new("fzf")
+            .args(["--ansi", "--reverse", "--bind=enter:become(echo {1})"])
+            .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .output()?;
+            .spawn()?;
+
+        // Write log to fzf stdin
+        if let Some(mut stdin) = fzf.stdin.take() {
+            use std::io::Write;
+            stdin.write_all(log.as_bytes())?;
+        }
+
+        let output = fzf.wait_with_output()?;
 
         if !output.status.success() {
             let mut stderr = String::from_utf8(output.stderr)?;

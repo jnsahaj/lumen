@@ -17,6 +17,7 @@ use std::process::{self, Command};
 use std::thread;
 
 use crate::commit_reference::CommitReference;
+use crate::vcs::VcsBackend;
 
 pub struct DiffOptions {
     pub reference: Option<CommitReference>,
@@ -307,12 +308,12 @@ fn unmark_file_as_viewed_sync(node_id: &str, file_path: &str) -> Result<(), Stri
     Ok(())
 }
 
-pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
+pub fn run_diff_ui(options: DiffOptions, backend: &dyn VcsBackend) -> io::Result<()> {
     // Handle PR mode
     if let Some(ref pr_input) = options.pr {
         match fetch_pr_info(pr_input) {
             Ok(pr_info) => {
-                return app::run_app_with_pr(options, pr_info);
+                return app::run_app_with_pr(options, pr_info, backend);
             }
             Err(e) => {
                 eprintln!("\x1b[91merror:\x1b[0m {}", e);
@@ -326,7 +327,7 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
         if input.contains("/pull/") || input.parse::<u64>().is_ok() {
             match fetch_pr_info(input) {
                 Ok(pr_info) => {
-                    return app::run_app_with_pr(options, pr_info);
+                    return app::run_app_with_pr(options, pr_info, backend);
                 }
                 Err(_) => {
                     // Fall through to normal diff handling if it's not a valid PR
@@ -342,11 +343,9 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                 CommitReference::Range { from, to } => (from.clone(), to.clone()),
                 CommitReference::TripleDots { from, to } => {
                     // Get merge-base for triple dots
-                    let output = std::process::Command::new("git")
-                        .args(["merge-base", from, to])
-                        .output()
-                        .expect("Failed to run git merge-base");
-                    let merge_base = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    let merge_base = backend
+                        .get_merge_base(from, to)
+                        .unwrap_or_else(|_| from.clone());
                     (merge_base, to.clone())
                 }
                 CommitReference::Single(_) => {
@@ -366,12 +365,12 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                 process::exit(1);
             }
 
-            return app::run_app_stacked(options, commits);
+            return app::run_app_stacked(options, commits, backend);
         } else {
             eprintln!("\x1b[91merror:\x1b[0m --stacked requires a range (e.g., main..feature)");
             process::exit(1);
         }
     }
 
-    app::run_app(options, None)
+    app::run_app(options, None, backend)
 }

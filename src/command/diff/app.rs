@@ -29,10 +29,15 @@ use super::watcher::{setup_watcher, WatchEvent};
 use super::{
     fetch_viewed_files, mark_file_as_viewed_async, unmark_file_as_viewed_async, DiffOptions, PrInfo,
 };
+use crate::vcs::VcsBackend;
 
-pub fn run_app_with_pr(options: DiffOptions, pr_info: PrInfo) -> io::Result<()> {
+pub fn run_app_with_pr(
+    options: DiffOptions,
+    pr_info: PrInfo,
+    backend: &dyn VcsBackend,
+) -> io::Result<()> {
     match load_pr_file_diffs(&pr_info) {
-        Ok(file_diffs) => run_app_internal(options, Some(pr_info), file_diffs, None),
+        Ok(file_diffs) => run_app_internal(options, Some(pr_info), file_diffs, None, backend),
         Err(e) => {
             eprintln!("\x1b[91merror:\x1b[0m {}", e);
             std::process::exit(1);
@@ -40,19 +45,24 @@ pub fn run_app_with_pr(options: DiffOptions, pr_info: PrInfo) -> io::Result<()> 
     }
 }
 
-pub fn run_app(options: DiffOptions, pr_info: Option<PrInfo>) -> io::Result<()> {
-    let file_diffs = load_file_diffs(&options);
-    run_app_internal(options, pr_info, file_diffs, None)
+pub fn run_app(
+    options: DiffOptions,
+    pr_info: Option<PrInfo>,
+    backend: &dyn VcsBackend,
+) -> io::Result<()> {
+    let file_diffs = load_file_diffs(&options, backend);
+    run_app_internal(options, pr_info, file_diffs, None, backend)
 }
 
 pub fn run_app_stacked(
     options: DiffOptions,
     commits: Vec<super::git::CommitInfo>,
+    backend: &dyn VcsBackend,
 ) -> io::Result<()> {
     // Load the first commit's diff
     let first_commit = &commits[0];
     let file_diffs = load_single_commit_diffs(&first_commit.sha, &options.file);
-    run_app_internal(options, None, file_diffs, Some(commits))
+    run_app_internal(options, None, file_diffs, Some(commits), backend)
 }
 
 /// Sync viewed files from GitHub to local state
@@ -72,6 +82,7 @@ fn run_app_internal(
     pr_info: Option<PrInfo>,
     file_diffs: Vec<super::types::FileDiff>,
     stacked_commits: Option<Vec<super::git::CommitInfo>>,
+    backend: &dyn VcsBackend,
 ) -> io::Result<()> {
     theme::init(options.theme.as_deref());
     highlight::init();
@@ -118,12 +129,9 @@ fn run_app_internal(
         if state.needs_reload {
             let file_diffs = if let Some(ref pr) = pr_info {
                 // In PR mode, reload from GitHub
-                match load_pr_file_diffs(pr) {
-                    Ok(diffs) => diffs,
-                    Err(_) => Vec::new(), // On error, show empty state
-                }
+                load_pr_file_diffs(pr).unwrap_or_default()
             } else {
-                load_file_diffs(&options)
+                load_file_diffs(&options, backend)
             };
 
             // Pass changed files to reload so it can unmark them from viewed
@@ -155,7 +163,7 @@ fn run_app_internal(
             state
                 .search_state
                 .update_matches(&side_by_side, state.diff_fullscreen);
-            let branch = get_current_branch();
+            let branch = get_current_branch(backend);
             terminal.draw(|frame| {
                 render_diff(
                     frame,
@@ -319,18 +327,18 @@ fn run_app_internal(
                                 let clicked_row = (mouse.row.saturating_sub(header_height + 1))
                                     as usize
                                     + state.sidebar_scroll;
-                                if clicked_row < state.sidebar_items.len() {
-                                    if matches!(
+                                if clicked_row < state.sidebar_items.len()
+                                    && matches!(
                                         state.sidebar_items[clicked_row],
                                         SidebarItem::File { .. }
-                                    ) {
-                                        state.sidebar_selected = clicked_row;
-                                        state.focused_panel = FocusedPanel::DiffView;
-                                        if let SidebarItem::File { file_index, .. } =
-                                            &state.sidebar_items[state.sidebar_selected]
-                                        {
-                                            state.select_file(*file_index);
-                                        }
+                                    )
+                                {
+                                    state.sidebar_selected = clicked_row;
+                                    state.focused_panel = FocusedPanel::DiffView;
+                                    if let SidebarItem::File { file_index, .. } =
+                                        &state.sidebar_items[state.sidebar_selected]
+                                    {
+                                        state.select_file(*file_index);
                                     }
                                 }
                             } else if mouse.column >= sidebar_width {

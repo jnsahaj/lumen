@@ -100,7 +100,7 @@ fn default_config_path() -> Option<String> {
     home_dir().and_then(|mut path| {
         path.push(".config/lumen/lumen.config.json");
         path.exists()
-            .then(|| path)
+            .then_some(path)
             .and_then(|p| p.to_str().map(|s| s.to_string()))
     })
 }

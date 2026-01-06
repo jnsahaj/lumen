@@ -130,4 +130,54 @@ mod tests {
             Err(ReferenceParseError::Empty)
         ));
     }
+
+    // jj-style ref syntax tests
+    #[test]
+    fn test_jj_working_copy_ref() {
+        assert_eq!(
+            "@".parse::<CommitReference>().unwrap(),
+            CommitReference::Single("@".to_string())
+        );
+    }
+
+    #[test]
+    fn test_jj_parent_ref() {
+        assert_eq!(
+            "@-".parse::<CommitReference>().unwrap(),
+            CommitReference::Single("@-".to_string())
+        );
+    }
+
+    #[test]
+    fn test_jj_grandparent_ref() {
+        assert_eq!(
+            "@--".parse::<CommitReference>().unwrap(),
+            CommitReference::Single("@--".to_string())
+        );
+    }
+
+    #[test]
+    fn test_jj_change_id_prefix() {
+        // jj change IDs are short alphanumeric prefixes
+        assert_eq!(
+            "xyz".parse::<CommitReference>().unwrap(),
+            CommitReference::Single("xyz".to_string())
+        );
+        assert_eq!(
+            "ksrm".parse::<CommitReference>().unwrap(),
+            CommitReference::Single("ksrm".to_string())
+        );
+    }
+
+    #[test]
+    fn test_jj_range_syntax() {
+        // jj supports @ in ranges
+        assert_eq!(
+            "@-..@".parse::<CommitReference>().unwrap(),
+            CommitReference::Range {
+                from: "@-".to_string(),
+                to: "@".to_string(),
+            }
+        );
+    }
 }

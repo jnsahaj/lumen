@@ -4,6 +4,7 @@ use std::process::Command;
 use super::types::{FileDiff, FileStatus};
 use super::{DiffOptions, PrInfo};
 use crate::commit_reference::CommitReference;
+use crate::vcs::VcsBackend;
 
 /// Information about a single commit for stacked diff navigation
 #[derive(Clone)]
@@ -13,15 +14,12 @@ pub struct CommitInfo {
     pub message: String,
 }
 
-pub fn get_current_branch() -> String {
-    let output = Command::new("git")
-        .args(["rev-parse", "--abbrev-ref", "HEAD"])
-        .output();
-
-    match output {
-        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
-        _ => "unknown".to_string(),
-    }
+pub fn get_current_branch(backend: &dyn VcsBackend) -> String {
+    backend
+        .get_current_branch()
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| "unknown".to_string())
 }
 
 /// Resolved references for diff comparison
@@ -35,7 +33,7 @@ pub enum DiffRefs {
 }
 
 impl DiffRefs {
-    pub fn from_options(options: &DiffOptions) -> Self {
+    pub fn from_options(options: &DiffOptions, backend: &dyn VcsBackend) -> Self {
         match &options.reference {
             None => DiffRefs::WorkingTree,
             Some(CommitReference::Single(sha)) => DiffRefs::Single(sha.clone()),
@@ -45,11 +43,9 @@ impl DiffRefs {
             },
             Some(CommitReference::TripleDots { from, to }) => {
                 // Get merge-base for triple dots
-                let output = Command::new("git")
-                    .args(["merge-base", from, to])
-                    .output()
-                    .expect("Failed to run git merge-base");
-                let merge_base = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                let merge_base = backend
+                    .get_merge_base(from, to)
+                    .unwrap_or_else(|_| from.clone());
                 DiffRefs::Range {
                     from: merge_base,
                     to: to.clone(),
@@ -60,71 +56,15 @@ impl DiffRefs {
 }
 
 /// Get the list of files changed
-pub fn get_changed_files(options: &DiffOptions) -> Vec<String> {
-    let refs = DiffRefs::from_options(options);
+pub fn get_changed_files(options: &DiffOptions, backend: &dyn VcsBackend) -> Vec<String> {
+    let refs = DiffRefs::from_options(options, backend);
 
     let files: Vec<String> = match refs {
-        DiffRefs::Single(sha) => {
-            let output = Command::new("git")
-                .args(["diff-tree", "--no-commit-id", "--name-only", "-r", &sha])
-                .output()
-                .expect("Failed to run git");
-            String::from_utf8_lossy(&output.stdout)
-                .lines()
-                .filter(|s| !s.is_empty())
-                .map(String::from)
-                .collect()
-        }
-        DiffRefs::Range { from, to } => {
-            let output = Command::new("git")
-                .args(["diff", "--name-only", &from, &to])
-                .output()
-                .expect("Failed to run git");
-            String::from_utf8_lossy(&output.stdout)
-                .lines()
-                .filter(|s| !s.is_empty())
-                .map(String::from)
-                .collect()
-        }
-        DiffRefs::WorkingTree => {
-            // Get unstaged changes (tracked files modified in working tree)
-            let unstaged = Command::new("git")
-                .args(["diff", "--name-only", "HEAD"])
-                .output()
-                .expect("Failed to run git");
-
-            // Get staged changes (including newly added files)
-            let staged = Command::new("git")
-                .args(["diff", "--cached", "--name-only"])
-                .output()
-                .expect("Failed to run git");
-
-            // Get untracked files (new files not yet added to git)
-            let untracked = Command::new("git")
-                .args(["ls-files", "--others", "--exclude-standard"])
-                .output()
-                .expect("Failed to run git");
-
-            let mut all_files: std::collections::HashSet<String> = std::collections::HashSet::new();
-
-            for line in String::from_utf8_lossy(&unstaged.stdout).lines() {
-                if !line.is_empty() {
-                    all_files.insert(line.to_string());
-                }
-            }
-            for line in String::from_utf8_lossy(&staged.stdout).lines() {
-                if !line.is_empty() {
-                    all_files.insert(line.to_string());
-                }
-            }
-            for line in String::from_utf8_lossy(&untracked.stdout).lines() {
-                if !line.is_empty() {
-                    all_files.insert(line.to_string());
-                }
-            }
-
-            all_files.into_iter().collect()
-        }
+        DiffRefs::Single(sha) => backend.get_changed_files(&sha).unwrap_or_default(),
+        DiffRefs::Range { from, to } => backend
+            .get_range_changed_files(&from, &to)
+            .unwrap_or_default(),
+        DiffRefs::WorkingTree => backend.get_working_tree_changed_files().unwrap_or_default(),
     };
 
     if let Some(ref filter) = options.file {
@@ -135,57 +75,45 @@ pub fn get_changed_files(options: &DiffOptions) -> Vec<String> {
 }
 
 /// Get content of a file at the "old" side of the diff
-pub fn get_old_content(filename: &str, refs: &DiffRefs) -> String {
-    let ref_spec = match refs {
-        DiffRefs::Single(sha) => format!("{}^:{}", sha, filename),
-        DiffRefs::Range { from, .. } => format!("{}:{}", from, filename),
-        DiffRefs::WorkingTree => format!("HEAD:{}", filename),
-    };
-    let output = Command::new("git").args(["show", &ref_spec]).output();
+pub fn get_old_content(filename: &str, refs: &DiffRefs, backend: &dyn VcsBackend) -> String {
+    use std::path::Path;
 
-    match output {
-        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
-        _ => String::new(),
-    }
+    let ref_str = match refs {
+        DiffRefs::Single(sha) => format!("{}^", sha), // Parent of commit
+        DiffRefs::Range { from, .. } => from.clone(),
+        DiffRefs::WorkingTree => backend.working_copy_parent_ref().to_string(),
+    };
+
+    backend
+        .get_file_content_at_ref(&ref_str, Path::new(filename))
+        .unwrap_or_default()
 }
 
 /// Get content of a file at the "new" side of the diff
-pub fn get_new_content(filename: &str, refs: &DiffRefs) -> String {
+pub fn get_new_content(filename: &str, refs: &DiffRefs, backend: &dyn VcsBackend) -> String {
+    use std::path::Path;
+
     match refs {
-        DiffRefs::Single(sha) => {
-            let output = Command::new("git")
-                .args(["show", &format!("{}:{}", sha, filename)])
-                .output();
-
-            match output {
-                Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
-                _ => String::new(),
-            }
-        }
-        DiffRefs::Range { to, .. } => {
-            let output = Command::new("git")
-                .args(["show", &format!("{}:{}", to, filename)])
-                .output();
-
-            match output {
-                Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
-                _ => String::new(),
-            }
-        }
+        DiffRefs::Single(sha) => backend
+            .get_file_content_at_ref(sha, Path::new(filename))
+            .unwrap_or_default(),
+        DiffRefs::Range { to, .. } => backend
+            .get_file_content_at_ref(to, Path::new(filename))
+            .unwrap_or_default(),
         DiffRefs::WorkingTree => {
-            // Read from working tree
+            // Read from working tree (actual filesystem)
             fs::read_to_string(filename).unwrap_or_default()
         }
     }
 }
 
-pub fn load_file_diffs(options: &DiffOptions) -> Vec<FileDiff> {
-    let refs = DiffRefs::from_options(options);
-    get_changed_files(options)
+pub fn load_file_diffs(options: &DiffOptions, backend: &dyn VcsBackend) -> Vec<FileDiff> {
+    let refs = DiffRefs::from_options(options, backend);
+    get_changed_files(options, backend)
         .into_iter()
         .map(|filename| {
-            let old_content = get_old_content(&filename, &refs);
-            let new_content = get_new_content(&filename, &refs);
+            let old_content = get_old_content(&filename, &refs, backend);
+            let new_content = get_new_content(&filename, &refs, backend);
             let status = if old_content.is_empty() && !new_content.is_empty() {
                 FileStatus::Added
             } else if !old_content.is_empty() && new_content.is_empty() {

@@ -77,16 +77,11 @@ pub enum ChangeType {
     Modified,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Default)]
 pub enum FocusedPanel {
     Sidebar,
+    #[default]
     DiffView,
-}
-
-impl Default for FocusedPanel {
-    fn default() -> Self {
-        FocusedPanel::DiffView
-    }
 }
 
 #[derive(Clone, Copy, PartialEq, Default)]
@@ -139,7 +134,7 @@ pub fn build_file_tree(file_diffs: &[FileDiff]) -> Vec<SidebarItem> {
             let parent_path = parts[..parts.len() - 1].join("/");
             dir_children
                 .entry(parent_path)
-                .or_insert_with(BTreeSet::new)
+                .or_default()
                 .insert(path.clone());
         } else {
             // File at root level
@@ -155,12 +150,10 @@ pub fn build_file_tree(file_diffs: &[FileDiff]) -> Vec<SidebarItem> {
                 parts[..i].join("/")
             };
 
-            dir_children
-                .entry(dir_path.clone())
-                .or_insert_with(BTreeSet::new);
+            dir_children.entry(dir_path.clone()).or_default();
             dir_children
                 .entry(parent_path)
-                .or_insert_with(BTreeSet::new)
+                .or_default()
                 .insert(dir_path);
         }
     }

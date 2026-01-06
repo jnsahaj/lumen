@@ -1,17 +1,14 @@
-use crate::{
-    git_entity::{commit::CommitError, diff::DiffError},
-    provider::ProviderError,
-};
+use crate::{git_entity::diff::DiffError, provider::ProviderError, vcs::VcsError};
 use std::io;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum LumenError {
     #[error("{0}")]
-    GitCommitError(#[from] CommitError),
+    GitDiffError(#[from] DiffError),
 
     #[error("{0}")]
-    GitDiffError(#[from] DiffError),
+    VcsError(#[from] VcsError),
 
     #[allow(dead_code)]
     #[error("Invalid arguments: {0}")]
