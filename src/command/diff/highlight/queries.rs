@@ -96,8 +96,14 @@ pub const JS_HIGHLIGHTS: &str = r#"
 
 pub const RUST_HIGHLIGHTS: &str = r#"
 ; Comments
+; Regular comments (line_comment and block_comment capture the entire comment)
 (line_comment) @comment
 (block_comment) @comment
+; Doc comment parts need explicit captures to prevent operator conflicts
+; The "/" in "///" and "!" in "//!" would otherwise match operator patterns
+(outer_doc_comment_marker) @comment
+(inner_doc_comment_marker) @comment
+(doc_comment) @comment
 
 ; Strings and literals
 (string_literal) @string
@@ -178,14 +184,14 @@ pub const RUST_HIGHLIGHTS: &str = r#"
 "while" @keyword
 
 ; Operators
+; Note: "/" and "!" are not matched globally to avoid conflicts with doc comments
+; They are highlighted via binary_expression and unary_expression patterns below
 "*" @operator
 "&" @operator
 "=" @operator
 "+" @operator
 "-" @operator
-"/" @operator
 "%" @operator
-"!" @operator
 "<" @operator
 ">" @operator
 "==" @operator
@@ -203,6 +209,10 @@ pub const RUST_HIGHLIGHTS: &str = r#"
 "=>" @operator
 "->" @operator
 "?" @operator
+
+; Division and negation operators in specific contexts
+(binary_expression "/" @operator)
+(unary_expression "!" @operator)
 
 ; Punctuation
 "(" @punctuation.bracket

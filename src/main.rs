@@ -32,8 +32,7 @@ async fn run() -> Result<(), LumenError> {
         Err(e) => return Err(e),
     };
 
-    let provider =
-        provider::LumenProvider::new(config.provider, config.api_key, config.model)?;
+    let provider = provider::LumenProvider::new(config.provider, config.api_key, config.model)?;
     let command = command::LumenCommand::new(provider);
 
     match cli.command {

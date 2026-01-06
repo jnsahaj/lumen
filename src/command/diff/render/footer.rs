@@ -16,6 +16,7 @@ pub struct FooterData<'a> {
     pub line_stats_added: usize,
     pub line_stats_removed: usize,
     pub hunk_count: usize,
+    pub focused_hunk: Option<usize>,
     pub search_state: &'a SearchState,
     pub area_width: u16,
 }
@@ -176,15 +177,28 @@ pub fn render_footer(frame: &mut Frame, footer_area: Rect, data: FooterData) {
                     ),
                     Span::styled(" ", Style::default().bg(bg)),
                     Span::styled(
-                        format!(
-                            "({} {})",
-                            data.hunk_count,
-                            if data.hunk_count == 1 {
-                                "hunk"
-                            } else {
-                                "hunks"
-                            }
-                        ),
+                        if let Some(idx) = data.focused_hunk {
+                            format!(
+                                "({}/{} {})",
+                                idx + 1,
+                                data.hunk_count,
+                                if data.hunk_count == 1 {
+                                    "hunk"
+                                } else {
+                                    "hunks"
+                                }
+                            )
+                        } else {
+                            format!(
+                                "({} {})",
+                                data.hunk_count,
+                                if data.hunk_count == 1 {
+                                    "hunk"
+                                } else {
+                                    "hunks"
+                                }
+                            )
+                        },
                         Style::default().fg(t.ui.text_muted).bg(bg),
                     ),
                 ],

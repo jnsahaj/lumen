@@ -61,9 +61,7 @@ impl ConfigureCommand {
     /// is local (e.g. Ollama).
     fn get_api_key(provider: &ProviderInfo) -> Result<Option<String>, LumenError> {
         if provider.env_key.is_empty() {
-            println!(
-                "\n  \x1b[2mOllama runs locally — no API key needed.\x1b[0m"
-            );
+            println!("\n  \x1b[2mOllama runs locally — no API key needed.\x1b[0m");
             return Ok(None);
         }
 
@@ -145,7 +143,6 @@ impl ConfigureCommand {
         } else {
             // Remove model key to use provider default
             config.as_object_mut().map(|obj| obj.remove("model"));
-
         }
 
         let content = serde_json::to_string_pretty(&config)?;
