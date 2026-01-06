@@ -23,6 +23,7 @@ pub struct DiffOptions {
     pub pr: Option<String>,
     pub file: Option<Vec<String>>,
     pub watch: bool,
+    pub theme: Option<String>,
 }
 
 #[derive(Clone)]
