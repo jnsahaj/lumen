@@ -7,7 +7,7 @@ use ratatui::{
 
 use crate::command::diff::context::{compute_context_lines, ContextLine};
 use crate::command::diff::diff_algo::compute_side_by_side;
-use crate::command::diff::highlight::highlight_line_spans;
+use crate::command::diff::highlight::{highlight_line_spans, FileHighlighter};
 use crate::command::diff::search::{MatchPanel, SearchState};
 use crate::command::diff::theme;
 use crate::command::diff::types::{
@@ -34,14 +34,27 @@ fn apply_search_highlight<'a>(
     filename: &str,
     bg: Option<Color>,
     match_ranges: &[(usize, usize, bool)],
+    highlighter: Option<&FileHighlighter>,
+    line_number: Option<usize>,
 ) -> Vec<Span<'a>> {
     let t = theme::get();
 
-    if match_ranges.is_empty() {
-        return highlight_line_spans(text, filename, bg);
-    }
+    // Use FileHighlighter if available for proper multi-line construct highlighting
+    let base_spans = if let (Some(hl), Some(line_num)) = (highlighter, line_number) {
+        let spans = hl.get_line_spans(line_num, bg);
+        if spans.is_empty() {
+            // Fallback if highlighter doesn't have this line
+            highlight_line_spans(text, filename, bg)
+        } else {
+            spans
+        }
+    } else {
+        highlight_line_spans(text, filename, bg)
+    };
 
-    let base_spans = highlight_line_spans(text, filename, bg);
+    if match_ranges.is_empty() {
+        return base_spans;
+    }
     let mut result: Vec<Span<'a>> = Vec::new();
     let mut char_pos = 0;
 
@@ -133,6 +146,7 @@ fn render_context_lines(
     total_count: usize,
     lines: &mut Vec<Line>,
     filename: &str,
+    highlighter: &FileHighlighter,
 ) {
     let t = theme::get();
     let context_bg = t.diff.context_bg;
@@ -144,11 +158,18 @@ fn render_context_lines(
                 prefix,
                 Style::default().fg(t.ui.line_number).bg(context_bg),
             )];
-            spans.extend(highlight_line_spans(
-                &cl.content,
-                filename,
-                Some(context_bg),
-            ));
+            // Use FileHighlighter for proper multi-line construct highlighting
+            let hl_spans = highlighter.get_line_spans(cl.line_number, Some(context_bg));
+            if hl_spans.is_empty() {
+                // Fallback to line-by-line highlighting
+                spans.extend(highlight_line_spans(
+                    &cl.content,
+                    filename,
+                    Some(context_bg),
+                ));
+            } else {
+                spans.extend(hl_spans);
+            }
             lines.push(Line::from(spans));
         } else {
             lines.push(Line::from(vec![Span::styled(
@@ -188,6 +209,11 @@ pub fn render_diff(
     let side_by_side =
         compute_side_by_side(&diff.old_content, &diff.new_content, settings.tab_width);
     let line_stats = compute_line_stats(&side_by_side);
+
+    // Pre-compute highlights for the entire file to properly handle multi-line constructs
+    // like JSDoc comments that span multiple lines
+    let old_highlighter = FileHighlighter::new(&diff.old_content, &diff.filename);
+    let new_highlighter = FileHighlighter::new(&diff.new_content, &diff.filename);
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -249,7 +275,13 @@ pub fn render_diff(
 
         let mut new_lines: Vec<Line> = Vec::new();
         if settings.context.enabled && context_count > 0 {
-            render_context_lines(&new_context, context_count, &mut new_lines, &diff.filename);
+            render_context_lines(
+                &new_context,
+                context_count,
+                &mut new_lines,
+                &diff.filename,
+                &new_highlighter,
+            );
         }
 
         for (i, diff_line) in visible_lines.iter().enumerate() {
@@ -268,6 +300,8 @@ pub fn render_diff(
                     &diff.filename,
                     Some(t.diff.added_bg),
                     &matches,
+                    Some(&new_highlighter),
+                    Some(*num),
                 ));
                 new_lines.push(Line::from(spans));
             }
@@ -300,7 +334,13 @@ pub fn render_diff(
 
         let mut old_lines: Vec<Line> = Vec::new();
         if settings.context.enabled && context_count > 0 {
-            render_context_lines(&old_context, context_count, &mut old_lines, &diff.filename);
+            render_context_lines(
+                &old_context,
+                context_count,
+                &mut old_lines,
+                &diff.filename,
+                &old_highlighter,
+            );
         }
 
         for (i, diff_line) in visible_lines.iter().enumerate() {
@@ -319,6 +359,8 @@ pub fn render_diff(
                     &diff.filename,
                     Some(t.diff.deleted_bg),
                     &matches,
+                    Some(&old_highlighter),
+                    Some(*num),
                 ));
                 old_lines.push(Line::from(spans));
             }
@@ -376,10 +418,22 @@ pub fn render_diff(
 
         if settings.context.enabled && context_count > 0 {
             if old_area.is_some() {
-                render_context_lines(&old_context, context_count, &mut old_lines, &diff.filename);
+                render_context_lines(
+                    &old_context,
+                    context_count,
+                    &mut old_lines,
+                    &diff.filename,
+                    &old_highlighter,
+                );
             }
             if new_area.is_some() {
-                render_context_lines(&new_context, context_count, &mut new_lines, &diff.filename);
+                render_context_lines(
+                    &new_context,
+                    context_count,
+                    &mut new_lines,
+                    &diff.filename,
+                    &new_highlighter,
+                );
             }
         }
 
@@ -449,6 +503,8 @@ pub fn render_diff(
                             &diff.filename,
                             old_bg,
                             &matches,
+                            Some(&old_highlighter),
+                            Some(*num),
                         ));
                     }
                     None => {
@@ -492,6 +548,8 @@ pub fn render_diff(
                             &diff.filename,
                             new_bg,
                             &matches,
+                            Some(&new_highlighter),
+                            Some(*num),
                         ));
                     }
                     None => {
