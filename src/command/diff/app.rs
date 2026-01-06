@@ -19,7 +19,7 @@ use super::render::{
     render_diff, render_empty_state, FilePickerItem, KeyBind, KeyBindSection, Modal,
     ModalFileStatus, ModalResult,
 };
-use super::state::{adjust_scroll_to_line, AppState, PendingKey};
+use super::state::{adjust_scroll_for_hunk, adjust_scroll_to_line, AppState, PendingKey};
 use super::theme;
 use super::types::{DiffFullscreen, FileStatus, FocusedPanel, SidebarItem};
 use super::watcher::{setup_watcher, WatchEvent};
@@ -130,7 +130,8 @@ fn run_app_internal(
                 &diff.new_content,
                 state.settings.tab_width,
             );
-            let hunk_count = find_hunk_starts(&side_by_side).len();
+            let hunks = find_hunk_starts(&side_by_side);
+            let hunk_count = hunks.len();
             state
                 .search_state
                 .update_matches(&side_by_side, state.diff_fullscreen);
@@ -157,6 +158,8 @@ fn run_app_internal(
                     &state.search_state,
                     &branch,
                     pr_info.as_ref(),
+                    state.focused_hunk,
+                    &hunks,
                 );
                 if let Some(ref modal) = active_modal {
                     modal.render(frame);
@@ -696,10 +699,23 @@ fn run_app_internal(
                                     state.settings.tab_width,
                                 );
                                 let hunks = find_hunk_starts(&side_by_side);
-                                if let Some(&next) =
-                                    hunks.iter().find(|&&h| h > state.scroll as usize + 5)
-                                {
-                                    state.scroll = (next as u16).saturating_sub(5);
+                                let current_hunk = state.focused_hunk.unwrap_or(0);
+                                let next_hunk = if state.focused_hunk.is_none() {
+                                    hunks
+                                        .iter()
+                                        .position(|&h| h > state.scroll as usize + 5)
+                                        .unwrap_or(0)
+                                } else {
+                                    (current_hunk + 1).min(hunks.len().saturating_sub(1))
+                                };
+                                if !hunks.is_empty() {
+                                    state.focused_hunk = Some(next_hunk);
+                                    state.scroll = adjust_scroll_for_hunk(
+                                        hunks[next_hunk],
+                                        state.scroll,
+                                        visible_height,
+                                        max_scroll,
+                                    );
                                 }
                             }
                         }
@@ -712,12 +728,23 @@ fn run_app_internal(
                                     state.settings.tab_width,
                                 );
                                 let hunks = find_hunk_starts(&side_by_side);
-                                if let Some(&prev) = hunks
-                                    .iter()
-                                    .rev()
-                                    .find(|&&h| (h as u16) < state.scroll.saturating_sub(5))
-                                {
-                                    state.scroll = (prev as u16).saturating_sub(5);
+                                let current_hunk = state.focused_hunk.unwrap_or(hunks.len());
+                                let prev_hunk = if state.focused_hunk.is_none() {
+                                    hunks
+                                        .iter()
+                                        .rposition(|&h| (h as u16) < state.scroll.saturating_sub(5))
+                                        .unwrap_or(hunks.len().saturating_sub(1))
+                                } else {
+                                    current_hunk.saturating_sub(1)
+                                };
+                                if !hunks.is_empty() {
+                                    state.focused_hunk = Some(prev_hunk);
+                                    state.scroll = adjust_scroll_for_hunk(
+                                        hunks[prev_hunk],
+                                        state.scroll,
+                                        visible_height,
+                                        max_scroll,
+                                    );
                                 }
                             }
                         }
@@ -740,9 +767,39 @@ fn run_app_internal(
 
                                 let editor =
                                     std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
-                                let _ = std::process::Command::new(&editor)
-                                    .arg(&state.file_diffs[state.current_file].filename)
-                                    .status();
+                                let filename = &state.file_diffs[state.current_file].filename;
+
+                                let line_arg = if let Some(hunk_idx) = state.focused_hunk {
+                                    let diff = &state.file_diffs[state.current_file];
+                                    let side_by_side = compute_side_by_side(
+                                        &diff.old_content,
+                                        &diff.new_content,
+                                        state.settings.tab_width,
+                                    );
+                                    let hunks = find_hunk_starts(&side_by_side);
+                                    if let Some(&hunk_start) = hunks.get(hunk_idx) {
+                                        side_by_side.get(hunk_start).and_then(|dl| {
+                                            dl.new_line
+                                                .as_ref()
+                                                .map(|(n, _)| *n)
+                                                .or(dl.old_line.as_ref().map(|(n, _)| *n))
+                                        })
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
+                                };
+
+                                let status = if let Some(line) = line_arg {
+                                    std::process::Command::new(&editor)
+                                        .arg(format!("+{}", line))
+                                        .arg(filename)
+                                        .status()
+                                } else {
+                                    std::process::Command::new(&editor).arg(filename).status()
+                                };
+                                let _ = status;
 
                                 enable_raw_mode()?;
                                 io::stdout().execute(EnterAlternateScreen)?;
@@ -843,7 +900,7 @@ fn run_app_internal(
                                             },
                                             KeyBind {
                                                 key: "e",
-                                                description: "Open current file in editor",
+                                                description: "Edit file (at hunk line if focused)",
                                             },
                                             KeyBind {
                                                 key: "o",
@@ -893,7 +950,7 @@ fn run_app_internal(
                                             },
                                             KeyBind {
                                                 key: "{ / }",
-                                                description: "Previous / next hunk",
+                                                description: "Focus prev / next hunk",
                                             },
                                             KeyBind {
                                                 key: "pageup / pagedown",

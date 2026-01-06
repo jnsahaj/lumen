@@ -198,7 +198,7 @@ pub fn load_file_diffs(options: &DiffOptions) -> Vec<FileDiff> {
 pub fn load_pr_file_diffs(pr_info: &PrInfo) -> Result<Vec<FileDiff>, String> {
     let repo_arg = format!("{}/{}", pr_info.repo_owner, pr_info.repo_name);
 
-    // Get PR diff using gh
+    // Get PR diff to find changed files
     let output = Command::new("gh")
         .args([
             "pr",
@@ -216,87 +216,77 @@ pub fn load_pr_file_diffs(pr_info: &PrInfo) -> Result<Vec<FileDiff>, String> {
     }
 
     let diff_output = String::from_utf8_lossy(&output.stdout);
-    Ok(parse_unified_diff(&diff_output))
+    let changed_files = parse_changed_files_from_diff(&diff_output);
+
+    // Fetch full file contents for each changed file
+    let base_repo = format!("{}/{}", pr_info.base_repo_owner, pr_info.repo_name);
+    let head_repo = pr_info
+        .head_repo_owner
+        .as_ref()
+        .map(|owner| format!("{}/{}", owner, pr_info.repo_name))
+        .unwrap_or_else(|| base_repo.clone());
+
+    let file_diffs: Vec<FileDiff> = changed_files
+        .into_iter()
+        .map(|filename| {
+            let old_content =
+                fetch_file_content_from_github(&base_repo, &pr_info.base_ref, &filename);
+            let new_content =
+                fetch_file_content_from_github(&head_repo, &pr_info.head_ref, &filename);
+
+            let status = if old_content.is_empty() && !new_content.is_empty() {
+                FileStatus::Added
+            } else if !old_content.is_empty() && new_content.is_empty() {
+                FileStatus::Deleted
+            } else {
+                FileStatus::Modified
+            };
+
+            FileDiff {
+                filename,
+                old_content,
+                new_content,
+                status,
+            }
+        })
+        .collect();
+
+    Ok(file_diffs)
 }
 
-fn parse_unified_diff(diff: &str) -> Vec<FileDiff> {
-    let mut file_diffs = Vec::new();
-    let mut current_file: Option<String> = None;
-    let mut old_content = String::new();
-    let mut new_content = String::new();
-    let mut in_hunk = false;
+fn fetch_file_content_from_github(repo: &str, git_ref: &str, path: &str) -> String {
+    let api_path = format!("repos/{}/contents/{}?ref={}", repo, path, git_ref);
+    let output = Command::new("gh")
+        .args([
+            "api",
+            &api_path,
+            "-H",
+            "Accept: application/vnd.github.raw+json",
+        ])
+        .output();
+
+    match output {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
+        _ => String::new(),
+    }
+}
+
+fn parse_changed_files_from_diff(diff: &str) -> Vec<String> {
+    let mut files = Vec::new();
 
     for line in diff.lines() {
         if line.starts_with("diff --git") {
-            // Save previous file if exists
-            if let Some(filename) = current_file.take() {
-                let status = determine_file_status(&old_content, &new_content);
-                file_diffs.push(FileDiff {
-                    filename,
-                    old_content: std::mem::take(&mut old_content),
-                    new_content: std::mem::take(&mut new_content),
-                    status,
-                });
-            }
-
-            // Parse filename from "diff --git a/path b/path"
             let parts: Vec<&str> = line.split_whitespace().collect();
             if parts.len() >= 4 {
                 let b_path = parts[3];
-                current_file = Some(b_path.strip_prefix("b/").unwrap_or(b_path).to_string());
-            }
-            in_hunk = false;
-        } else if line.starts_with("@@") {
-            in_hunk = true;
-        } else if in_hunk && current_file.is_some() {
-            if let Some(stripped) = line.strip_prefix('-') {
-                if !line.starts_with("---") {
-                    old_content.push_str(stripped);
-                    old_content.push('\n');
+                if let Some(filename) = b_path.strip_prefix("b/") {
+                    files.push(filename.to_string());
+                } else {
+                    files.push(b_path.to_string());
                 }
-            } else if let Some(stripped) = line.strip_prefix('+') {
-                if !line.starts_with("+++") {
-                    new_content.push_str(stripped);
-                    new_content.push('\n');
-                }
-            } else if let Some(stripped) = line.strip_prefix(' ') {
-                old_content.push_str(stripped);
-                old_content.push('\n');
-                new_content.push_str(stripped);
-                new_content.push('\n');
-            } else if !line.starts_with('\\') {
-                // Handle lines without prefix (context)
-                old_content.push_str(line);
-                old_content.push('\n');
-                new_content.push_str(line);
-                new_content.push('\n');
             }
         }
     }
 
-    // Don't forget the last file
-    if let Some(filename) = current_file {
-        let status = determine_file_status(&old_content, &new_content);
-        file_diffs.push(FileDiff {
-            filename,
-            old_content,
-            new_content,
-            status,
-        });
-    }
-
-    file_diffs
-}
-
-fn determine_file_status(old_content: &str, new_content: &str) -> FileStatus {
-    let old_empty = old_content.trim().is_empty();
-    let new_empty = new_content.trim().is_empty();
-
-    if old_empty && !new_empty {
-        FileStatus::Added
-    } else if !old_empty && new_empty {
-        FileStatus::Deleted
-    } else {
-        FileStatus::Modified
-    }
+    files
 }

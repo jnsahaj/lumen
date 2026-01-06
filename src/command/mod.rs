@@ -42,7 +42,9 @@ impl LumenCommand {
     pub async fn execute(&self, command_type: CommandType) -> Result<(), LumenError> {
         match command_type {
             CommandType::Explain { git_entity, query } => {
-                ExplainCommand { git_entity, query }.execute(&self.provider).await
+                ExplainCommand { git_entity, query }
+                    .execute(&self.provider)
+                    .await
             }
             CommandType::List => ListCommand.execute(&self.provider).await,
             CommandType::Draft(context, draft_config) => {

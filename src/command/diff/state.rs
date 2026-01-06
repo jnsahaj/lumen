@@ -30,6 +30,7 @@ pub struct AppState {
     pub search_state: SearchState,
     pub pending_key: PendingKey,
     pub needs_reload: bool,
+    pub focused_hunk: Option<usize>,
 }
 
 impl AppState {
@@ -50,10 +51,19 @@ impl AppState {
             })
             .unwrap_or(0);
         let settings = DiffViewSettings::default();
-        let scroll = if !file_diffs.is_empty() && current_file < file_diffs.len() {
-            calc_initial_scroll(&file_diffs[current_file], settings.tab_width)
+        let (scroll, focused_hunk) = if !file_diffs.is_empty() && current_file < file_diffs.len() {
+            let diff = &file_diffs[current_file];
+            let side_by_side =
+                compute_side_by_side(&diff.old_content, &diff.new_content, settings.tab_width);
+            let hunks = find_hunk_starts(&side_by_side);
+            let scroll = hunks
+                .first()
+                .map(|&h| (h as u16).saturating_sub(5))
+                .unwrap_or(0);
+            let focused = if hunks.is_empty() { None } else { Some(0) };
+            (scroll, focused)
         } else {
-            0
+            (0, None)
         };
 
         Self {
@@ -73,6 +83,7 @@ impl AppState {
             search_state: SearchState::default(),
             pending_key: PendingKey::default(),
             needs_reload: false,
+            focused_hunk,
         }
     }
 
@@ -158,21 +169,21 @@ impl AppState {
     pub fn select_file(&mut self, file_index: usize) {
         self.current_file = file_index;
         self.diff_fullscreen = DiffFullscreen::None;
-        self.scroll =
-            calc_initial_scroll(&self.file_diffs[self.current_file], self.settings.tab_width);
+        let diff = &self.file_diffs[self.current_file];
+        let side_by_side = compute_side_by_side(
+            &diff.old_content,
+            &diff.new_content,
+            self.settings.tab_width,
+        );
+        let hunks = find_hunk_starts(&side_by_side);
+        self.scroll = hunks
+            .first()
+            .map(|&h| (h as u16).saturating_sub(5))
+            .unwrap_or(0);
         self.h_scroll = 0;
+        self.focused_hunk = if hunks.is_empty() { None } else { Some(0) };
     }
 }
-
-pub fn calc_initial_scroll(diff: &FileDiff, tab_width: usize) -> u16 {
-    let side_by_side = compute_side_by_side(&diff.old_content, &diff.new_content, tab_width);
-    let hunks = find_hunk_starts(&side_by_side);
-    hunks
-        .first()
-        .map(|&h| (h as u16).saturating_sub(5))
-        .unwrap_or(0)
-}
-
 pub fn adjust_scroll_to_line(
     line: usize,
     scroll: u16,
@@ -191,4 +202,36 @@ pub fn adjust_scroll_to_line(
         scroll
     };
     new_scroll.min(max_scroll as u16)
+}
+
+/// Adjust scroll for hunk focus - only scrolls if the hunk line is outside the viewport.
+/// Uses a larger bottom margin to keep hunks visible with context below.
+pub fn adjust_scroll_for_hunk(
+    hunk_line: usize,
+    scroll: u16,
+    visible_height: usize,
+    max_scroll: usize,
+) -> u16 {
+    let top_margin = 5usize;
+    let bottom_margin = 25usize;
+    let scroll_usize = scroll as usize;
+    let content_height = visible_height.saturating_sub(2);
+
+    // Check if hunk is above the viewport (with top margin)
+    if hunk_line < scroll_usize + top_margin {
+        return (hunk_line.saturating_sub(top_margin) as u16).min(max_scroll as u16);
+    }
+
+    // Check if hunk is below the viewport (with bottom margin)
+    if hunk_line >= scroll_usize + content_height.saturating_sub(bottom_margin) {
+        return (hunk_line.saturating_sub(
+            content_height
+                .saturating_sub(bottom_margin)
+                .saturating_sub(1),
+        ) as u16)
+            .min(max_scroll as u16);
+    }
+
+    // Hunk is within viewport, don't scroll
+    scroll
 }

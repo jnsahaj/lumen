@@ -1,9 +1,8 @@
 /// Single source of truth for all provider configurations.
-/// 
+///
 /// Add new providers here - they will automatically appear in:
 /// - The `lumen configure` interactive prompt
 /// - The provider initialization in provider/mod.rs
-
 use crate::config::cli::ProviderType;
 
 /// Provider metadata with display name, default model, and environment variable key
