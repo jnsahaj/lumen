@@ -3,6 +3,15 @@ use std::str::FromStr;
 
 use crate::commit_reference::CommitReference;
 
+/// VCS backend override option
+#[derive(Copy, Clone, PartialEq, Eq, ValueEnum, Debug)]
+pub enum VcsOverride {
+    /// Use git backend
+    Git,
+    /// Use jj (Jujutsu) backend
+    Jj,
+}
+
 #[derive(Parser)]
 #[command(name = "lumen")]
 #[command(about = "AI-powered CLI tool for git commit summaries", long_about = None)]
@@ -20,6 +29,10 @@ pub struct Cli {
 
     #[arg(short = 'm', long = "model")]
     pub model: Option<String>,
+
+    /// Version control system to use (auto-detected if not specified)
+    #[arg(value_enum, long = "vcs")]
+    pub vcs: Option<VcsOverride>,
 
     #[command(subcommand)]
     pub command: Commands,
@@ -119,4 +132,27 @@ pub enum Commands {
     },
     /// Interactively configure Lumen (provider, API key)
     Configure,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_vcs_git_parses() {
+        let cli = Cli::try_parse_from(&["lumen", "--vcs", "git", "diff"]).unwrap();
+        assert_eq!(cli.vcs, Some(VcsOverride::Git));
+    }
+
+    #[test]
+    fn test_vcs_jj_parses() {
+        let cli = Cli::try_parse_from(&["lumen", "--vcs", "jj", "diff"]).unwrap();
+        assert_eq!(cli.vcs, Some(VcsOverride::Jj));
+    }
+
+    #[test]
+    fn test_vcs_not_specified() {
+        let cli = Cli::try_parse_from(&["lumen", "diff"]).unwrap();
+        assert_eq!(cli.vcs, None);
+    }
 }
