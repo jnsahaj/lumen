@@ -44,6 +44,14 @@ const DIFF_EXCLUDED_FILES: &[&str] = &[
 /// Path patterns to exclude from diff output.
 const DIFF_EXCLUDED_PATTERNS: &[&str] = &["node_modules/"];
 
+/// Truncate a hash string to the given length, handling empty strings safely.
+fn truncate_hash(hash: &str, max_len: usize) -> &str {
+    if hash.is_empty() {
+        return hash;
+    }
+    &hash[..max_len.min(hash.len())]
+}
+
 /// Check if a path should be excluded from diff output.
 fn should_exclude_path(path: &str) -> bool {
     // Check exact file matches
@@ -75,7 +83,7 @@ impl JjBackend {
         // Create minimal settings
         let config = StackedConfig::with_defaults();
         let settings = UserSettings::from_config(config)
-            .map_err(|e| VcsError::Other(format!("Failed to create settings: {}", e)))?;
+            .map_err(|e| VcsError::Other(format!("failed to create settings: {}", e)))?;
 
         // Load workspace
         let workspace = Workspace::load(
@@ -84,13 +92,13 @@ impl JjBackend {
             &StoreFactories::default(),
             &default_working_copy_factories(),
         )
-        .map_err(|e| VcsError::Other(format!("Failed to load workspace: {}", e)))?;
+        .map_err(|e| VcsError::Other(format!("failed to load workspace: {}", e)))?;
 
         // Load repo at HEAD
         let repo = workspace
             .repo_loader()
             .load_at_head()
-            .map_err(|e| VcsError::Other(format!("Failed to load repo: {}", e)))?;
+            .map_err(|e| VcsError::Other(format!("failed to load repo: {}", e)))?;
 
         Ok(JjBackend {
             workspace,
@@ -100,10 +108,12 @@ impl JjBackend {
         })
     }
 
-    /// Resolve a revset expression to a single commit.
-    fn resolve_single_commit(&self, revset_str: &str) -> Result<Commit, VcsError> {
-        let repo = self.repo.as_ref();
-
+    /// Create RevsetParseContext and call the provided function with it.
+    /// This handles the lifetime complexity of the context's internal references.
+    fn with_revset_context<T, F>(&self, f: F) -> Result<T, VcsError>
+    where
+        F: FnOnce(&RevsetParseContext) -> Result<T, VcsError>,
+    {
         // Set up path converter for workspace context
         let path_converter = RepoPathUiConverter::Fs {
             cwd: self.workspace_path.clone(),
@@ -126,38 +136,47 @@ impl JjBackend {
             workspace: Some(workspace_ctx),
         };
 
-        // Parse the revset expression
-        let mut diagnostics = RevsetDiagnostics::new();
-        let expression = jj_lib::revset::parse(&mut diagnostics, revset_str, &context)
-            .map_err(|e| VcsError::InvalidRef(format!("Parse error: {}", e)))?;
+        f(&context)
+    }
 
-        // Create symbol resolver
-        let symbol_resolver =
-            SymbolResolver::new(repo, &([] as [&Box<dyn SymbolResolverExtension>; 0]));
+    /// Resolve a revset expression to a single commit.
+    fn resolve_single_commit(&self, revset_str: &str) -> Result<Commit, VcsError> {
+        let repo = self.repo.as_ref();
 
-        // Resolve and evaluate
-        let resolved = expression
-            .resolve_user_expression(repo, &symbol_resolver)
-            .map_err(|e| VcsError::InvalidRef(format!("Resolution error: {}", e)))?;
+        self.with_revset_context(|context| {
+            // Parse the revset expression
+            let mut diagnostics = RevsetDiagnostics::new();
+            let expression = jj_lib::revset::parse(&mut diagnostics, revset_str, context)
+                .map_err(|e| VcsError::InvalidRef(format!("parse error: {}", e)))?;
 
-        let revset = resolved
-            .evaluate(repo)
-            .map_err(|e| VcsError::Other(format!("Evaluation error: {}", e)))?;
+            // Create symbol resolver
+            let symbol_resolver =
+                SymbolResolver::new(repo, &([] as [&Box<dyn SymbolResolverExtension>; 0]));
 
-        // Get the first commit
-        let mut iter = revset.iter();
-        let commit_id = iter
-            .next()
-            .ok_or_else(|| VcsError::InvalidRef(revset_str.to_string()))?
-            .map_err(|e| VcsError::Other(format!("Iterator error: {}", e)))?;
+            // Resolve and evaluate
+            let resolved = expression
+                .resolve_user_expression(repo, &symbol_resolver)
+                .map_err(|e| VcsError::InvalidRef(format!("resolution error: {}", e)))?;
 
-        // Load the commit
-        let commit = repo
-            .store()
-            .get_commit(&commit_id)
-            .map_err(|e| VcsError::Other(format!("Failed to load commit: {}", e)))?;
+            let revset = resolved
+                .evaluate(repo)
+                .map_err(|e| VcsError::Other(format!("evaluation error: {}", e)))?;
 
-        Ok(commit)
+            // Get the first commit
+            let mut iter = revset.iter();
+            let commit_id = iter
+                .next()
+                .ok_or_else(|| VcsError::InvalidRef(revset_str.to_string()))?
+                .map_err(|e| VcsError::Other(format!("iterator error: {}", e)))?;
+
+            // Load the commit
+            let commit = repo
+                .store()
+                .get_commit(&commit_id)
+                .map_err(|e| VcsError::Other(format!("failed to load commit: {}", e)))?;
+
+            Ok(commit)
+        })
     }
 
     /// Generate a unified diff for a commit (comparing to its first parent).
@@ -172,7 +191,7 @@ impl JjBackend {
             let parent = repo
                 .store()
                 .get_commit(parent_id)
-                .map_err(|e| VcsError::Other(format!("Failed to get parent: {}", e)))?;
+                .map_err(|e| VcsError::Other(format!("failed to get parent: {}", e)))?;
             parent.tree()
         };
 
@@ -182,14 +201,17 @@ impl JjBackend {
         // Generate diff output
         let mut diff_output = String::new();
 
-        // Use the tree diff stream to iterate over changes
+        // Use the tree diff stream to iterate over changes.
+        // Note: We use pollster::block_on() because lumen is a single-threaded CLI tool
+        // that doesn't need async concurrency. jj-lib's async APIs are primarily for
+        // I/O operations that complete quickly in our use case.
         let diff_stream = parent_tree.diff_stream(&commit_tree, &EverythingMatcher);
         let entries: Vec<_> = async { diff_stream.collect().await }.block_on();
 
         for entry in entries {
             let diff = entry
                 .values
-                .map_err(|e| VcsError::Other(format!("Diff iteration error: {}", e)))?;
+                .map_err(|e| VcsError::Other(format!("diff iteration error: {}", e)))?;
 
             let path_str = entry.path.as_internal_file_string();
 
@@ -262,12 +284,12 @@ impl JjBackend {
                         .store()
                         .read_file(path, id)
                         .block_on()
-                        .map_err(|e| VcsError::Other(format!("Failed to read file: {}", e)))?;
+                        .map_err(|e| VcsError::Other(format!("failed to read file: {}", e)))?;
 
                     // Use tokio async read with pollster
                     async { tokio::io::AsyncReadExt::read_to_end(&mut reader, &mut content).await }
                         .block_on()
-                        .map_err(|e| VcsError::Other(format!("Failed to read content: {}", e)))?;
+                        .map_err(|e| VcsError::Other(format!("failed to read content: {}", e)))?;
 
                     Ok(Some(String::from_utf8_lossy(&content).into_owned()))
                 }
@@ -290,7 +312,7 @@ impl JjBackend {
         // Try to materialize as a file conflict
         let file_conflict = try_materialize_file_conflict_value(repo.store(), path, value)
             .block_on()
-            .map_err(|e| VcsError::Other(format!("Failed to materialize conflict: {}", e)))?;
+            .map_err(|e| VcsError::Other(format!("failed to materialize conflict: {}", e)))?;
 
         match file_conflict {
             Some(file) => {
@@ -320,6 +342,7 @@ impl JjBackend {
     /// Format a unified diff using jj-lib's proper diff algorithm.
     /// Produces hunks with context lines for better readability.
     fn format_hunk(&self, output: &mut String, old: &str, new: &str) {
+        /// Number of context lines around changes (matches git default of 3)
         const CONTEXT_LINES: usize = 3;
 
         // Use jj-lib's diff algorithm
@@ -349,13 +372,13 @@ impl JjBackend {
             }
         }
 
-        // Helper to iterate lines in byte slice
-        fn iter_lines(content: &[u8]) -> impl Iterator<Item = String> + '_ {
-            String::from_utf8_lossy(content)
-                .lines()
-                .map(|s| s.to_owned())
-                .collect::<Vec<_>>()
-                .into_iter()
+        // Helper to iterate lines in byte slice - processes lines without
+        // intermediate Vec allocation by using a callback
+        fn for_each_line<F: FnMut(&str)>(content: &[u8], mut f: F) {
+            let content_str = String::from_utf8_lossy(content);
+            for line in content_str.lines() {
+                f(line);
+            }
         }
 
         for hunk in &hunks {
@@ -427,16 +450,16 @@ impl JjBackend {
                     }
 
                     // Add removed lines
-                    for line in iter_lines(old_content) {
+                    for_each_line(old_content, |line| {
                         pending_output.push_str(&format!("-{}\n", line));
                         hunk_old_count += 1;
-                    }
+                    });
 
                     // Add added lines
-                    for line in iter_lines(new_content) {
+                    for_each_line(new_content, |line| {
                         pending_output.push_str(&format!("+{}\n", line));
                         hunk_new_count += 1;
-                    }
+                    });
 
                     old_pos += old_content_lines;
                     new_pos += new_content_lines;
@@ -548,7 +571,7 @@ impl VcsBackend for JjBackend {
         for entry in entries {
             let diff = entry
                 .values
-                .map_err(|e| VcsError::Other(format!("Diff iteration error: {}", e)))?;
+                .map_err(|e| VcsError::Other(format!("diff iteration error: {}", e)))?;
 
             let path_str = entry.path.as_internal_file_string();
 
@@ -578,7 +601,7 @@ impl VcsBackend for JjBackend {
             let parent = repo
                 .store()
                 .get_commit(parent_id)
-                .map_err(|e| VcsError::Other(format!("Failed to get parent: {}", e)))?;
+                .map_err(|e| VcsError::Other(format!("failed to get parent: {}", e)))?;
             parent.tree()
         };
 
@@ -605,12 +628,12 @@ impl VcsBackend for JjBackend {
         // Convert path to RepoPath
         let path_str = path.to_string_lossy().into_owned();
         let repo_path = jj_lib::repo_path::RepoPathBuf::from_internal_string(path_str.clone())
-            .map_err(|e| VcsError::InvalidRef(format!("Invalid path: {}", e)))?;
+            .map_err(|e| VcsError::InvalidRef(format!("invalid path: {}", e)))?;
 
         // Get the value at the path
         let value = tree
             .path_value(&repo_path)
-            .map_err(|e| VcsError::Other(format!("Failed to get path value: {}", e)))?;
+            .map_err(|e| VcsError::Other(format!("failed to get path value: {}", e)))?;
 
         // Check if resolved (no conflict)
         if let Some(resolved) = value.as_resolved() {
@@ -623,11 +646,11 @@ impl VcsBackend for JjBackend {
                         .store()
                         .read_file(&repo_path, id)
                         .block_on()
-                        .map_err(|e| VcsError::Other(format!("Failed to read file: {}", e)))?;
+                        .map_err(|e| VcsError::Other(format!("failed to read file: {}", e)))?;
 
                     async { tokio::io::AsyncReadExt::read_to_end(&mut reader, &mut content).await }
                         .block_on()
-                        .map_err(|e| VcsError::Other(format!("Failed to read content: {}", e)))?;
+                        .map_err(|e| VcsError::Other(format!("failed to read content: {}", e)))?;
 
                     Ok(String::from_utf8_lossy(&content).into_owned())
                 }
@@ -676,76 +699,57 @@ impl VcsBackend for JjBackend {
     }
 
     fn get_commit_log_for_fzf(&self) -> Result<String, VcsError> {
-        // Get visible commits using "all()" revset, limited
+        // Get visible commits using "all()" revset, limited to 100 for fzf performance
         let repo = self.repo.as_ref();
-
-        // Set up path converter for workspace context
-        let path_converter = RepoPathUiConverter::Fs {
-            cwd: self.workspace_path.clone(),
-            base: self.workspace_path.clone(),
-        };
-        let workspace_ctx = RevsetWorkspaceContext {
-            path_converter: &path_converter,
-            workspace_name: self.workspace.workspace_name(),
-        };
-
-        let context = RevsetParseContext {
-            aliases_map: &RevsetAliasesMap::default(),
-            local_variables: HashMap::new(),
-            user_email: self.settings.user_email(),
-            date_pattern_context: DatePatternContext::from(Local::now()),
-            default_ignored_remote: None,
-            use_glob_by_default: true,
-            extensions: &RevsetExtensions::default(),
-            workspace: Some(workspace_ctx),
-        };
-
-        // Parse revset for recent commits (limit to ~100)
-        let mut diagnostics = RevsetDiagnostics::new();
-        let expression = jj_lib::revset::parse(&mut diagnostics, "all()", &context)
-            .map_err(|e| VcsError::Other(format!("Parse error: {}", e)))?;
-
-        let symbol_resolver =
-            SymbolResolver::new(repo, &([] as [&Box<dyn SymbolResolverExtension>; 0]));
-
-        let resolved = expression
-            .resolve_user_expression(repo, &symbol_resolver)
-            .map_err(|e| VcsError::Other(format!("Resolution error: {}", e)))?;
-
-        let revset = resolved
-            .evaluate(repo)
-            .map_err(|e| VcsError::Other(format!("Evaluation error: {}", e)))?;
-
-        let mut output = String::new();
         const MAX_COMMITS: usize = 100;
 
-        for (count, commit_id_result) in revset.iter().enumerate() {
-            if count >= MAX_COMMITS {
-                break;
+        self.with_revset_context(|context| {
+            // Parse revset for all commits
+            let mut diagnostics = RevsetDiagnostics::new();
+            let expression = jj_lib::revset::parse(&mut diagnostics, "all()", context)
+                .map_err(|e| VcsError::Other(format!("parse error: {}", e)))?;
+
+            let symbol_resolver =
+                SymbolResolver::new(repo, &([] as [&Box<dyn SymbolResolverExtension>; 0]));
+
+            let resolved = expression
+                .resolve_user_expression(repo, &symbol_resolver)
+                .map_err(|e| VcsError::Other(format!("resolution error: {}", e)))?;
+
+            let revset = resolved
+                .evaluate(repo)
+                .map_err(|e| VcsError::Other(format!("evaluation error: {}", e)))?;
+
+            let mut output = String::new();
+
+            for (count, commit_id_result) in revset.iter().enumerate() {
+                if count >= MAX_COMMITS {
+                    break;
+                }
+
+                let commit_id = commit_id_result
+                    .map_err(|e| VcsError::Other(format!("iterator error: {}", e)))?;
+
+                let commit = repo
+                    .store()
+                    .get_commit(&commit_id)
+                    .map_err(|e| VcsError::Other(format!("failed to load commit: {}", e)))?;
+
+                let change_id = commit.change_id().hex();
+                let commit_hash = commit.id().hex();
+                let description = commit.description().lines().next().unwrap_or("");
+
+                // Format: change_id commit_id description (compatible with fzf)
+                output.push_str(&format!(
+                    "{} {} {}\n",
+                    truncate_hash(&change_id, 12),
+                    truncate_hash(&commit_hash, 12),
+                    description
+                ));
             }
 
-            let commit_id =
-                commit_id_result.map_err(|e| VcsError::Other(format!("Iterator error: {}", e)))?;
-
-            let commit = repo
-                .store()
-                .get_commit(&commit_id)
-                .map_err(|e| VcsError::Other(format!("Failed to load commit: {}", e)))?;
-
-            let change_id = commit.change_id().hex();
-            let commit_hash = commit.id().hex();
-            let description = commit.description().lines().next().unwrap_or("");
-
-            // Format: change_id commit_id description (compatible with fzf)
-            output.push_str(&format!(
-                "{} {} {}\n",
-                &change_id[..12.min(change_id.len())],
-                &commit_hash[..12.min(commit_hash.len())],
-                description
-            ));
-        }
-
-        Ok(output)
+            Ok(output)
+        })
     }
 
     fn get_working_tree_changed_files(&self) -> Result<Vec<String>, VcsError> {
@@ -763,7 +767,7 @@ impl VcsBackend for JjBackend {
             let parent = repo
                 .store()
                 .get_commit(parent_id)
-                .map_err(|e| VcsError::Other(format!("Failed to get parent: {}", e)))?;
+                .map_err(|e| VcsError::Other(format!("failed to get parent: {}", e)))?;
             parent.tree()
         };
 
@@ -815,6 +819,19 @@ impl VcsBackend for JjBackend {
         }
 
         Ok(files)
+    }
+
+    fn get_parent_ref_or_empty(&self, reference: &str) -> Result<String, VcsError> {
+        let commit = self.resolve_single_commit(reference)?;
+
+        if commit.parent_ids().is_empty() {
+            // Root commit - return empty tree. In jj, we use the root() revset
+            // which gives us the "empty" root commit that all commits descend from.
+            Ok("root()".to_string())
+        } else {
+            // Has parent - return parent ref using jj syntax
+            Ok(format!("{}-", reference.trim()))
+        }
     }
 }
 
@@ -1482,5 +1499,41 @@ mod tests {
 
         let backend = JjBackend::new(&repo.dir).expect("should load backend");
         assert_eq!(backend.working_copy_parent_ref(), "@-");
+    }
+
+    #[test]
+    fn test_get_parent_ref_or_empty_root_commit() {
+        let Some(repo) = JjRepoGuard::new() else {
+            eprintln!("Skipping test: jj not available");
+            return;
+        };
+
+        let backend = JjBackend::new(&repo.dir).expect("should load backend");
+
+        // @- is root() in a fresh jj repo (the empty root commit)
+        // The @ commit (working copy) has the root as parent
+        let parent_ref = backend
+            .get_parent_ref_or_empty("@")
+            .expect("should succeed");
+
+        // @ has parent (root commit), so should return @-
+        assert_eq!(
+            parent_ref, "@-",
+            "working copy should return @- as parent ref"
+        );
+
+        // Now test root() itself which has no parent
+        let root_parent = backend.get_parent_ref_or_empty("root()");
+        assert!(
+            root_parent.is_ok(),
+            "get_parent_ref_or_empty(root()) should succeed: {:?}",
+            root_parent.err()
+        );
+        // root() has no parent, should return root() (pointing to empty tree)
+        assert_eq!(
+            root_parent.unwrap(),
+            "root()",
+            "root commit should return root() for empty tree"
+        );
     }
 }

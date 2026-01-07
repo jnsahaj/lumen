@@ -129,7 +129,13 @@ fn run_app_internal(
         if state.needs_reload {
             let file_diffs = if let Some(ref pr) = pr_info {
                 // In PR mode, reload from GitHub
-                load_pr_file_diffs(pr).unwrap_or_default()
+                match load_pr_file_diffs(pr) {
+                    Ok(diffs) => diffs,
+                    Err(e) => {
+                        eprintln!("Warning: failed to reload PR diffs: {}", e);
+                        Vec::new()
+                    }
+                }
             } else {
                 load_file_diffs(&options, backend)
             };

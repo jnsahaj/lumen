@@ -43,9 +43,13 @@ impl DiffRefs {
             },
             Some(CommitReference::TripleDots { from, to }) => {
                 // Get merge-base for triple dots
-                let merge_base = backend
-                    .get_merge_base(from, to)
-                    .unwrap_or_else(|_| from.clone());
+                let merge_base = backend.get_merge_base(from, to).unwrap_or_else(|e| {
+                    eprintln!(
+                        "Warning: failed to find merge-base for {}...{}: {}. Using '{}' as base.",
+                        from, to, e, from
+                    );
+                    from.clone()
+                });
                 DiffRefs::Range {
                     from: merge_base,
                     to: to.clone(),
@@ -79,10 +83,18 @@ pub fn get_old_content(filename: &str, refs: &DiffRefs, backend: &dyn VcsBackend
     use std::path::Path;
 
     let ref_str = match refs {
-        DiffRefs::Single(sha) => format!("{}^", sha), // Parent of commit
+        DiffRefs::Single(sha) => {
+            // Use get_parent_ref_or_empty to handle root commits gracefully
+            backend.get_parent_ref_or_empty(sha).unwrap_or_default()
+        }
         DiffRefs::Range { from, .. } => from.clone(),
         DiffRefs::WorkingTree => backend.working_copy_parent_ref().to_string(),
     };
+
+    // Empty ref means root commit with no parent - return empty content
+    if ref_str.is_empty() {
+        return String::new();
+    }
 
     backend
         .get_file_content_at_ref(&ref_str, Path::new(filename))

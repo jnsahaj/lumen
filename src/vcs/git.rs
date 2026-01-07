@@ -3,8 +3,13 @@ use std::process::Command;
 
 use super::backend::{CommitInfo, VcsBackend, VcsError};
 
-/// Pathspec exclusions for diff output - excludes lock files and node_modules.
-/// These are appended to git diff/diff-tree commands to filter noisy generated files.
+/// Pathspec exclusions for diff output.
+///
+/// Excludes auto-generated lock files and vendored dependencies to reduce noise:
+/// - Lock files (package-lock.json, yarn.lock, etc.) are auto-generated and change frequently
+/// - node_modules/ contains vendored code that bloats diffs
+///
+/// These are appended to git diff/diff-tree commands as pathspecs.
 const GIT_DIFF_EXCLUSIONS: [&str; 7] = [
     "--", // Separator for pathspecs
     ".",  // Include everything
@@ -27,16 +32,30 @@ impl GitBackend {
         let output = Command::new("git").args(args).output()?;
 
         if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
             return Err(VcsError::CommandFailed(stderr));
         }
 
-        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    }
+
+    /// Validate that a reference doesn't look like a flag (defense in depth).
+    fn validate_ref_format(reference: &str) -> Result<(), VcsError> {
+        if reference.trim().starts_with('-') {
+            return Err(VcsError::InvalidRef(format!(
+                "references cannot start with '-': {}",
+                reference
+            )));
+        }
+        Ok(())
     }
 
     fn is_valid_ref(&self, reference: &str) -> Result<(), VcsError> {
+        let reference = reference.trim();
+        Self::validate_ref_format(reference)?;
+
         let output = Command::new("git")
-            .args(["cat-file", "-t", reference.trim()])
+            .args(["cat-file", "-t", reference])
             .output()?;
 
         if output.status.success() {
@@ -56,6 +75,9 @@ impl Default for GitBackend {
     }
 }
 
+/// Date format for git log output (YYYY-MM-DD HH:MM:SS)
+const GIT_DATE_FORMAT: &str = "format:%Y-%m-%d %H:%M:%S";
+
 impl VcsBackend for GitBackend {
     fn get_commit(&self, reference: &str) -> Result<CommitInfo, VcsError> {
         // Use printable delimiter unlikely to appear in commit data
@@ -74,7 +96,7 @@ impl VcsBackend for GitBackend {
         let log_output = self.run_git(&[
             "log",
             &format!("--format={}", format),
-            "--date=format:%Y-%m-%d %H:%M:%S",
+            &format!("--date={}", GIT_DATE_FORMAT),
             "-n",
             "1",
             reference,
@@ -184,14 +206,17 @@ impl VcsBackend for GitBackend {
     }
 
     fn get_file_content_at_ref(&self, reference: &str, path: &Path) -> Result<String, VcsError> {
-        let ref_spec = format!("{}:{}", reference.trim(), path.display());
+        let reference = reference.trim();
+        Self::validate_ref_format(reference)?;
+
+        let ref_spec = format!("{}:{}", reference, path.display());
         let output = Command::new("git").args(["show", &ref_spec]).output()?;
 
         if !output.status.success() {
             return Err(VcsError::FileNotFound(path.display().to_string()));
         }
 
-        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
 
     fn get_current_branch(&self) -> Result<Option<String>, VcsError> {
@@ -282,6 +307,26 @@ impl VcsBackend for GitBackend {
             .filter(|s| !s.is_empty())
             .map(String::from)
             .collect())
+    }
+
+    fn get_parent_ref_or_empty(&self, reference: &str) -> Result<String, VcsError> {
+        let reference = reference.trim();
+        self.is_valid_ref(reference)?;
+
+        // Try to get parent commit
+        let parent_ref = format!("{}^", reference);
+        let output = Command::new("git")
+            .args(["rev-parse", "--verify", &parent_ref])
+            .output()?;
+
+        if output.status.success() {
+            // Has parent - return the parent ref
+            Ok(parent_ref)
+        } else {
+            // No parent (root commit) - return git's empty tree SHA
+            // This is a well-known constant: the SHA of an empty tree
+            Ok("4b825dc642cb6eb9a060e54bf8d69288fbee4904".to_string())
+        }
     }
 }
 
@@ -892,5 +937,80 @@ mod tests {
     fn test_working_copy_parent_ref_returns_head() {
         let backend = GitBackend::new();
         assert_eq!(backend.working_copy_parent_ref(), "HEAD");
+    }
+
+    #[test]
+    fn test_get_parent_ref_or_empty_root_commit() {
+        let _repo = RepoGuard::new();
+        let backend = GitBackend::new();
+
+        // HEAD is the first (root) commit in RepoGuard - has no parent
+        let parent_ref = backend
+            .get_parent_ref_or_empty("HEAD")
+            .expect("should succeed");
+
+        // Should return empty tree SHA for root commit
+        assert_eq!(
+            parent_ref, "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+            "root commit should return empty tree SHA"
+        );
+    }
+
+    #[test]
+    fn test_get_parent_ref_or_empty_normal_commit() {
+        use crate::vcs::test_utils::{git, make_temp_dir};
+        use std::fs;
+
+        let _lock = crate::vcs::test_utils::cwd_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = make_temp_dir("git-parent-ref");
+        let original = std::env::current_dir().expect("get cwd");
+
+        git(&dir, &["init"]);
+        git(&dir, &["config", "user.email", "test@example.com"]);
+        git(&dir, &["config", "user.name", "Test User"]);
+
+        // First commit (root)
+        fs::write(dir.join("file.txt"), "first\n").expect("write file");
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-m", "first"]);
+
+        // Second commit (has parent)
+        fs::write(dir.join("file.txt"), "second\n").expect("modify file");
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-m", "second"]);
+
+        std::env::set_current_dir(&dir).expect("set cwd");
+
+        let backend = GitBackend::new();
+        let parent_ref = backend
+            .get_parent_ref_or_empty("HEAD")
+            .expect("should succeed");
+
+        // Should return HEAD^ for commit with parent
+        assert_eq!(parent_ref, "HEAD^", "commit with parent should return SHA^");
+
+        let _ = std::env::set_current_dir(&original);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_ref_starting_with_dash_rejected() {
+        let _repo = RepoGuard::new();
+        let backend = GitBackend::new();
+
+        // Refs starting with - could be interpreted as flags - should be rejected
+        let result = backend.get_commit("--upload-pack=evil");
+        assert!(
+            matches!(result, Err(VcsError::InvalidRef(_))),
+            "refs starting with - should be rejected"
+        );
+
+        let result2 = backend.get_commit("-n");
+        assert!(
+            matches!(result2, Err(VcsError::InvalidRef(_))),
+            "refs starting with - should be rejected"
+        );
     }
 }

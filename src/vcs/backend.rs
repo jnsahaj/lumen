@@ -3,7 +3,7 @@ use thiserror::Error;
 
 /// Error types for VCS operations.
 #[derive(Error, Debug)]
-#[allow(dead_code)]
+#[allow(dead_code)] // Some variants used only by jj backend
 pub enum VcsError {
     #[error("invalid reference: {0}")]
     InvalidRef(String),
@@ -26,7 +26,7 @@ pub enum VcsError {
 
 /// Information about a commit from any VCS.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
+#[allow(dead_code)] // Fields used by git_entity::Commit::from_commit_info
 pub struct CommitInfo {
     /// The commit ID (git SHA or jj commit ID)
     pub commit_id: String,
@@ -48,7 +48,7 @@ pub struct CommitInfo {
 /// The VCS backend is used synchronously from a single thread - there's no
 /// cross-thread sharing needed. JjBackend holds jj_lib::Workspace which may
 /// not be thread-safe, so adding these bounds would prevent jj support.
-#[allow(dead_code)]
+#[allow(dead_code)] // Not all methods used by all commands yet
 pub trait VcsBackend {
     /// Get commit info for a reference (SHA, HEAD, @, etc.)
     fn get_commit(&self, reference: &str) -> Result<CommitInfo, VcsError>;
@@ -96,4 +96,10 @@ pub trait VcsBackend {
     /// For git: runs 'git diff --name-only <from> <to>'.
     /// For jj: diffs the trees of the two commits.
     fn get_range_changed_files(&self, from: &str, to: &str) -> Result<Vec<String>, VcsError>;
+
+    /// Get the parent ref for a commit, or the empty tree SHA for root commits.
+    /// This handles the edge case where a commit has no parent (first commit).
+    /// For git: returns "SHA^" if parent exists, else git empty tree SHA.
+    /// For jj: returns "@-" or equivalent parent ref.
+    fn get_parent_ref_or_empty(&self, reference: &str) -> Result<String, VcsError>;
 }
