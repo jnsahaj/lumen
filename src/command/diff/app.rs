@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::io;
 use std::sync::mpsc::TryRecvError;
 use std::time::Duration;
@@ -77,13 +78,14 @@ fn run_app_internal(
     let mut state = AppState::new(file_diffs);
     let mut active_modal: Option<Modal> = None;
     let mut pending_watch_event: Option<WatchEvent> = None;
+    let mut pending_events: VecDeque<Event> = VecDeque::new();
 
     // Load viewed files from GitHub on startup in PR mode
     if let Some(ref pr) = pr_info {
         sync_viewed_files_from_github(pr, &mut state);
     }
 
-    loop {
+    'main: loop {
         if let Some(ref rx) = watch_rx {
             match rx.try_recv() {
                 Ok(event) => {
@@ -167,7 +169,13 @@ fn run_app_internal(
             })?;
         }
 
-        if event::poll(Duration::from_millis(100))? {
+        // Poll for new events if no pending events
+        if pending_events.is_empty() && event::poll(Duration::from_millis(100))? {
+            pending_events.push_back(event::read()?);
+        }
+
+        // Process all pending events
+        while let Some(current_event) = pending_events.pop_front() {
             let visible_height = terminal.size()?.height.saturating_sub(2) as usize;
             let bottom_padding = 5;
             let max_scroll = if !state.file_diffs.is_empty() {
@@ -183,7 +191,7 @@ fn run_app_internal(
                 0
             };
 
-            match event::read()? {
+            match current_event {
                 Event::Key(key)
                     if key.kind == KeyEventKind::Press && state.search_state.is_active() =>
                 {
@@ -270,24 +278,32 @@ fn run_app_internal(
                             }
                         }
                         MouseEventKind::ScrollDown | MouseEventKind::ScrollUp => {
-                            // Coalesce consecutive scroll events (like Neovim does for drags)
-                            // to handle fast scrolling smoothly. We accumulate all pending
-                            // scroll events and apply them in one go.
+                            // Coalesce consecutive scroll events to handle fast scrolling.
+                            // Non-scroll events are preserved in pending_events queue.
                             let mut scroll_delta: i32 = match mouse.kind {
                                 MouseEventKind::ScrollDown => 3,
                                 MouseEventKind::ScrollUp => -3,
                                 _ => 0,
                             };
 
-                            // Drain all pending scroll events from the queue
+                            // Coalesce scroll events, but preserve non-scroll events
                             while event::poll(Duration::from_millis(0))? {
-                                match event::read()? {
-                                    Event::Mouse(next_mouse) => match next_mouse.kind {
+                                let next_event = event::read()?;
+                                match &next_event {
+                                    Event::Mouse(m) => match m.kind {
                                         MouseEventKind::ScrollDown => scroll_delta += 3,
                                         MouseEventKind::ScrollUp => scroll_delta -= 3,
-                                        _ => break, // Stop on non-scroll mouse events
+                                        _ => {
+                                            // Non-scroll mouse event - queue for processing
+                                            pending_events.push_back(next_event);
+                                            break;
+                                        }
                                     },
-                                    _ => break, // Stop on non-mouse events
+                                    _ => {
+                                        // Non-mouse event - queue for processing
+                                        pending_events.push_back(next_event);
+                                        break;
+                                    }
                                 }
                             }
 
@@ -335,9 +351,9 @@ fn run_app_internal(
                         {
                             state.search_state.clear();
                         }
-                        KeyCode::Char('q') | KeyCode::Esc => break,
+                        KeyCode::Char('q') | KeyCode::Esc => break 'main,
                         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            break
+                            break 'main
                         }
                         KeyCode::Char('1') => {
                             state.focused_panel = FocusedPanel::Sidebar;
