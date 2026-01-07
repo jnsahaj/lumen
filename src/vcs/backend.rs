@@ -24,6 +24,20 @@ pub enum VcsError {
     Other(String),
 }
 
+/// Lightweight commit info for stacked diff navigation.
+/// Unlike CommitInfo, this doesn't include the full diff content.
+#[derive(Clone, Debug)]
+pub struct StackedCommitInfo {
+    /// Full commit ID (git SHA or jj commit ID)
+    pub commit_id: String,
+    /// Short ID for display (7-12 chars)
+    pub short_id: String,
+    /// Change ID (jj only, None for git)
+    pub change_id: Option<String>,
+    /// First line of commit message
+    pub summary: String,
+}
+
 /// Information about a commit from any VCS.
 #[derive(Debug, Clone)]
 #[allow(dead_code)] // Fields used by git_entity::Commit::from_commit_info
@@ -102,4 +116,19 @@ pub trait VcsBackend {
     /// For git: returns "SHA^" if parent exists, else git empty tree SHA.
     /// For jj: returns "@-" or equivalent parent ref.
     fn get_parent_ref_or_empty(&self, reference: &str) -> Result<String, VcsError>;
+
+    /// Get list of commits in a range for stacked diff mode.
+    /// Returns commits in chronological order (oldest first).
+    /// Excludes commits with no file changes (e.g., merge commits).
+    ///
+    /// For git: `git log --reverse from..to`, filtered by diff-tree
+    /// For jj: revset `from::to`, filtered by tree diff
+    fn get_commits_in_range(
+        &self,
+        from: &str,
+        to: &str,
+    ) -> Result<Vec<StackedCommitInfo>, VcsError>;
+
+    /// Get the name of this VCS backend ("git" or "jj").
+    fn name(&self) -> &'static str;
 }

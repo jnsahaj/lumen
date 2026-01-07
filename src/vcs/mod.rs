@@ -10,7 +10,7 @@ mod jj;
 #[cfg(test)]
 pub mod test_utils;
 
-pub use backend::{CommitInfo, VcsBackend, VcsError};
+pub use backend::{CommitInfo, StackedCommitInfo, VcsBackend, VcsError};
 pub use detection::{detect_vcs_type, VcsType};
 pub use git::GitBackend;
 #[cfg(feature = "jj")]

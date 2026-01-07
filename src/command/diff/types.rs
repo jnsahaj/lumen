@@ -21,7 +21,7 @@ pub fn expand_tabs(s: &str, tab_width: usize) -> String {
     result
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum FileStatus {
     Added,
     Modified,

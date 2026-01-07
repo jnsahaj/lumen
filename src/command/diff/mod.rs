@@ -1,7 +1,7 @@
 mod app;
 mod context;
 mod diff_algo;
-mod git;
+pub mod git;
 pub mod highlight;
 mod render;
 mod search;
@@ -356,14 +356,20 @@ pub fn run_diff_ui(options: DiffOptions, backend: &dyn VcsBackend) -> io::Result
                 }
             };
 
-            let commits = git::get_commits_in_range(&from, &to);
-            if commits.is_empty() {
-                eprintln!(
-                    "\x1b[91merror:\x1b[0m No commits found in range {}..{}",
-                    from, to
-                );
-                process::exit(1);
-            }
+            let commits = match backend.get_commits_in_range(&from, &to) {
+                Ok(c) if c.is_empty() => {
+                    eprintln!(
+                        "\x1b[91merror:\x1b[0m No commits found in range {}..{}",
+                        from, to
+                    );
+                    process::exit(1);
+                }
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("\x1b[91merror:\x1b[0m {}", e);
+                    process::exit(1);
+                }
+            };
 
             return app::run_app_stacked(options, commits, backend);
         } else {
