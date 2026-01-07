@@ -24,6 +24,7 @@ pub struct DiffOptions {
     pub file: Option<Vec<String>>,
     pub watch: bool,
     pub theme: Option<String>,
+    pub stacked: bool,
 }
 
 #[derive(Clone)]
@@ -331,6 +332,44 @@ pub fn run_diff_ui(options: DiffOptions) -> io::Result<()> {
                     // Fall through to normal diff handling if it's not a valid PR
                 }
             }
+        }
+    }
+
+    // Handle stacked mode for range references
+    if options.stacked {
+        if let Some(ref reference) = options.reference {
+            let (from, to) = match reference {
+                CommitReference::Range { from, to } => (from.clone(), to.clone()),
+                CommitReference::TripleDots { from, to } => {
+                    // Get merge-base for triple dots
+                    let output = std::process::Command::new("git")
+                        .args(["merge-base", from, to])
+                        .output()
+                        .expect("Failed to run git merge-base");
+                    let merge_base = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    (merge_base, to.clone())
+                }
+                CommitReference::Single(_) => {
+                    eprintln!(
+                        "\x1b[91merror:\x1b[0m --stacked requires a range (e.g., main..feature)"
+                    );
+                    process::exit(1);
+                }
+            };
+
+            let commits = git::get_commits_in_range(&from, &to);
+            if commits.is_empty() {
+                eprintln!(
+                    "\x1b[91merror:\x1b[0m No commits found in range {}..{}",
+                    from, to
+                );
+                process::exit(1);
+            }
+
+            return app::run_app_stacked(options, commits);
+        } else {
+            eprintln!("\x1b[91merror:\x1b[0m --stacked requires a range (e.g., main..feature)");
+            process::exit(1);
         }
     }
 

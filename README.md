@@ -132,7 +132,25 @@ lumen diff --file src/main.rs --file src/lib.rs
 
 # Watch mode - auto-refresh on file changes
 lumen diff --watch
+
+# Stacked mode - review commits one by one
+lumen diff main..feature --stacked
 ```
+
+#### Stacked Diff Mode
+
+Review a range of commits one at a time with `--stacked`:
+
+```bash
+lumen diff main..feature --stacked
+lumen diff HEAD~5..HEAD --stacked
+```
+
+This displays each commit individually, letting you navigate through them:
+- `ctrl+h` / `ctrl+l`: Previous / next commit
+- Click the `‹` / `›` arrows in the header
+
+The header shows the current commit position, SHA, and message. Viewed files are tracked per commit, so your progress is preserved when navigating.
 
 When viewing a PR, you can mark files as viewed (syncs with GitHub) using the `space` keybinding.
 
@@ -172,6 +190,7 @@ Keybindings in the diff viewer:
 - `tab`: Toggle sidebar
 - `space`: Mark file as viewed
 - `e`: Open file in editor
+- `ctrl+h/l`: Previous/next commit (stacked mode)
 - `?`: Show all keybindings
 
 ### Explain Changes

@@ -112,6 +112,10 @@ pub enum Commands {
         /// Color theme (e.g., dracula, nord, gruvbox-dark, catppuccin-mocha)
         #[arg(short, long)]
         theme: Option<String>,
+
+        /// Show commits stacked (commit-by-commit navigation with ctrl+l/h)
+        #[arg(long)]
+        stacked: bool,
     },
     /// Interactively configure Lumen (provider, API key)
     Configure,

@@ -273,22 +273,22 @@ impl Theme {
         Self {
             mode: ThemeMode::Dark,
             syntax: SyntaxColors {
-                comment: Color::Rgb(108, 112, 134),    // overlay0
-                keyword: Color::Rgb(203, 166, 247),    // mauve
-                string: Color::Rgb(166, 227, 161),     // green
-                number: Color::Rgb(250, 179, 135),     // peach
-                function: Color::Rgb(137, 180, 250),   // blue
-                function_macro: Color::Rgb(148, 226, 213), // teal
-                r#type: Color::Rgb(249, 226, 175),     // yellow
+                comment: Color::Rgb(108, 112, 134),          // overlay0
+                keyword: Color::Rgb(203, 166, 247),          // mauve
+                string: Color::Rgb(166, 227, 161),           // green
+                number: Color::Rgb(250, 179, 135),           // peach
+                function: Color::Rgb(137, 180, 250),         // blue
+                function_macro: Color::Rgb(148, 226, 213),   // teal
+                r#type: Color::Rgb(249, 226, 175),           // yellow
                 variable_builtin: Color::Rgb(243, 139, 168), // red
-                variable_member: Color::Rgb(116, 199, 236), // sapphire
-                module: Color::Rgb(250, 179, 135),     // peach
-                operator: Color::Rgb(137, 220, 235),   // sky
-                tag: Color::Rgb(166, 227, 161),        // green
-                attribute: Color::Rgb(137, 180, 250),  // blue
-                label: Color::Rgb(245, 194, 231),      // pink
-                punctuation: Color::Rgb(166, 173, 200), // subtext0
-                default_text: Color::Rgb(205, 214, 244), // text
+                variable_member: Color::Rgb(116, 199, 236),  // sapphire
+                module: Color::Rgb(250, 179, 135),           // peach
+                operator: Color::Rgb(137, 220, 235),         // sky
+                tag: Color::Rgb(166, 227, 161),              // green
+                attribute: Color::Rgb(137, 180, 250),        // blue
+                label: Color::Rgb(245, 194, 231),            // pink
+                punctuation: Color::Rgb(166, 173, 200),      // subtext0
+                default_text: Color::Rgb(205, 214, 244),     // text
             },
             diff: DiffColors {
                 added_bg: Color::Rgb(30, 40, 35),
@@ -297,22 +297,22 @@ impl Theme {
                 deleted_bg: Color::Rgb(45, 30, 35),
                 deleted_gutter_bg: Color::Rgb(70, 40, 50),
                 deleted_gutter_fg: Color::Rgb(243, 139, 168), // red
-                context_bg: Color::Rgb(30, 30, 46),    // base
+                context_bg: Color::Rgb(30, 30, 46),           // base
                 empty_placeholder_fg: Color::Rgb(69, 71, 90), // surface1
             },
             ui: UiColors {
-                border_focused: Color::Rgb(137, 180, 250), // blue
-                border_unfocused: Color::Rgb(69, 71, 90), // surface1
-                text_primary: Color::Rgb(205, 214, 244), // text
-                text_secondary: Color::Rgb(166, 173, 200), // subtext0
-                text_muted: Color::Rgb(108, 112, 134), // overlay0
-                line_number: Color::Rgb(88, 91, 112),  // overlay0
-                footer_bg: Color::Rgb(24, 24, 37),     // mantle
-                footer_branch_bg: Color::Rgb(49, 50, 68), // surface0
+                border_focused: Color::Rgb(137, 180, 250),   // blue
+                border_unfocused: Color::Rgb(69, 71, 90),    // surface1
+                text_primary: Color::Rgb(205, 214, 244),     // text
+                text_secondary: Color::Rgb(166, 173, 200),   // subtext0
+                text_muted: Color::Rgb(108, 112, 134),       // overlay0
+                line_number: Color::Rgb(88, 91, 112),        // overlay0
+                footer_bg: Color::Rgb(24, 24, 37),           // mantle
+                footer_branch_bg: Color::Rgb(49, 50, 68),    // surface0
                 footer_branch_fg: Color::Rgb(137, 180, 250), // blue
-                status_added: Color::Rgb(166, 227, 161), // green
-                status_modified: Color::Rgb(249, 226, 175), // yellow
-                status_deleted: Color::Rgb(243, 139, 168), // red
+                status_added: Color::Rgb(166, 227, 161),     // green
+                status_modified: Color::Rgb(249, 226, 175),  // yellow
+                status_deleted: Color::Rgb(243, 139, 168),   // red
                 stats_added: Color::Rgb(166, 227, 161),
                 stats_removed: Color::Rgb(243, 139, 168),
                 selection_bg: Color::Rgb(137, 180, 250),
@@ -332,22 +332,22 @@ impl Theme {
         Self {
             mode: ThemeMode::Light,
             syntax: SyntaxColors {
-                comment: Color::Rgb(140, 143, 161),    // overlay0
-                keyword: Color::Rgb(136, 57, 239),     // mauve
-                string: Color::Rgb(64, 160, 43),       // green
-                number: Color::Rgb(254, 100, 11),      // peach
-                function: Color::Rgb(30, 102, 245),    // blue
-                function_macro: Color::Rgb(23, 146, 153), // teal
-                r#type: Color::Rgb(223, 142, 29),      // yellow
+                comment: Color::Rgb(140, 143, 161),        // overlay0
+                keyword: Color::Rgb(136, 57, 239),         // mauve
+                string: Color::Rgb(64, 160, 43),           // green
+                number: Color::Rgb(254, 100, 11),          // peach
+                function: Color::Rgb(30, 102, 245),        // blue
+                function_macro: Color::Rgb(23, 146, 153),  // teal
+                r#type: Color::Rgb(223, 142, 29),          // yellow
                 variable_builtin: Color::Rgb(210, 15, 57), // red
                 variable_member: Color::Rgb(32, 159, 181), // sapphire
-                module: Color::Rgb(254, 100, 11),      // peach
-                operator: Color::Rgb(4, 165, 229),     // sky
-                tag: Color::Rgb(64, 160, 43),          // green
-                attribute: Color::Rgb(30, 102, 245),   // blue
-                label: Color::Rgb(234, 118, 203),      // pink
-                punctuation: Color::Rgb(92, 95, 119),  // subtext0
-                default_text: Color::Rgb(76, 79, 105), // text
+                module: Color::Rgb(254, 100, 11),          // peach
+                operator: Color::Rgb(4, 165, 229),         // sky
+                tag: Color::Rgb(64, 160, 43),              // green
+                attribute: Color::Rgb(30, 102, 245),       // blue
+                label: Color::Rgb(234, 118, 203),          // pink
+                punctuation: Color::Rgb(92, 95, 119),      // subtext0
+                default_text: Color::Rgb(76, 79, 105),     // text
             },
             diff: DiffColors {
                 added_bg: Color::Rgb(230, 250, 235),
@@ -391,22 +391,22 @@ impl Theme {
         Self {
             mode: ThemeMode::Dark,
             syntax: SyntaxColors {
-                comment: Color::Rgb(98, 114, 164),     // comment
-                keyword: Color::Rgb(255, 121, 198),    // pink
-                string: Color::Rgb(241, 250, 140),     // yellow
-                number: Color::Rgb(189, 147, 249),     // purple
-                function: Color::Rgb(80, 250, 123),    // green
-                function_macro: Color::Rgb(139, 233, 253), // cyan
-                r#type: Color::Rgb(139, 233, 253),     // cyan
+                comment: Color::Rgb(98, 114, 164),           // comment
+                keyword: Color::Rgb(255, 121, 198),          // pink
+                string: Color::Rgb(241, 250, 140),           // yellow
+                number: Color::Rgb(189, 147, 249),           // purple
+                function: Color::Rgb(80, 250, 123),          // green
+                function_macro: Color::Rgb(139, 233, 253),   // cyan
+                r#type: Color::Rgb(139, 233, 253),           // cyan
                 variable_builtin: Color::Rgb(255, 184, 108), // orange
-                variable_member: Color::Rgb(248, 248, 242), // foreground
-                module: Color::Rgb(255, 184, 108),     // orange
-                operator: Color::Rgb(255, 121, 198),   // pink
-                tag: Color::Rgb(255, 121, 198),        // pink
-                attribute: Color::Rgb(80, 250, 123),   // green
-                label: Color::Rgb(255, 184, 108),      // orange
-                punctuation: Color::Rgb(248, 248, 242), // foreground
-                default_text: Color::Rgb(248, 248, 242), // foreground
+                variable_member: Color::Rgb(248, 248, 242),  // foreground
+                module: Color::Rgb(255, 184, 108),           // orange
+                operator: Color::Rgb(255, 121, 198),         // pink
+                tag: Color::Rgb(255, 121, 198),              // pink
+                attribute: Color::Rgb(80, 250, 123),         // green
+                label: Color::Rgb(255, 184, 108),            // orange
+                punctuation: Color::Rgb(248, 248, 242),      // foreground
+                default_text: Color::Rgb(248, 248, 242),     // foreground
             },
             diff: DiffColors {
                 added_bg: Color::Rgb(35, 50, 40),
@@ -415,7 +415,7 @@ impl Theme {
                 deleted_bg: Color::Rgb(50, 35, 40),
                 deleted_gutter_bg: Color::Rgb(80, 40, 50),
                 deleted_gutter_fg: Color::Rgb(255, 85, 85),
-                context_bg: Color::Rgb(40, 42, 54),    // background
+                context_bg: Color::Rgb(40, 42, 54), // background
                 empty_placeholder_fg: Color::Rgb(68, 71, 90), // current line
             },
             ui: UiColors {
@@ -450,22 +450,22 @@ impl Theme {
         Self {
             mode: ThemeMode::Dark,
             syntax: SyntaxColors {
-                comment: Color::Rgb(76, 86, 106),      // nord3
-                keyword: Color::Rgb(129, 161, 193),    // nord9
-                string: Color::Rgb(163, 190, 140),     // nord14
-                number: Color::Rgb(180, 142, 173),     // nord15
-                function: Color::Rgb(136, 192, 208),   // nord8
-                function_macro: Color::Rgb(143, 188, 187), // nord7
-                r#type: Color::Rgb(235, 203, 139),     // nord13
+                comment: Color::Rgb(76, 86, 106),           // nord3
+                keyword: Color::Rgb(129, 161, 193),         // nord9
+                string: Color::Rgb(163, 190, 140),          // nord14
+                number: Color::Rgb(180, 142, 173),          // nord15
+                function: Color::Rgb(136, 192, 208),        // nord8
+                function_macro: Color::Rgb(143, 188, 187),  // nord7
+                r#type: Color::Rgb(235, 203, 139),          // nord13
                 variable_builtin: Color::Rgb(191, 97, 106), // nord11
                 variable_member: Color::Rgb(216, 222, 233), // nord4
-                module: Color::Rgb(208, 135, 112),     // nord12
-                operator: Color::Rgb(129, 161, 193),   // nord9
-                tag: Color::Rgb(129, 161, 193),        // nord9
-                attribute: Color::Rgb(136, 192, 208),  // nord8
-                label: Color::Rgb(208, 135, 112),      // nord12
-                punctuation: Color::Rgb(216, 222, 233), // nord4
-                default_text: Color::Rgb(236, 239, 244), // nord6
+                module: Color::Rgb(208, 135, 112),          // nord12
+                operator: Color::Rgb(129, 161, 193),        // nord9
+                tag: Color::Rgb(129, 161, 193),             // nord9
+                attribute: Color::Rgb(136, 192, 208),       // nord8
+                label: Color::Rgb(208, 135, 112),           // nord12
+                punctuation: Color::Rgb(216, 222, 233),     // nord4
+                default_text: Color::Rgb(236, 239, 244),    // nord6
             },
             diff: DiffColors {
                 added_bg: Color::Rgb(40, 55, 50),
@@ -474,17 +474,17 @@ impl Theme {
                 deleted_bg: Color::Rgb(55, 45, 50),
                 deleted_gutter_bg: Color::Rgb(75, 55, 60),
                 deleted_gutter_fg: Color::Rgb(191, 97, 106), // nord11
-                context_bg: Color::Rgb(46, 52, 64),    // nord0
+                context_bg: Color::Rgb(46, 52, 64),          // nord0
                 empty_placeholder_fg: Color::Rgb(59, 66, 82), // nord1
             },
             ui: UiColors {
                 border_focused: Color::Rgb(136, 192, 208), // nord8
-                border_unfocused: Color::Rgb(59, 66, 82), // nord1
-                text_primary: Color::Rgb(236, 239, 244), // nord6
+                border_unfocused: Color::Rgb(59, 66, 82),  // nord1
+                text_primary: Color::Rgb(236, 239, 244),   // nord6
                 text_secondary: Color::Rgb(216, 222, 233), // nord4
-                text_muted: Color::Rgb(76, 86, 106),   // nord3
+                text_muted: Color::Rgb(76, 86, 106),       // nord3
                 line_number: Color::Rgb(76, 86, 106),
-                footer_bg: Color::Rgb(59, 66, 82),     // nord1
+                footer_bg: Color::Rgb(59, 66, 82),        // nord1
                 footer_branch_bg: Color::Rgb(67, 76, 94), // nord2
                 footer_branch_fg: Color::Rgb(136, 192, 208),
                 status_added: Color::Rgb(163, 190, 140),
@@ -509,22 +509,22 @@ impl Theme {
         Self {
             mode: ThemeMode::Dark,
             syntax: SyntaxColors {
-                comment: Color::Rgb(146, 131, 116),    // gray
-                keyword: Color::Rgb(251, 73, 52),      // red
-                string: Color::Rgb(184, 187, 38),      // green
-                number: Color::Rgb(211, 134, 155),     // purple
-                function: Color::Rgb(184, 187, 38),    // green
-                function_macro: Color::Rgb(142, 192, 124), // aqua
-                r#type: Color::Rgb(250, 189, 47),      // yellow
+                comment: Color::Rgb(146, 131, 116),         // gray
+                keyword: Color::Rgb(251, 73, 52),           // red
+                string: Color::Rgb(184, 187, 38),           // green
+                number: Color::Rgb(211, 134, 155),          // purple
+                function: Color::Rgb(184, 187, 38),         // green
+                function_macro: Color::Rgb(142, 192, 124),  // aqua
+                r#type: Color::Rgb(250, 189, 47),           // yellow
                 variable_builtin: Color::Rgb(254, 128, 25), // orange
                 variable_member: Color::Rgb(235, 219, 178), // fg
-                module: Color::Rgb(254, 128, 25),      // orange
-                operator: Color::Rgb(251, 73, 52),     // red
-                tag: Color::Rgb(142, 192, 124),        // aqua
-                attribute: Color::Rgb(131, 165, 152),  // blue
-                label: Color::Rgb(254, 128, 25),       // orange
-                punctuation: Color::Rgb(235, 219, 178), // fg
-                default_text: Color::Rgb(235, 219, 178), // fg
+                module: Color::Rgb(254, 128, 25),           // orange
+                operator: Color::Rgb(251, 73, 52),          // red
+                tag: Color::Rgb(142, 192, 124),             // aqua
+                attribute: Color::Rgb(131, 165, 152),       // blue
+                label: Color::Rgb(254, 128, 25),            // orange
+                punctuation: Color::Rgb(235, 219, 178),     // fg
+                default_text: Color::Rgb(235, 219, 178),    // fg
             },
             diff: DiffColors {
                 added_bg: Color::Rgb(40, 50, 35),
@@ -533,7 +533,7 @@ impl Theme {
                 deleted_bg: Color::Rgb(55, 35, 35),
                 deleted_gutter_bg: Color::Rgb(85, 50, 50),
                 deleted_gutter_fg: Color::Rgb(251, 73, 52),
-                context_bg: Color::Rgb(40, 40, 40),    // bg
+                context_bg: Color::Rgb(40, 40, 40),           // bg
                 empty_placeholder_fg: Color::Rgb(60, 56, 54), // bg1
             },
             ui: UiColors {
@@ -569,21 +569,21 @@ impl Theme {
             mode: ThemeMode::Light,
             syntax: SyntaxColors {
                 comment: Color::Rgb(146, 131, 116),
-                keyword: Color::Rgb(204, 36, 29),      // red
-                string: Color::Rgb(152, 151, 26),      // green
-                number: Color::Rgb(177, 98, 134),      // purple
-                function: Color::Rgb(152, 151, 26),    // green
+                keyword: Color::Rgb(204, 36, 29),          // red
+                string: Color::Rgb(152, 151, 26),          // green
+                number: Color::Rgb(177, 98, 134),          // purple
+                function: Color::Rgb(152, 151, 26),        // green
                 function_macro: Color::Rgb(104, 157, 106), // aqua
-                r#type: Color::Rgb(215, 153, 33),      // yellow
+                r#type: Color::Rgb(215, 153, 33),          // yellow
                 variable_builtin: Color::Rgb(214, 93, 14), // orange
-                variable_member: Color::Rgb(60, 56, 54), // fg
-                module: Color::Rgb(214, 93, 14),       // orange
-                operator: Color::Rgb(204, 36, 29),     // red
-                tag: Color::Rgb(104, 157, 106),        // aqua
-                attribute: Color::Rgb(69, 133, 136),   // blue
-                label: Color::Rgb(214, 93, 14),        // orange
-                punctuation: Color::Rgb(60, 56, 54),   // fg
-                default_text: Color::Rgb(60, 56, 54),  // fg
+                variable_member: Color::Rgb(60, 56, 54),   // fg
+                module: Color::Rgb(214, 93, 14),           // orange
+                operator: Color::Rgb(204, 36, 29),         // red
+                tag: Color::Rgb(104, 157, 106),            // aqua
+                attribute: Color::Rgb(69, 133, 136),       // blue
+                label: Color::Rgb(214, 93, 14),            // orange
+                punctuation: Color::Rgb(60, 56, 54),       // fg
+                default_text: Color::Rgb(60, 56, 54),      // fg
             },
             diff: DiffColors {
                 added_bg: Color::Rgb(235, 250, 230),
@@ -627,22 +627,22 @@ impl Theme {
         Self {
             mode: ThemeMode::Dark,
             syntax: SyntaxColors {
-                comment: Color::Rgb(92, 99, 112),      // comment grey
-                keyword: Color::Rgb(198, 120, 221),    // purple
-                string: Color::Rgb(152, 195, 121),     // green
-                number: Color::Rgb(209, 154, 102),     // orange
-                function: Color::Rgb(97, 175, 239),    // blue
-                function_macro: Color::Rgb(86, 182, 194), // cyan
-                r#type: Color::Rgb(229, 192, 123),     // yellow
+                comment: Color::Rgb(92, 99, 112),            // comment grey
+                keyword: Color::Rgb(198, 120, 221),          // purple
+                string: Color::Rgb(152, 195, 121),           // green
+                number: Color::Rgb(209, 154, 102),           // orange
+                function: Color::Rgb(97, 175, 239),          // blue
+                function_macro: Color::Rgb(86, 182, 194),    // cyan
+                r#type: Color::Rgb(229, 192, 123),           // yellow
                 variable_builtin: Color::Rgb(224, 108, 117), // red
-                variable_member: Color::Rgb(171, 178, 191), // fg
-                module: Color::Rgb(209, 154, 102),     // orange
-                operator: Color::Rgb(198, 120, 221),   // purple
-                tag: Color::Rgb(224, 108, 117),        // red
-                attribute: Color::Rgb(209, 154, 102),  // orange
-                label: Color::Rgb(209, 154, 102),      // orange
-                punctuation: Color::Rgb(171, 178, 191), // fg
-                default_text: Color::Rgb(171, 178, 191), // fg
+                variable_member: Color::Rgb(171, 178, 191),  // fg
+                module: Color::Rgb(209, 154, 102),           // orange
+                operator: Color::Rgb(198, 120, 221),         // purple
+                tag: Color::Rgb(224, 108, 117),              // red
+                attribute: Color::Rgb(209, 154, 102),        // orange
+                label: Color::Rgb(209, 154, 102),            // orange
+                punctuation: Color::Rgb(171, 178, 191),      // fg
+                default_text: Color::Rgb(171, 178, 191),     // fg
             },
             diff: DiffColors {
                 added_bg: Color::Rgb(35, 50, 40),
@@ -651,7 +651,7 @@ impl Theme {
                 deleted_bg: Color::Rgb(50, 35, 38),
                 deleted_gutter_bg: Color::Rgb(80, 50, 55),
                 deleted_gutter_fg: Color::Rgb(224, 108, 117),
-                context_bg: Color::Rgb(40, 44, 52),    // bg
+                context_bg: Color::Rgb(40, 44, 52),           // bg
                 empty_placeholder_fg: Color::Rgb(62, 68, 81), // gutter
             },
             ui: UiColors {
@@ -686,22 +686,22 @@ impl Theme {
         Self {
             mode: ThemeMode::Dark,
             syntax: SyntaxColors {
-                comment: Color::Rgb(88, 110, 117),     // base01
-                keyword: Color::Rgb(133, 153, 0),      // green
-                string: Color::Rgb(42, 161, 152),      // cyan
-                number: Color::Rgb(108, 113, 196),     // violet
-                function: Color::Rgb(38, 139, 210),    // blue
-                function_macro: Color::Rgb(211, 54, 130), // magenta
-                r#type: Color::Rgb(181, 137, 0),       // yellow
-                variable_builtin: Color::Rgb(203, 75, 22), // orange
+                comment: Color::Rgb(88, 110, 117),          // base01
+                keyword: Color::Rgb(133, 153, 0),           // green
+                string: Color::Rgb(42, 161, 152),           // cyan
+                number: Color::Rgb(108, 113, 196),          // violet
+                function: Color::Rgb(38, 139, 210),         // blue
+                function_macro: Color::Rgb(211, 54, 130),   // magenta
+                r#type: Color::Rgb(181, 137, 0),            // yellow
+                variable_builtin: Color::Rgb(203, 75, 22),  // orange
                 variable_member: Color::Rgb(147, 161, 161), // base1
-                module: Color::Rgb(203, 75, 22),       // orange
-                operator: Color::Rgb(133, 153, 0),     // green
-                tag: Color::Rgb(38, 139, 210),         // blue
-                attribute: Color::Rgb(42, 161, 152),   // cyan
-                label: Color::Rgb(203, 75, 22),        // orange
-                punctuation: Color::Rgb(131, 148, 150), // base0
-                default_text: Color::Rgb(131, 148, 150), // base0
+                module: Color::Rgb(203, 75, 22),            // orange
+                operator: Color::Rgb(133, 153, 0),          // green
+                tag: Color::Rgb(38, 139, 210),              // blue
+                attribute: Color::Rgb(42, 161, 152),        // cyan
+                label: Color::Rgb(203, 75, 22),             // orange
+                punctuation: Color::Rgb(131, 148, 150),     // base0
+                default_text: Color::Rgb(131, 148, 150),    // base0
             },
             diff: DiffColors {
                 added_bg: Color::Rgb(0, 50, 50),
@@ -710,7 +710,7 @@ impl Theme {
                 deleted_bg: Color::Rgb(50, 30, 30),
                 deleted_gutter_bg: Color::Rgb(70, 40, 40),
                 deleted_gutter_fg: Color::Rgb(220, 50, 47),
-                context_bg: Color::Rgb(0, 43, 54),     // base03
+                context_bg: Color::Rgb(0, 43, 54), // base03
                 empty_placeholder_fg: Color::Rgb(7, 54, 66), // base02
             },
             ui: UiColors {
@@ -718,9 +718,9 @@ impl Theme {
                 border_unfocused: Color::Rgb(7, 54, 66),
                 text_primary: Color::Rgb(131, 148, 150), // base0
                 text_secondary: Color::Rgb(147, 161, 161), // base1
-                text_muted: Color::Rgb(88, 110, 117),  // base01
+                text_muted: Color::Rgb(88, 110, 117),    // base01
                 line_number: Color::Rgb(88, 110, 117),
-                footer_bg: Color::Rgb(7, 54, 66),      // base02
+                footer_bg: Color::Rgb(7, 54, 66), // base02
                 footer_branch_bg: Color::Rgb(88, 110, 117),
                 footer_branch_fg: Color::Rgb(38, 139, 210),
                 status_added: Color::Rgb(133, 153, 0),
@@ -745,22 +745,22 @@ impl Theme {
         Self {
             mode: ThemeMode::Light,
             syntax: SyntaxColors {
-                comment: Color::Rgb(147, 161, 161),    // base1
-                keyword: Color::Rgb(133, 153, 0),      // green
-                string: Color::Rgb(42, 161, 152),      // cyan
-                number: Color::Rgb(108, 113, 196),     // violet
-                function: Color::Rgb(38, 139, 210),    // blue
-                function_macro: Color::Rgb(211, 54, 130), // magenta
-                r#type: Color::Rgb(181, 137, 0),       // yellow
+                comment: Color::Rgb(147, 161, 161),        // base1
+                keyword: Color::Rgb(133, 153, 0),          // green
+                string: Color::Rgb(42, 161, 152),          // cyan
+                number: Color::Rgb(108, 113, 196),         // violet
+                function: Color::Rgb(38, 139, 210),        // blue
+                function_macro: Color::Rgb(211, 54, 130),  // magenta
+                r#type: Color::Rgb(181, 137, 0),           // yellow
                 variable_builtin: Color::Rgb(203, 75, 22), // orange
                 variable_member: Color::Rgb(88, 110, 117), // base01
-                module: Color::Rgb(203, 75, 22),       // orange
-                operator: Color::Rgb(133, 153, 0),     // green
-                tag: Color::Rgb(38, 139, 210),         // blue
-                attribute: Color::Rgb(42, 161, 152),   // cyan
-                label: Color::Rgb(203, 75, 22),        // orange
-                punctuation: Color::Rgb(101, 123, 131), // base00
-                default_text: Color::Rgb(101, 123, 131), // base00
+                module: Color::Rgb(203, 75, 22),           // orange
+                operator: Color::Rgb(133, 153, 0),         // green
+                tag: Color::Rgb(38, 139, 210),             // blue
+                attribute: Color::Rgb(42, 161, 152),       // cyan
+                label: Color::Rgb(203, 75, 22),            // orange
+                punctuation: Color::Rgb(101, 123, 131),    // base00
+                default_text: Color::Rgb(101, 123, 131),   // base00
             },
             diff: DiffColors {
                 added_bg: Color::Rgb(230, 250, 235),
@@ -777,9 +777,9 @@ impl Theme {
                 border_unfocused: Color::Rgb(238, 232, 213),
                 text_primary: Color::Rgb(101, 123, 131), // base00
                 text_secondary: Color::Rgb(88, 110, 117), // base01
-                text_muted: Color::Rgb(147, 161, 161), // base1
+                text_muted: Color::Rgb(147, 161, 161),   // base1
                 line_number: Color::Rgb(147, 161, 161),
-                footer_bg: Color::Rgb(238, 232, 213),  // base2
+                footer_bg: Color::Rgb(238, 232, 213), // base2
                 footer_branch_bg: Color::Rgb(147, 161, 161),
                 footer_branch_fg: Color::Rgb(38, 139, 210),
                 status_added: Color::Rgb(133, 153, 0),

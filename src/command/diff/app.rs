@@ -14,7 +14,9 @@ use crossterm::{
 use ratatui::prelude::*;
 
 use super::diff_algo::{compute_side_by_side, find_hunk_starts};
-use super::git::{get_current_branch, load_file_diffs, load_pr_file_diffs};
+use super::git::{
+    get_current_branch, load_file_diffs, load_pr_file_diffs, load_single_commit_diffs,
+};
 use super::highlight;
 use super::render::{
     render_diff, render_empty_state, FilePickerItem, KeyBind, KeyBindSection, Modal,
@@ -30,7 +32,7 @@ use super::{
 
 pub fn run_app_with_pr(options: DiffOptions, pr_info: PrInfo) -> io::Result<()> {
     match load_pr_file_diffs(&pr_info) {
-        Ok(file_diffs) => run_app_internal(options, Some(pr_info), file_diffs),
+        Ok(file_diffs) => run_app_internal(options, Some(pr_info), file_diffs, None),
         Err(e) => {
             eprintln!("\x1b[91merror:\x1b[0m {}", e);
             std::process::exit(1);
@@ -40,7 +42,17 @@ pub fn run_app_with_pr(options: DiffOptions, pr_info: PrInfo) -> io::Result<()> 
 
 pub fn run_app(options: DiffOptions, pr_info: Option<PrInfo>) -> io::Result<()> {
     let file_diffs = load_file_diffs(&options);
-    run_app_internal(options, pr_info, file_diffs)
+    run_app_internal(options, pr_info, file_diffs, None)
+}
+
+pub fn run_app_stacked(
+    options: DiffOptions,
+    commits: Vec<super::git::CommitInfo>,
+) -> io::Result<()> {
+    // Load the first commit's diff
+    let first_commit = &commits[0];
+    let file_diffs = load_single_commit_diffs(&first_commit.sha, &options.file);
+    run_app_internal(options, None, file_diffs, Some(commits))
 }
 
 /// Sync viewed files from GitHub to local state
@@ -59,6 +71,7 @@ fn run_app_internal(
     options: DiffOptions,
     pr_info: Option<PrInfo>,
     file_diffs: Vec<super::types::FileDiff>,
+    stacked_commits: Option<Vec<super::git::CommitInfo>>,
 ) -> io::Result<()> {
     theme::init(options.theme.as_deref());
     highlight::init();
@@ -79,6 +92,11 @@ fn run_app_internal(
     let mut active_modal: Option<Modal> = None;
     let mut pending_watch_event: Option<WatchEvent> = None;
     let mut pending_events: VecDeque<Event> = VecDeque::new();
+
+    // Initialize stacked mode if commits were provided
+    if let Some(commits) = stacked_commits {
+        state.init_stacked_mode(commits);
+    }
 
     // Load viewed files from GitHub on startup in PR mode
     if let Some(ref pr) = pr_info {
@@ -162,6 +180,10 @@ fn run_app_internal(
                     pr_info.as_ref(),
                     state.focused_hunk,
                     &hunks,
+                    state.stacked_mode,
+                    state.current_commit(),
+                    state.current_commit_index,
+                    state.stacked_commits.len(),
                 );
                 if let Some(ref modal) = active_modal {
                     modal.render(frame);
@@ -249,16 +271,54 @@ fn run_app_internal(
                 Event::Mouse(mouse) if active_modal.is_none() => {
                     let term_size = terminal.size()?;
                     let footer_height = 1u16;
+                    let header_height = if state.stacked_mode { 1u16 } else { 0u16 };
                     let sidebar_width = if state.show_sidebar { 40u16 } else { 0u16 };
 
                     match mouse.kind {
                         MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
-                            if state.show_sidebar
+                            // Check for stacked mode header arrow clicks
+                            if state.stacked_mode && mouse.row < header_height {
+                                // Left arrow click (first 4 columns to cover " ‹ ")
+                                if mouse.column < 4 && state.current_commit_index > 0 {
+                                    // Save viewed files for current commit before switching
+                                    state.save_stacked_viewed_files();
+                                    state.current_commit_index -= 1;
+                                    if let Some(commit) =
+                                        state.stacked_commits.get(state.current_commit_index)
+                                    {
+                                        let file_diffs =
+                                            load_single_commit_diffs(&commit.sha, &options.file);
+                                        state.reload(file_diffs, None);
+                                        // Load viewed files for new commit
+                                        state.load_stacked_viewed_files();
+                                    }
+                                }
+                                // Right arrow click (last 4 columns to cover " › ")
+                                else if mouse.column >= term_size.width.saturating_sub(4)
+                                    && state.current_commit_index
+                                        < state.stacked_commits.len().saturating_sub(1)
+                                {
+                                    // Save viewed files for current commit before switching
+                                    state.save_stacked_viewed_files();
+                                    state.current_commit_index += 1;
+                                    if let Some(commit) =
+                                        state.stacked_commits.get(state.current_commit_index)
+                                    {
+                                        let file_diffs =
+                                            load_single_commit_diffs(&commit.sha, &options.file);
+                                        state.reload(file_diffs, None);
+                                        // Load viewed files for new commit
+                                        state.load_stacked_viewed_files();
+                                    }
+                                }
+                            } else if state.show_sidebar
                                 && mouse.column < sidebar_width
+                                && mouse.row >= header_height
                                 && mouse.row < term_size.height.saturating_sub(footer_height)
                             {
-                                let clicked_row =
-                                    (mouse.row.saturating_sub(1)) as usize + state.sidebar_scroll;
+                                let clicked_row = (mouse.row.saturating_sub(header_height + 1))
+                                    as usize
+                                    + state.sidebar_scroll;
                                 if clicked_row < state.sidebar_items.len() {
                                     if matches!(
                                         state.sidebar_items[clicked_row],
@@ -425,6 +485,42 @@ fn run_app_internal(
                                         break;
                                     }
                                     prev -= 1;
+                                }
+                            }
+                        }
+                        // Stacked mode: navigate to next commit
+                        KeyCode::Char('l') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            if state.stacked_mode
+                                && state.current_commit_index < state.stacked_commits.len() - 1
+                            {
+                                // Save viewed files for current commit before switching
+                                state.save_stacked_viewed_files();
+                                state.current_commit_index += 1;
+                                if let Some(commit) =
+                                    state.stacked_commits.get(state.current_commit_index)
+                                {
+                                    let file_diffs =
+                                        load_single_commit_diffs(&commit.sha, &options.file);
+                                    state.reload(file_diffs, None);
+                                    // Load viewed files for new commit
+                                    state.load_stacked_viewed_files();
+                                }
+                            }
+                        }
+                        // Stacked mode: navigate to previous commit
+                        KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            if state.stacked_mode && state.current_commit_index > 0 {
+                                // Save viewed files for current commit before switching
+                                state.save_stacked_viewed_files();
+                                state.current_commit_index -= 1;
+                                if let Some(commit) =
+                                    state.stacked_commits.get(state.current_commit_index)
+                                {
+                                    let file_diffs =
+                                        load_single_commit_diffs(&commit.sha, &options.file);
+                                    state.reload(file_diffs, None);
+                                    // Load viewed files for new commit
+                                    state.load_stacked_viewed_files();
                                 }
                             }
                         }
@@ -945,6 +1041,10 @@ fn run_app_internal(
                                             KeyBind {
                                                 key: "o",
                                                 description: "Open file in browser (PR mode)",
+                                            },
+                                            KeyBind {
+                                                key: "ctrl+l / ctrl+h",
+                                                description: "Next / prev commit (stacked)",
                                             },
                                             KeyBind {
                                                 key: "?",

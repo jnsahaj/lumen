@@ -18,6 +18,115 @@ use crate::command::diff::PrInfo;
 use super::footer::{render_footer, FooterData};
 use super::sidebar::render_sidebar;
 
+/// Render the header bar for stacked diff mode showing commit info with navigation arrows
+fn render_stacked_header(
+    frame: &mut Frame,
+    area: Rect,
+    commit: Option<&CommitInfo>,
+    index: usize,
+    total: usize,
+) {
+    let t = theme::get();
+    let bg = t.ui.footer_bg;
+
+    let can_go_prev = index > 0;
+    let can_go_next = index < total.saturating_sub(1);
+
+    // Styles for arrows and hints
+    let active_style = Style::default().fg(t.ui.text_primary).bg(bg);
+    let dimmed_style = Style::default().fg(t.ui.text_muted).bg(bg);
+
+    let left_style = if can_go_prev {
+        active_style
+    } else {
+        dimmed_style
+    };
+    let right_style = if can_go_next {
+        active_style
+    } else {
+        dimmed_style
+    };
+
+    // Commit info
+    let (commit_sha, commit_msg) = if let Some(c) = commit {
+        (c.short_sha.clone(), c.message.clone())
+    } else {
+        ("?".to_string(), "No commit".to_string())
+    };
+
+    // Build center content: [1/6]  sha  message
+    let nav_indicator = format!(" {}/{} ", index + 1, total);
+    let sha_label = format!(" {} ", commit_sha);
+
+    // Reserve space for arrows and hints
+    let available_for_msg = (area.width as usize).saturating_sub(50);
+
+    let truncated_msg = if commit_msg.len() > available_for_msg {
+        format!(
+            "{}...",
+            &commit_msg[..available_for_msg.saturating_sub(3).max(0)]
+        )
+    } else {
+        commit_msg
+    };
+
+    // Build center spans
+    let center_spans = vec![
+        Span::styled(
+            nav_indicator.clone(),
+            Style::default()
+                .fg(t.ui.highlight)
+                .bg(t.ui.footer_branch_bg),
+        ),
+        Span::styled("  ", Style::default().bg(bg)),
+        Span::styled(
+            sha_label.clone(),
+            Style::default()
+                .fg(t.ui.footer_branch_fg)
+                .bg(t.ui.footer_branch_bg),
+        ),
+        Span::styled("  ", Style::default().bg(bg)),
+        Span::styled(
+            truncated_msg.clone(),
+            Style::default().fg(t.ui.text_secondary).bg(bg),
+        ),
+    ];
+
+    // Calculate widths for centering
+    let center_width: usize =
+        nav_indicator.len() + 2 + sha_label.len() + 2 + truncated_msg.chars().count();
+    // " ‹ " + " ctrl+h " = 12 chars, same for right side
+    let side_width = 12;
+
+    let total_content_width = side_width * 2 + center_width;
+    let total_padding = (area.width as usize).saturating_sub(total_content_width);
+    let left_padding = total_padding / 2;
+    let right_padding = total_padding - left_padding;
+
+    // Build final line with centered content
+    let mut spans = vec![
+        // Left side: arrow and hint
+        Span::styled(" ‹ ", left_style),
+        Span::styled(" ctrl+h ", dimmed_style),
+        // Left padding
+        Span::styled(" ".repeat(left_padding), Style::default().bg(bg)),
+    ];
+
+    // Add center content
+    spans.extend(center_spans);
+
+    // Right padding and right side
+    spans.push(Span::styled(
+        " ".repeat(right_padding),
+        Style::default().bg(bg),
+    ));
+    spans.push(Span::styled(" ctrl+l ", dimmed_style));
+    spans.push(Span::styled(" › ", right_style));
+
+    let header = Paragraph::new(Line::from(spans)).style(Style::default().bg(bg));
+    frame.render_widget(header, area);
+}
+
 /// Generates a diagonal stripe pattern for empty placeholder lines in the diff view.
 /// The pattern uses forward slashes to create a visual distinction for empty areas.
 fn generate_stripe_pattern(width: usize) -> String {
@@ -180,6 +289,8 @@ fn render_context_lines(
     }
 }
 
+use crate::command::diff::git::CommitInfo;
+
 #[allow(clippy::too_many_arguments)]
 pub fn render_diff(
     frame: &mut Frame,
@@ -204,6 +315,10 @@ pub fn render_diff(
     pr_info: Option<&PrInfo>,
     focused_hunk: Option<usize>,
     hunks: &[usize],
+    stacked_mode: bool,
+    stacked_commit: Option<&CommitInfo>,
+    stacked_index: usize,
+    stacked_total: usize,
 ) {
     let area = frame.area();
     let side_by_side =
@@ -215,17 +330,43 @@ pub fn render_diff(
     let old_highlighter = FileHighlighter::new(&diff.old_content, &diff.filename);
     let new_highlighter = FileHighlighter::new(&diff.new_content, &diff.filename);
 
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(0), Constraint::Length(1)])
-        .split(area);
+    let t = theme::get();
+
+    // Layout: header (if stacked) + main content + footer
+    let (content_area, footer_area) = if stacked_mode {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(1), // Header
+                Constraint::Min(0),    // Main content
+                Constraint::Length(1), // Footer
+            ])
+            .split(area);
+
+        // Render stacked header
+        render_stacked_header(
+            frame,
+            chunks[0],
+            stacked_commit,
+            stacked_index,
+            stacked_total,
+        );
+
+        (chunks[1], chunks[2])
+    } else {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(0), Constraint::Length(1)])
+            .split(area);
+        (chunks[0], chunks[1])
+    };
 
     let main_area = if show_sidebar {
         let sidebar_width = (area.width / 4).min(35).max(20);
         let main_chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Length(sidebar_width), Constraint::Min(0)])
-            .split(chunks[0]);
+            .split(content_area);
 
         render_sidebar(
             frame,
@@ -241,13 +382,12 @@ pub fn render_diff(
 
         main_chunks[1]
     } else {
-        chunks[0]
+        content_area
     };
 
     let is_new_file = diff.old_content.is_empty() && !diff.new_content.is_empty();
     let is_deleted_file = !diff.old_content.is_empty() && diff.new_content.is_empty();
 
-    let t = theme::get();
     let border_style = Style::default().fg(t.ui.border_unfocused);
     let title_style = if focused_panel == FocusedPanel::DiffView {
         Style::default().fg(t.ui.border_focused)
@@ -599,7 +739,7 @@ pub fn render_diff(
 
     render_footer(
         frame,
-        chunks[1],
+        footer_area,
         FooterData {
             filename: &diff.filename,
             branch,

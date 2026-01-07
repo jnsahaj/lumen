@@ -5,6 +5,14 @@ use super::types::{FileDiff, FileStatus};
 use super::{DiffOptions, PrInfo};
 use crate::commit_reference::CommitReference;
 
+/// Information about a single commit for stacked diff navigation
+#[derive(Clone)]
+pub struct CommitInfo {
+    pub sha: String,
+    pub short_sha: String,
+    pub message: String,
+}
+
 pub fn get_current_branch() -> String {
     let output = Command::new("git")
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
@@ -289,4 +297,119 @@ fn parse_changed_files_from_diff(diff: &str) -> Vec<String> {
     }
 
     files
+}
+
+/// Check if a commit has any file changes
+fn commit_has_changes(sha: &str) -> bool {
+    let output = Command::new("git")
+        .args(["diff-tree", "--no-commit-id", "--name-only", "-r", sha])
+        .output();
+
+    match output {
+        Ok(o) if o.status.success() => !String::from_utf8_lossy(&o.stdout).trim().is_empty(),
+        _ => false,
+    }
+}
+
+/// Get list of commits in a range for stacked diff mode
+/// Filters out merge commits and commits with no file changes
+pub fn get_commits_in_range(from: &str, to: &str) -> Vec<CommitInfo> {
+    let range = format!("{}..{}", from, to);
+    let output = Command::new("git")
+        .args(["log", "--reverse", "--format=%H%x00%h%x00%s", &range])
+        .output();
+
+    match output {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
+            .lines()
+            .filter_map(|line| {
+                let parts: Vec<&str> = line.split('\0').collect();
+                if parts.len() >= 3 {
+                    let sha = parts[0].to_string();
+                    // Filter out commits with no changes (like merge commits)
+                    if commit_has_changes(&sha) {
+                        Some(CommitInfo {
+                            sha,
+                            short_sha: parts[1].to_string(),
+                            message: parts[2].to_string(),
+                        })
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Load file diffs for a single commit (comparing commit to its parent)
+pub fn load_single_commit_diffs(sha: &str, file_filter: &Option<Vec<String>>) -> Vec<FileDiff> {
+    // Get the list of changed files for this commit
+    let output = Command::new("git")
+        .args(["diff-tree", "--no-commit-id", "--name-only", "-r", sha])
+        .output()
+        .expect("Failed to run git");
+
+    let files: Vec<String> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .collect();
+
+    let files = if let Some(ref filter) = file_filter {
+        files.into_iter().filter(|f| filter.contains(f)).collect()
+    } else {
+        files
+    };
+
+    files
+        .into_iter()
+        .map(|filename| {
+            // Get old content (from parent commit)
+            let old_ref = format!("{}^:{}", sha, filename);
+            let old_content = Command::new("git")
+                .args(["show", &old_ref])
+                .output()
+                .map(|o| {
+                    if o.status.success() {
+                        String::from_utf8_lossy(&o.stdout).to_string()
+                    } else {
+                        String::new()
+                    }
+                })
+                .unwrap_or_default();
+
+            // Get new content (from the commit itself)
+            let new_ref = format!("{}:{}", sha, filename);
+            let new_content = Command::new("git")
+                .args(["show", &new_ref])
+                .output()
+                .map(|o| {
+                    if o.status.success() {
+                        String::from_utf8_lossy(&o.stdout).to_string()
+                    } else {
+                        String::new()
+                    }
+                })
+                .unwrap_or_default();
+
+            let status = if old_content.is_empty() && !new_content.is_empty() {
+                FileStatus::Added
+            } else if !old_content.is_empty() && new_content.is_empty() {
+                FileStatus::Deleted
+            } else {
+                FileStatus::Modified
+            };
+
+            FileDiff {
+                filename,
+                old_content,
+                new_content,
+                status,
+            }
+        })
+        .collect()
 }

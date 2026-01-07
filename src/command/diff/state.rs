@@ -1,6 +1,7 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::command::diff::diff_algo::{compute_side_by_side, find_hunk_starts};
+use crate::command::diff::git::CommitInfo;
 use crate::command::diff::search::SearchState;
 use crate::command::diff::types::{
     build_file_tree, DiffFullscreen, DiffViewSettings, FileDiff, FocusedPanel, SidebarItem,
@@ -31,6 +32,12 @@ pub struct AppState {
     pub pending_key: PendingKey,
     pub needs_reload: bool,
     pub focused_hunk: Option<usize>,
+    // Stacked mode fields
+    pub stacked_mode: bool,
+    pub stacked_commits: Vec<CommitInfo>,
+    pub current_commit_index: usize,
+    /// Tracks viewed files per commit SHA (commit SHA -> set of viewed filenames)
+    stacked_viewed_files: HashMap<String, HashSet<String>>,
 }
 
 impl AppState {
@@ -84,6 +91,62 @@ impl AppState {
             pending_key: PendingKey::default(),
             needs_reload: false,
             focused_hunk,
+            stacked_mode: false,
+            stacked_commits: Vec::new(),
+            current_commit_index: 0,
+            stacked_viewed_files: HashMap::new(),
+        }
+    }
+
+    /// Initialize stacked mode with commits
+    pub fn init_stacked_mode(&mut self, commits: Vec<CommitInfo>) {
+        self.stacked_mode = true;
+        self.stacked_commits = commits;
+        self.current_commit_index = 0;
+    }
+
+    /// Get the current commit info if in stacked mode
+    pub fn current_commit(&self) -> Option<&CommitInfo> {
+        if self.stacked_mode {
+            self.stacked_commits.get(self.current_commit_index)
+        } else {
+            None
+        }
+    }
+
+    /// Save current viewed files for the current commit (stacked mode only)
+    pub fn save_stacked_viewed_files(&mut self) {
+        if !self.stacked_mode {
+            return;
+        }
+        if let Some(commit) = self.stacked_commits.get(self.current_commit_index) {
+            let viewed_filenames: HashSet<String> = self
+                .viewed_files
+                .iter()
+                .filter_map(|&idx| self.file_diffs.get(idx).map(|f| f.filename.clone()))
+                .collect();
+            self.stacked_viewed_files
+                .insert(commit.sha.clone(), viewed_filenames);
+        }
+    }
+
+    /// Load viewed files for the current commit (stacked mode only)
+    pub fn load_stacked_viewed_files(&mut self) {
+        if !self.stacked_mode {
+            return;
+        }
+        if let Some(commit) = self.stacked_commits.get(self.current_commit_index) {
+            if let Some(viewed_filenames) = self.stacked_viewed_files.get(&commit.sha) {
+                self.viewed_files = self
+                    .file_diffs
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, f)| viewed_filenames.contains(&f.filename))
+                    .map(|(i, _)| i)
+                    .collect();
+            } else {
+                self.viewed_files.clear();
+            }
         }
     }
 
