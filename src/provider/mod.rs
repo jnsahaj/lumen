@@ -48,6 +48,17 @@ impl LumenProvider {
         model: Option<String>,
         base_url: Option<String>,
     ) -> Result<Self, LumenError> {
+        if (base_url.is_some())
+            && !matches!(
+                provider_type,
+                ProviderType::Customopenai
+            )
+        {
+            return Err(LumenError::ConfigurationError(
+                "Base URL can only be set for CustomOpenAI provider".to_string(),
+            ));
+        }
+
         let (backend, provider_name) = match provider_type {
             // Custom endpoint providers (OpenRouter, Vercel) - use ServiceTargetResolver
             ProviderType::Openrouter | ProviderType::Vercel | ProviderType::Customopenai => {
