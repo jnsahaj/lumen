@@ -20,10 +20,11 @@ pub fn cwd_lock() -> &'static Mutex<()> {
 pub fn make_temp_dir(prefix: &str) -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .expect("time went backwards")
+        .expect("system time before UNIX_EPOCH - clock misconfigured")
         .as_nanos();
     let dir = env::temp_dir().join(format!("{}-{}-{}", prefix, std::process::id(), nanos));
-    fs::create_dir_all(&dir).expect("failed to create temp dir");
+    fs::create_dir_all(&dir)
+        .unwrap_or_else(|e| panic!("failed to create temp dir at {:?}: {}", dir, e));
     dir
 }
 

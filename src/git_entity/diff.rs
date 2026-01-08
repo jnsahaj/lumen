@@ -1,8 +1,6 @@
 use crate::error::LumenError;
 use thiserror::Error;
 
-use super::{commit::Commit, GIT_DIFF_EXCLUSIONS};
-
 #[derive(Error, Debug)]
 pub enum DiffError {
     #[error("diff{} is empty", if *staged { " (staged)" } else { "" })]
@@ -23,48 +21,19 @@ pub enum Diff {
 }
 
 impl Diff {
-    pub fn from_working_tree(staged: bool) -> Result<Self, LumenError> {
-        let args = if staged {
-            vec!["diff", "--staged"]
-        } else {
-            vec!["diff"]
-        };
-
-        let output = std::process::Command::new("git")
-            .args(args)
-            .args(GIT_DIFF_EXCLUSIONS)
-            .output()?;
-
-        let diff = String::from_utf8(output.stdout)?;
+    /// Create a working tree diff from a diff string (for VCS backend integration).
+    pub fn from_working_tree_diff(diff: String, staged: bool) -> Result<Self, LumenError> {
         if diff.is_empty() {
             return Err(DiffError::EmptyDiff { staged }.into());
         }
-
         Ok(Diff::WorkingTree { staged, diff })
     }
 
-    pub fn from_commits_range(from: &str, to: &str, triple_dot: bool) -> Result<Self, LumenError> {
-        let _ = Commit::is_valid_commit(from)?;
-        let _ = Commit::is_valid_commit(to)?;
-
-        let separator = if triple_dot { "..." } else { ".." };
-        let range = format!("{}{}{}", from, separator, to);
-
-        let output = std::process::Command::new("git")
-            .args(["diff", &range])
-            .args(GIT_DIFF_EXCLUSIONS)
-            .output()?;
-
-        let diff = String::from_utf8(output.stdout)?;
-
+    /// Create a range diff from a diff string (for VCS backend integration).
+    pub fn from_range_diff(diff: String, from: String, to: String) -> Result<Self, LumenError> {
         if diff.is_empty() {
             return Err(DiffError::EmptyDiff { staged: false }.into());
         }
-
-        Ok(Diff::CommitsRange {
-            from: from.to_string(),
-            to: to.to_string(),
-            diff,
-        })
+        Ok(Diff::CommitsRange { from, to, diff })
     }
 }

@@ -295,6 +295,7 @@ impl Modal {
         frame.render_widget(para, inner);
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_file_picker(
         &self,
         frame: &mut Frame,

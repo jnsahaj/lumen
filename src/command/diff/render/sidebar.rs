@@ -8,6 +8,7 @@ use ratatui::{
 use crate::command::diff::theme;
 use crate::command::diff::types::{FileStatus, SidebarItem};
 
+#[allow(clippy::too_many_arguments)]
 pub fn render_sidebar(
     frame: &mut Frame,
     area: Rect,

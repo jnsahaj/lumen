@@ -122,7 +122,7 @@ impl AIPrompt {
             "".to_string()
         };
 
-        let user_prompt = String::from(formatdoc! {"
+        let user_prompt = formatdoc! {"
             Generate a concise git commit message written in present tense for the following code diff with the given specifications below:
 
             The output response must be in format:
@@ -140,7 +140,7 @@ impl AIPrompt {
             ```
             ",
             commit_types = command.draft_config.commit_types,
-        });
+        };
 
         Ok(AIPrompt {
             system_prompt,

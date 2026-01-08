@@ -362,7 +362,7 @@ pub fn render_diff(
     };
 
     let main_area = if show_sidebar {
-        let sidebar_width = (area.width / 4).min(35).max(20);
+        let sidebar_width = (area.width / 4).clamp(20, 35);
         let main_chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Length(sidebar_width), Constraint::Min(0)])
@@ -671,11 +671,7 @@ pub fn render_diff(
                 }
                 match &diff_line.new_line {
                     Some((num, text)) => {
-                        let prefix = if old_area.is_some() {
-                            format!("{:4} ", num)
-                        } else {
-                            format!("{:4} ", num)
-                        };
+                        let prefix = format!("{:4} ", num);
                         new_spans.push(Span::styled(
                             prefix,
                             Style::default()
