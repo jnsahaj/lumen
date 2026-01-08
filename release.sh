@@ -332,12 +332,6 @@ class Lumen < Formula
 end
 EOF
     
-    # Show the diff
-    echo ""
-    info "Changes to Formula/lumen.rb:"
-    git diff Formula/lumen.rb
-    echo ""
-    
     if ! confirm "Commit and push these changes?"; then
         git checkout Formula/lumen.rb
         cd "$SCRIPT_DIR"
