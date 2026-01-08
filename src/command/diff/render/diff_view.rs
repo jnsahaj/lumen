@@ -160,6 +160,55 @@ pub struct LineStats {
     pub removed: usize,
 }
 
+fn expand_tabs_in_spans<'a>(spans: Vec<Span<'a>>, tab_width: usize) -> Vec<Span<'a>> {
+    if tab_width == 0 {
+        let mut col = 0;
+        return spans
+            .into_iter()
+            .map(|span| {
+                if !span.content.contains('\t') {
+                    col += span.content.chars().count();
+                    return span;
+                }
+                let mut buf = String::new();
+                for ch in span.content.chars() {
+                    if ch == '\t' {
+                        continue;
+                    }
+                    buf.push(ch);
+                    col += 1;
+                }
+                Span::styled(buf, span.style)
+            })
+            .collect();
+    }
+
+    let mut col = 0;
+    let mut out: Vec<Span<'a>> = Vec::with_capacity(spans.len());
+    for span in spans {
+        if !span.content.contains('\t') {
+            col += span.content.chars().count();
+            out.push(span);
+            continue;
+        }
+        let mut buf = String::new();
+        for ch in span.content.chars() {
+            if ch == '\t' {
+                let spaces = tab_width - (col % tab_width);
+                for _ in 0..spaces {
+                    buf.push(' ');
+                }
+                col += spaces;
+            } else {
+                buf.push(ch);
+                col += 1;
+            }
+        }
+        out.push(Span::styled(buf, span.style));
+    }
+    out
+}
+
 fn apply_search_highlight<'a>(
     text: &str,
     filename: &str,
@@ -167,6 +216,7 @@ fn apply_search_highlight<'a>(
     match_ranges: &[(usize, usize, bool)],
     highlighter: Option<&FileHighlighter>,
     line_number: Option<usize>,
+    tab_width: usize,
 ) -> Vec<Span<'a>> {
     let t = theme::get();
 
@@ -182,6 +232,7 @@ fn apply_search_highlight<'a>(
     } else {
         highlight_line_spans(text, filename, bg)
     };
+    let base_spans = expand_tabs_in_spans(base_spans, tab_width);
 
     if match_ranges.is_empty() {
         return base_spans;
@@ -278,6 +329,7 @@ fn render_context_lines(
     lines: &mut Vec<Line>,
     filename: &str,
     highlighter: &FileHighlighter,
+    tab_width: usize,
 ) {
     let t = theme::get();
     let context_bg = t.diff.context_bg;
@@ -290,7 +342,10 @@ fn render_context_lines(
                 Style::default().fg(t.ui.line_number).bg(context_bg),
             )];
             // Use FileHighlighter for proper multi-line construct highlighting
-            let hl_spans = highlighter.get_line_spans(cl.line_number, Some(context_bg));
+            let hl_spans = expand_tabs_in_spans(
+                highlighter.get_line_spans(cl.line_number, Some(context_bg)),
+                tab_width,
+            );
             if hl_spans.is_empty() {
                 // Fallback to line-by-line highlighting
                 spans.extend(highlight_line_spans(
@@ -445,6 +500,7 @@ pub fn render_diff(
                 &mut new_lines,
                 &diff.filename,
                 &new_highlighter,
+                settings.tab_width,
             );
         }
 
@@ -466,6 +522,7 @@ pub fn render_diff(
                     &matches,
                     Some(&new_highlighter),
                     Some(*num),
+                    settings.tab_width,
                 ));
                 new_lines.push(Line::from(spans));
             }
@@ -504,6 +561,7 @@ pub fn render_diff(
                 &mut old_lines,
                 &diff.filename,
                 &old_highlighter,
+                settings.tab_width,
             );
         }
 
@@ -525,6 +583,7 @@ pub fn render_diff(
                     &matches,
                     Some(&old_highlighter),
                     Some(*num),
+                    settings.tab_width,
                 ));
                 old_lines.push(Line::from(spans));
             }
@@ -588,6 +647,7 @@ pub fn render_diff(
                     &mut old_lines,
                     &diff.filename,
                     &old_highlighter,
+                    settings.tab_width,
                 );
             }
             if new_area.is_some() {
@@ -597,6 +657,7 @@ pub fn render_diff(
                     &mut new_lines,
                     &diff.filename,
                     &new_highlighter,
+                    settings.tab_width,
                 );
             }
         }
@@ -669,6 +730,7 @@ pub fn render_diff(
                             &matches,
                             Some(&old_highlighter),
                             Some(*num),
+                            settings.tab_width,
                         ));
                     }
                     None => {
@@ -710,6 +772,7 @@ pub fn render_diff(
                             &matches,
                             Some(&new_highlighter),
                             Some(*num),
+                            settings.tab_width,
                         ));
                     }
                     None => {
