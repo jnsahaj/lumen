@@ -36,7 +36,7 @@ pub struct LumenProvider {
 
 /// Provider configuration for custom endpoint providers (OpenRouter, Vercel)
 struct CustomProviderConfig {
-    endpoint: &'static str,
+    endpoint: String,
     env_key: &'static str,
     adapter_kind: AdapterKind,
 }
@@ -50,28 +50,31 @@ impl LumenProvider {
     ) -> Result<Self, LumenError> {
         let (backend, provider_name) = match provider_type {
             // Custom endpoint providers (OpenRouter, Vercel) - use ServiceTargetResolver
-            ProviderType::Openrouter | ProviderType::Vercel => {
+            ProviderType::Openrouter | ProviderType::Vercel | ProviderType::Customopenai => {
                 let defaults = ProviderInfo::for_provider(provider_type);
                 let config = match provider_type {
                     ProviderType::Openrouter => CustomProviderConfig {
-                        endpoint: "https://openrouter.ai/api/v1/",
+                        endpoint: "https://openrouter.ai/api/v1/".to_string(),
                         env_key: defaults.env_key,
                         adapter_kind: AdapterKind::OpenAI,
                     },
                     ProviderType::Vercel => CustomProviderConfig {
                         // Trailing slash is required for URL joining to work correctly
-                        endpoint: "https://ai-gateway.vercel.sh/v1/",
+                        endpoint: "https://ai-gateway.vercel.sh/v1/".to_string(),
                         env_key: defaults.env_key,
                         adapter_kind: AdapterKind::OpenAI,
                     },
-                    ProviderType::OpenAI => CustomProviderConfig {
-                        // Trailing slash is required for URL joining to work correctly
-                        endpoint: base_url
-                            .as_deref()
-                            .unwrap_or("https://api.openai.com/v1/"),
-                        env_key: defaults.env_key,
-                        adapter_kind: AdapterKind::OpenAI,
-                    },
+                    ProviderType::Customopenai => {
+                        let endpoint = base_url.ok_or_else(|| {
+                            LumenError::ConfigurationError("A Custom URL is required on CustomOpenAI provider".to_string())
+                        })?;
+
+                        CustomProviderConfig {
+                            endpoint,
+                            env_key: defaults.env_key,
+                            adapter_kind: AdapterKind::OpenAI,
+                        }
+                    }
                     _ => unreachable!(),
                 };
 
@@ -91,7 +94,7 @@ impl LumenProvider {
                     move |service_target: ServiceTarget| -> Result<ServiceTarget, genai::resolver::Error> {
                         let ServiceTarget { model, .. } = service_target;
                         Ok(ServiceTarget {
-                            endpoint: Endpoint::from_static(endpoint),
+                            endpoint: Endpoint::from_owned(endpoint.clone()),
                             auth: AuthData::from_env(auth_env_key),
                             model: ModelIden::new(adapter_kind, model.model_name),
                         })
@@ -109,6 +112,7 @@ impl LumenProvider {
                     },
                     defaults.display_name.to_string(),
                 )
+            }
             // Native genai providers
             _ => {
                 let defaults = ProviderInfo::for_provider(provider_type);
