@@ -31,7 +31,7 @@ use jj_lib::tree_merge::MergeOptions;
 use jj_lib::workspace::{default_working_copy_factories, Workspace};
 use pollster::FutureExt;
 
-use super::backend::{CommitInfo, VcsBackend, VcsError};
+use super::backend::{CommitInfo, StackedCommitInfo, VcsBackend, VcsError};
 
 /// Files to exclude from diff output (same as GIT_DIFF_EXCLUSIONS in git_entity).
 const DIFF_EXCLUDED_FILES: &[&str] = &[
@@ -43,6 +43,43 @@ const DIFF_EXCLUDED_FILES: &[&str] = &[
 
 /// Path patterns to exclude from diff output.
 const DIFF_EXCLUDED_PATTERNS: &[&str] = &["node_modules/"];
+
+/// Detect git-style refs and suggest jj equivalents.
+/// Returns Some(jj_suggestion) if git syntax detected.
+fn detect_git_syntax(ref_str: &str) -> Option<String> {
+    let s = ref_str.trim();
+
+    // HEAD
+    if s == "HEAD" {
+        return Some("@-".to_string());
+    }
+
+    // HEAD~N or HEAD^N
+    if let Some(rest) = s.strip_prefix("HEAD~").or_else(|| s.strip_prefix("HEAD^")) {
+        if let Ok(n) = rest.parse::<usize>() {
+            return Some(format!("@{}", "-".repeat(n + 1)));
+        }
+    }
+
+    // HEAD~ or HEAD^ (implicit ~1)
+    if s == "HEAD~" || s == "HEAD^" {
+        return Some("@--".to_string());
+    }
+
+    None
+}
+
+/// Format error with git syntax hint if applicable.
+fn format_ref_error(ref_str: &str, base_error: &str) -> VcsError {
+    if let Some(suggestion) = detect_git_syntax(ref_str) {
+        VcsError::Other(format!(
+            "'{}' is git syntax, use '{}' instead",
+            ref_str, suggestion
+        ))
+    } else {
+        VcsError::InvalidRef(base_error.to_string())
+    }
+}
 
 /// Truncate a hash string to the given length, handling empty strings safely.
 fn truncate_hash(hash: &str, max_len: usize) -> &str {
@@ -147,7 +184,7 @@ impl JjBackend {
             // Parse the revset expression
             let mut diagnostics = RevsetDiagnostics::new();
             let expression = jj_lib::revset::parse(&mut diagnostics, revset_str, context)
-                .map_err(|e| VcsError::InvalidRef(format!("parse error: {}", e)))?;
+                .map_err(|e| format_ref_error(revset_str, &format!("parse error: {}", e)))?;
 
             // Create symbol resolver
             let symbol_resolver =
@@ -156,7 +193,7 @@ impl JjBackend {
             // Resolve and evaluate
             let resolved = expression
                 .resolve_user_expression(repo, &symbol_resolver)
-                .map_err(|e| VcsError::InvalidRef(format!("resolution error: {}", e)))?;
+                .map_err(|e| format_ref_error(revset_str, &format!("resolution error: {}", e)))?;
 
             let revset = resolved
                 .evaluate(repo)
@@ -166,7 +203,9 @@ impl JjBackend {
             let mut iter = revset.iter();
             let commit_id = iter
                 .next()
-                .ok_or_else(|| VcsError::InvalidRef(revset_str.to_string()))?
+                .ok_or_else(|| {
+                    format_ref_error(revset_str, &format!("revision '{}' not found", revset_str))
+                })?
                 .map_err(|e| VcsError::Other(format!("iterator error: {}", e)))?;
 
             // Load the commit
@@ -832,6 +871,105 @@ impl VcsBackend for JjBackend {
             // Has parent - return parent ref using jj syntax
             Ok(format!("{}-", reference.trim()))
         }
+    }
+
+    fn get_commits_in_range(
+        &self,
+        from: &str,
+        to: &str,
+    ) -> Result<Vec<StackedCommitInfo>, VcsError> {
+        let from = from.trim();
+        let to = to.trim();
+        let repo = self.repo.as_ref();
+
+        // jj range syntax: from::to (inclusive on both ends)
+        // We want exclusive on from (like git from..to), so use (from::to) ~ from
+        let revset_str = format!("({}::{}) ~ ({})", from, to, from);
+
+        self.with_revset_context(|context| {
+            let mut diagnostics = RevsetDiagnostics::new();
+            let expression = jj_lib::revset::parse(&mut diagnostics, &revset_str, context)
+                .map_err(|_| {
+                    // Check both refs for git syntax hints
+                    if let Some(suggestion) = detect_git_syntax(from) {
+                        return VcsError::Other(format!(
+                            "'{}' is git syntax, use '{}' instead",
+                            from, suggestion
+                        ));
+                    }
+                    if let Some(suggestion) = detect_git_syntax(to) {
+                        return VcsError::Other(format!(
+                            "'{}' is git syntax, use '{}' instead",
+                            to, suggestion
+                        ));
+                    }
+                    VcsError::InvalidRef(format!("invalid range: {}..{}", from, to))
+                })?;
+
+            let symbol_resolver =
+                SymbolResolver::new(repo, &([] as [&Box<dyn SymbolResolverExtension>; 0]));
+
+            let resolved = expression
+                .resolve_user_expression(repo, &symbol_resolver)
+                .map_err(|_| {
+                    // Check both refs for git syntax hints
+                    if let Some(suggestion) = detect_git_syntax(from) {
+                        return VcsError::Other(format!(
+                            "'{}' is git syntax, use '{}' instead",
+                            from, suggestion
+                        ));
+                    }
+                    if let Some(suggestion) = detect_git_syntax(to) {
+                        return VcsError::Other(format!(
+                            "'{}' is git syntax, use '{}' instead",
+                            to, suggestion
+                        ));
+                    }
+                    VcsError::InvalidRef(format!("invalid range: {}..{}", from, to))
+                })?;
+
+            let revset = resolved
+                .evaluate(repo)
+                .map_err(|e| VcsError::Other(format!("evaluation error: {}", e)))?;
+
+            let mut commits = Vec::new();
+
+            for commit_id_result in revset.iter() {
+                let commit_id = commit_id_result
+                    .map_err(|e| VcsError::Other(format!("iterator error: {}", e)))?;
+
+                let commit = repo
+                    .store()
+                    .get_commit(&commit_id)
+                    .map_err(|e| VcsError::Other(format!("failed to load commit: {}", e)))?;
+
+                // Filter empty commits by checking tree diff
+                let changed_files = self.get_changed_files(&commit.id().hex())?;
+                if changed_files.is_empty() {
+                    continue;
+                }
+
+                commits.push(StackedCommitInfo {
+                    commit_id: commit.id().hex(),
+                    short_id: truncate_hash(&commit.id().hex(), 12).to_string(),
+                    change_id: Some(commit.change_id().hex()),
+                    summary: commit
+                        .description()
+                        .lines()
+                        .next()
+                        .unwrap_or("")
+                        .to_string(),
+                });
+            }
+
+            // jj returns newest first, reverse for chronological order
+            commits.reverse();
+            Ok(commits)
+        })
+    }
+
+    fn name(&self) -> &'static str {
+        "jj"
     }
 }
 
@@ -1535,5 +1673,245 @@ mod tests {
             "root()",
             "root commit should return root() for empty tree"
         );
+    }
+
+    #[test]
+    fn test_get_commits_in_range_empty_range() {
+        let Some(repo) = JjRepoGuard::new() else {
+            eprintln!("Skipping test: jj not available");
+            return;
+        };
+
+        let backend = JjBackend::new(&repo.dir).expect("should load backend");
+
+        // @..@ is empty range (commit excluded from its own range)
+        let commits = backend
+            .get_commits_in_range("@", "@")
+            .expect("should succeed");
+        assert!(commits.is_empty(), "@..@ should return empty vec");
+    }
+
+    #[test]
+    fn test_get_commits_in_range_with_commits() {
+        use std::fs;
+
+        let Some(repo) = JjRepoGuard::new() else {
+            eprintln!("Skipping test: jj not available");
+            return;
+        };
+
+        // Commit A (has README.md from JjRepoGuard)
+        crate::vcs::test_utils::jj(&repo.dir, &["describe", "-m", "commit A"]);
+        crate::vcs::test_utils::jj(&repo.dir, &["new"]);
+
+        // Commit B
+        fs::write(repo.dir.join("file_b.txt"), "B\n").expect("write file_b");
+        crate::vcs::test_utils::jj(&repo.dir, &["status"]); // Snapshot
+        crate::vcs::test_utils::jj(&repo.dir, &["describe", "-m", "commit B"]);
+        crate::vcs::test_utils::jj(&repo.dir, &["new"]);
+
+        // Commit C
+        fs::write(repo.dir.join("file_c.txt"), "C\n").expect("write file_c");
+        crate::vcs::test_utils::jj(&repo.dir, &["status"]); // Snapshot
+        crate::vcs::test_utils::jj(&repo.dir, &["describe", "-m", "commit C"]);
+
+        // Reload backend
+        let backend = JjBackend::new(&repo.dir).expect("should load backend");
+
+        // Range @--..@ (grandparent to current) should return B and C
+        let commits = backend
+            .get_commits_in_range("@--", "@")
+            .expect("should get commits");
+
+        assert_eq!(commits.len(), 2, "should have 2 commits in range");
+        assert_eq!(commits[0].summary, "commit B", "first should be B (oldest)");
+        assert_eq!(
+            commits[1].summary, "commit C",
+            "second should be C (newest)"
+        );
+    }
+
+    #[test]
+    fn test_get_commits_in_range_fields_populated() {
+        use std::fs;
+
+        let Some(repo) = JjRepoGuard::new() else {
+            eprintln!("Skipping test: jj not available");
+            return;
+        };
+
+        // First commit
+        crate::vcs::test_utils::jj(&repo.dir, &["describe", "-m", "first commit"]);
+        crate::vcs::test_utils::jj(&repo.dir, &["new"]);
+
+        // Second commit
+        fs::write(repo.dir.join("second.txt"), "second\n").expect("write file");
+        crate::vcs::test_utils::jj(&repo.dir, &["status"]); // Snapshot
+        crate::vcs::test_utils::jj(&repo.dir, &["describe", "-m", "second commit"]);
+
+        // Reload backend
+        let backend = JjBackend::new(&repo.dir).expect("should load backend");
+
+        let commits = backend
+            .get_commits_in_range("@-", "@")
+            .expect("should get commits");
+
+        assert_eq!(commits.len(), 1);
+        let commit = &commits[0];
+
+        // commit_id should be 40-char hex
+        assert_eq!(commit.commit_id.len(), 40, "commit_id should be 40 chars");
+        assert!(
+            commit.commit_id.chars().all(|c| c.is_ascii_hexdigit()),
+            "commit_id should be hex"
+        );
+
+        // short_id should be 12 chars (jj uses 12)
+        assert_eq!(
+            commit.short_id.len(),
+            12,
+            "short_id should be 12 chars, got: {}",
+            commit.short_id
+        );
+
+        // change_id should be present for jj
+        assert!(
+            commit.change_id.is_some(),
+            "jj commits should have change_id"
+        );
+
+        // summary should match commit message
+        assert_eq!(commit.summary, "second commit");
+    }
+
+    #[test]
+    fn test_get_commits_in_range_excludes_empty_commits() {
+        use std::fs;
+
+        let Some(repo) = JjRepoGuard::new() else {
+            eprintln!("Skipping test: jj not available");
+            return;
+        };
+
+        // First commit with changes
+        crate::vcs::test_utils::jj(&repo.dir, &["describe", "-m", "first with changes"]);
+        crate::vcs::test_utils::jj(&repo.dir, &["new"]);
+
+        // Second commit with changes
+        fs::write(repo.dir.join("second.txt"), "second\n").expect("write file");
+        crate::vcs::test_utils::jj(&repo.dir, &["status"]); // Snapshot
+        crate::vcs::test_utils::jj(&repo.dir, &["describe", "-m", "second with changes"]);
+        crate::vcs::test_utils::jj(&repo.dir, &["new"]);
+
+        // Empty commit (just new without changes)
+        crate::vcs::test_utils::jj(&repo.dir, &["describe", "-m", "empty commit"]);
+        crate::vcs::test_utils::jj(&repo.dir, &["new"]);
+
+        // Third commit with changes
+        fs::write(repo.dir.join("third.txt"), "third\n").expect("write file");
+        crate::vcs::test_utils::jj(&repo.dir, &["status"]); // Snapshot
+        crate::vcs::test_utils::jj(&repo.dir, &["describe", "-m", "third with changes"]);
+
+        // Reload backend
+        let backend = JjBackend::new(&repo.dir).expect("should load backend");
+
+        // Get range from first commit to current
+        // @--- = first, @-- = second, @- = empty, @ = third
+        let commits = backend
+            .get_commits_in_range("@---", "@")
+            .expect("should get commits");
+
+        // Should have 2 commits (second and third) - empty is excluded
+        assert_eq!(
+            commits.len(),
+            2,
+            "should have 2 commits (empty commit excluded)"
+        );
+
+        // Verify empty commit is not included
+        for commit in &commits {
+            assert_ne!(
+                commit.summary, "empty commit",
+                "empty commit should be excluded"
+            );
+        }
+    }
+
+    #[test]
+    fn test_stacked_diff_integration_jj() {
+        use crate::command::diff::git::load_single_commit_diffs;
+        use std::fs;
+
+        let Some(repo) = JjRepoGuard::new() else {
+            eprintln!("Skipping test: jj not available");
+            return;
+        };
+
+        // Commit A (has README.md from JjRepoGuard)
+        crate::vcs::test_utils::jj(&repo.dir, &["describe", "-m", "commit A"]);
+        crate::vcs::test_utils::jj(&repo.dir, &["new"]);
+
+        // Commit B
+        fs::write(repo.dir.join("b.txt"), "commit B content\n").expect("write b");
+        crate::vcs::test_utils::jj(&repo.dir, &["status"]); // Snapshot
+        crate::vcs::test_utils::jj(&repo.dir, &["describe", "-m", "commit B"]);
+        crate::vcs::test_utils::jj(&repo.dir, &["new"]);
+
+        // Commit C
+        fs::write(repo.dir.join("c.txt"), "commit C content\n").expect("write c");
+        crate::vcs::test_utils::jj(&repo.dir, &["status"]); // Snapshot
+        crate::vcs::test_utils::jj(&repo.dir, &["describe", "-m", "commit C"]);
+
+        // Reload backend
+        let backend = JjBackend::new(&repo.dir).expect("should load backend");
+
+        // Get commits in range (simulating stacked diff)
+        // @-- = commit A, @- = commit B, @ = commit C
+        let commits = backend
+            .get_commits_in_range("@--", "@")
+            .expect("should get commits");
+
+        assert_eq!(commits.len(), 2, "should have 2 commits (B and C)");
+        assert_eq!(commits[0].summary, "commit B");
+        assert_eq!(commits[1].summary, "commit C");
+
+        // Verify change_id is populated (jj-specific)
+        assert!(
+            commits[0].change_id.is_some(),
+            "jj commits should have change_id"
+        );
+        assert!(
+            commits[1].change_id.is_some(),
+            "jj commits should have change_id"
+        );
+
+        // Load diffs for each commit using VcsBackend
+        let diffs_b = load_single_commit_diffs(&commits[0].commit_id, &None, &backend);
+        assert_eq!(diffs_b.len(), 1);
+        assert_eq!(diffs_b[0].filename, "b.txt");
+        assert_eq!(diffs_b[0].new_content, "commit B content\n");
+
+        let diffs_c = load_single_commit_diffs(&commits[1].commit_id, &None, &backend);
+        assert_eq!(diffs_c.len(), 1);
+        assert_eq!(diffs_c[0].filename, "c.txt");
+        assert_eq!(diffs_c[0].new_content, "commit C content\n");
+    }
+
+    #[test]
+    fn test_detect_git_syntax() {
+        // HEAD
+        assert_eq!(detect_git_syntax("HEAD").unwrap(), "@-");
+
+        // HEAD~N
+        assert_eq!(detect_git_syntax("HEAD~2").unwrap(), "@---"); // 2+1 dashes
+        assert_eq!(detect_git_syntax("HEAD^3").unwrap(), "@----"); // 3+1 dashes
+
+        // HEAD~ (implicit ~1)
+        assert_eq!(detect_git_syntax("HEAD~").unwrap(), "@--");
+
+        // Not git syntax
+        assert!(detect_git_syntax("@").is_none());
+        assert!(detect_git_syntax("main").is_none());
+        assert!(detect_git_syntax("abc123").is_none());
     }
 }

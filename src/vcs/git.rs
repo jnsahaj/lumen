@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use super::backend::{CommitInfo, VcsBackend, VcsError};
+use super::backend::{CommitInfo, StackedCommitInfo, VcsBackend, VcsError};
 
 /// Pathspec exclusions for diff output.
 ///
@@ -327,6 +327,53 @@ impl VcsBackend for GitBackend {
             // This is a well-known constant: the SHA of an empty tree
             Ok("4b825dc642cb6eb9a060e54bf8d69288fbee4904".to_string())
         }
+    }
+
+    fn get_commits_in_range(
+        &self,
+        from: &str,
+        to: &str,
+    ) -> Result<Vec<StackedCommitInfo>, VcsError> {
+        let from = from.trim();
+        let to = to.trim();
+
+        self.is_valid_ref(from)?;
+        self.is_valid_ref(to)?;
+
+        let range = format!("{}..{}", from, to);
+        let output = self.run_git(&["log", "--reverse", "--format=%H%x00%h%x00%s", &range])?;
+
+        output
+            .lines()
+            .filter(|line| !line.is_empty())
+            .filter_map(|line| {
+                let parts: Vec<&str> = line.split('\0').collect();
+                if parts.len() >= 3 {
+                    let commit_id = parts[0].to_string();
+                    // Filter commits with no file changes (e.g., merge commits)
+                    if self
+                        .get_changed_files(&commit_id)
+                        .map(|f| !f.is_empty())
+                        .unwrap_or(false)
+                    {
+                        Some(Ok(StackedCommitInfo {
+                            commit_id,
+                            short_id: parts[1].to_string(),
+                            change_id: None,
+                            summary: parts[2].to_string(),
+                        }))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    fn name(&self) -> &'static str {
+        "git"
     }
 }
 
@@ -1012,5 +1059,187 @@ mod tests {
             matches!(result2, Err(VcsError::InvalidRef(_))),
             "refs starting with - should be rejected"
         );
+    }
+
+    #[test]
+    fn test_get_commits_in_range_empty_range() {
+        let _repo = RepoGuard::new();
+        let backend = GitBackend::new();
+
+        // HEAD..HEAD is empty range
+        let commits = backend
+            .get_commits_in_range("HEAD", "HEAD")
+            .expect("should succeed");
+        assert!(commits.is_empty(), "HEAD..HEAD should return empty vec");
+    }
+
+    #[test]
+    fn test_get_commits_in_range_with_commits() {
+        use crate::vcs::test_utils::{git, make_temp_dir};
+        use std::fs;
+
+        let _lock = crate::vcs::test_utils::cwd_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = make_temp_dir("git-range-commits");
+        let original = std::env::current_dir().expect("get cwd");
+
+        git(&dir, &["init"]);
+        git(&dir, &["config", "user.email", "test@example.com"]);
+        git(&dir, &["config", "user.name", "Test User"]);
+
+        // Commit A
+        fs::write(dir.join("file.txt"), "A\n").expect("write file");
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-m", "commit A"]);
+
+        // Commit B
+        fs::write(dir.join("file.txt"), "B\n").expect("modify file");
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-m", "commit B"]);
+
+        // Commit C
+        fs::write(dir.join("file.txt"), "C\n").expect("modify file");
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-m", "commit C"]);
+
+        std::env::set_current_dir(&dir).expect("set cwd");
+
+        let backend = GitBackend::new();
+
+        // Range HEAD~2..HEAD should return commits B and C (2 commits)
+        let commits = backend
+            .get_commits_in_range("HEAD~2", "HEAD")
+            .expect("should get commits");
+
+        assert_eq!(commits.len(), 2, "should have 2 commits in range");
+        assert_eq!(commits[0].summary, "commit B", "first should be B (oldest)");
+        assert_eq!(
+            commits[1].summary, "commit C",
+            "second should be C (newest)"
+        );
+
+        let _ = std::env::set_current_dir(&original);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_get_commits_in_range_fields_populated() {
+        use crate::vcs::test_utils::{git, make_temp_dir};
+        use std::fs;
+
+        let _lock = crate::vcs::test_utils::cwd_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = make_temp_dir("git-range-fields");
+        let original = std::env::current_dir().expect("get cwd");
+
+        git(&dir, &["init"]);
+        git(&dir, &["config", "user.email", "test@example.com"]);
+        git(&dir, &["config", "user.name", "Test User"]);
+
+        // First commit
+        fs::write(dir.join("file.txt"), "first\n").expect("write file");
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-m", "first commit"]);
+
+        // Second commit
+        fs::write(dir.join("file.txt"), "second\n").expect("modify file");
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-m", "second commit"]);
+
+        std::env::set_current_dir(&dir).expect("set cwd");
+
+        let backend = GitBackend::new();
+        let commits = backend
+            .get_commits_in_range("HEAD~1", "HEAD")
+            .expect("should get commits");
+
+        assert_eq!(commits.len(), 1);
+        let commit = &commits[0];
+
+        // commit_id should be 40-char hex
+        assert_eq!(commit.commit_id.len(), 40, "commit_id should be 40 chars");
+        assert!(
+            commit.commit_id.chars().all(|c| c.is_ascii_hexdigit()),
+            "commit_id should be hex"
+        );
+
+        // short_id should be 7 chars (git default)
+        assert!(
+            commit.short_id.len() >= 7,
+            "short_id should be at least 7 chars"
+        );
+
+        // change_id should be None for git
+        assert!(commit.change_id.is_none(), "git has no change_id");
+
+        // summary should match commit message
+        assert_eq!(commit.summary, "second commit");
+
+        let _ = std::env::set_current_dir(&original);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_get_commits_in_range_excludes_empty_commits() {
+        use crate::vcs::test_utils::{git, make_temp_dir};
+        use std::fs;
+
+        let _lock = crate::vcs::test_utils::cwd_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = make_temp_dir("git-range-empty");
+        let original = std::env::current_dir().expect("get cwd");
+
+        git(&dir, &["init"]);
+        git(&dir, &["config", "user.email", "test@example.com"]);
+        git(&dir, &["config", "user.name", "Test User"]);
+
+        // First commit with changes
+        fs::write(dir.join("file.txt"), "first\n").expect("write file");
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-m", "first with changes"]);
+
+        // Second commit with changes
+        fs::write(dir.join("file.txt"), "second\n").expect("modify file");
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-m", "second with changes"]);
+
+        // Empty commit (no file changes)
+        git(&dir, &["commit", "--allow-empty", "-m", "empty commit"]);
+
+        // Third commit with changes
+        fs::write(dir.join("file.txt"), "third\n").expect("modify file");
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-m", "third with changes"]);
+
+        std::env::set_current_dir(&dir).expect("set cwd");
+
+        let backend = GitBackend::new();
+
+        // Get range from first commit to HEAD
+        let commits = backend
+            .get_commits_in_range("HEAD~3", "HEAD")
+            .expect("should get commits");
+
+        // Should have 3 commits (second, empty excluded, third) - but empty is excluded
+        // so we get 2 commits
+        assert_eq!(
+            commits.len(),
+            2,
+            "should have 2 commits (empty commit excluded)"
+        );
+
+        // Verify empty commit is not included
+        for commit in &commits {
+            assert_ne!(
+                commit.summary, "empty commit",
+                "empty commit should be excluded"
+            );
+        }
+
+        let _ = std::env::set_current_dir(&original);
+        let _ = fs::remove_dir_all(&dir);
     }
 }

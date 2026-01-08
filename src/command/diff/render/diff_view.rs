@@ -22,9 +22,10 @@ use super::sidebar::render_sidebar;
 fn render_stacked_header(
     frame: &mut Frame,
     area: Rect,
-    commit: Option<&CommitInfo>,
+    commit: Option<&StackedCommitInfo>,
     index: usize,
     total: usize,
+    vcs_name: &str,
 ) {
     let t = theme::get();
     let bg = t.ui.footer_bg;
@@ -47,19 +48,28 @@ fn render_stacked_header(
         dimmed_style
     };
 
-    // Commit info
-    let (commit_sha, commit_msg) = if let Some(c) = commit {
-        (c.short_sha.clone(), c.message.clone())
+    // Commit info - for jj show change_id, for git show short SHA
+    let (commit_id_label, commit_msg) = if let Some(c) = commit {
+        let id_str = if let Some(ref change_id) = c.change_id {
+            // jj: show change_id (first 8 chars) + short commit id
+            format!("{} {}", &change_id[..8.min(change_id.len())], c.short_id)
+        } else {
+            // git: just show short SHA
+            c.short_id.clone()
+        };
+        (id_str, c.summary.clone())
     } else {
         ("?".to_string(), "No commit".to_string())
     };
 
-    // Build center content: [1/6]  sha  message
+    // Build center content: [jj] [1/6]  id  message
+    let vcs_indicator = format!(" {} ", vcs_name);
     let nav_indicator = format!(" {}/{} ", index + 1, total);
-    let sha_label = format!(" {} ", commit_sha);
+    let id_label = format!(" {} ", commit_id_label);
 
-    // Reserve space for arrows and hints
-    let available_for_msg = (area.width as usize).saturating_sub(50);
+    // Reserve space for arrows, hints, vcs indicator, and id
+    let available_for_msg =
+        (area.width as usize).saturating_sub(60 + vcs_indicator.len() + id_label.len());
 
     let truncated_msg = if commit_msg.len() > available_for_msg {
         format!(
@@ -70,17 +80,24 @@ fn render_stacked_header(
         commit_msg
     };
 
-    // Build center spans
+    // Build center spans: [vcs] [1/6] [id] message
     let center_spans = vec![
+        Span::styled(
+            vcs_indicator.clone(),
+            Style::default()
+                .fg(t.ui.text_muted)
+                .bg(t.ui.footer_branch_bg),
+        ),
+        Span::styled(" ", Style::default().bg(bg)),
         Span::styled(
             nav_indicator.clone(),
             Style::default()
                 .fg(t.ui.highlight)
                 .bg(t.ui.footer_branch_bg),
         ),
-        Span::styled("  ", Style::default().bg(bg)),
+        Span::styled(" ", Style::default().bg(bg)),
         Span::styled(
-            sha_label.clone(),
+            id_label.clone(),
             Style::default()
                 .fg(t.ui.footer_branch_fg)
                 .bg(t.ui.footer_branch_bg),
@@ -93,8 +110,13 @@ fn render_stacked_header(
     ];
 
     // Calculate widths for centering
-    let center_width: usize =
-        nav_indicator.len() + 2 + sha_label.len() + 2 + truncated_msg.chars().count();
+    let center_width: usize = vcs_indicator.len()
+        + 1
+        + nav_indicator.len()
+        + 1
+        + id_label.len()
+        + 2
+        + truncated_msg.chars().count();
     // " ‹ " + " ctrl+h " = 12 chars, same for right side
     let side_width = 12;
 
@@ -289,7 +311,7 @@ fn render_context_lines(
     }
 }
 
-use crate::command::diff::git::CommitInfo;
+use crate::vcs::StackedCommitInfo;
 
 #[allow(clippy::too_many_arguments)]
 pub fn render_diff(
@@ -316,9 +338,10 @@ pub fn render_diff(
     focused_hunk: Option<usize>,
     hunks: &[usize],
     stacked_mode: bool,
-    stacked_commit: Option<&CommitInfo>,
+    stacked_commit: Option<&StackedCommitInfo>,
     stacked_index: usize,
     stacked_total: usize,
+    vcs_name: &str,
 ) {
     let area = frame.area();
     let side_by_side =
@@ -350,6 +373,7 @@ pub fn render_diff(
             stacked_commit,
             stacked_index,
             stacked_total,
+            vcs_name,
         );
 
         (chunks[1], chunks[2])

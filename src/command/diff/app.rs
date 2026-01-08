@@ -29,7 +29,7 @@ use super::watcher::{setup_watcher, WatchEvent};
 use super::{
     fetch_viewed_files, mark_file_as_viewed_async, unmark_file_as_viewed_async, DiffOptions, PrInfo,
 };
-use crate::vcs::VcsBackend;
+use crate::vcs::{StackedCommitInfo, VcsBackend};
 
 pub fn run_app_with_pr(
     options: DiffOptions,
@@ -56,12 +56,12 @@ pub fn run_app(
 
 pub fn run_app_stacked(
     options: DiffOptions,
-    commits: Vec<super::git::CommitInfo>,
+    commits: Vec<StackedCommitInfo>,
     backend: &dyn VcsBackend,
 ) -> io::Result<()> {
     // Load the first commit's diff
     let first_commit = &commits[0];
-    let file_diffs = load_single_commit_diffs(&first_commit.sha, &options.file);
+    let file_diffs = load_single_commit_diffs(&first_commit.commit_id, &options.file, backend);
     run_app_internal(options, None, file_diffs, Some(commits), backend)
 }
 
@@ -81,7 +81,7 @@ fn run_app_internal(
     options: DiffOptions,
     pr_info: Option<PrInfo>,
     file_diffs: Vec<super::types::FileDiff>,
-    stacked_commits: Option<Vec<super::git::CommitInfo>>,
+    stacked_commits: Option<Vec<StackedCommitInfo>>,
     backend: &dyn VcsBackend,
 ) -> io::Result<()> {
     theme::init(options.theme.as_deref());
@@ -100,6 +100,7 @@ fn run_app_internal(
     };
 
     let mut state = AppState::new(file_diffs);
+    state.set_vcs_name(backend.name());
     let mut active_modal: Option<Modal> = None;
     let mut pending_watch_event: Option<WatchEvent> = None;
     let mut pending_events: VecDeque<Event> = VecDeque::new();
@@ -198,6 +199,7 @@ fn run_app_internal(
                     state.current_commit(),
                     state.current_commit_index,
                     state.stacked_commits.len(),
+                    state.vcs_name,
                 );
                 if let Some(ref modal) = active_modal {
                     modal.render(frame);
@@ -300,8 +302,11 @@ fn run_app_internal(
                                     if let Some(commit) =
                                         state.stacked_commits.get(state.current_commit_index)
                                     {
-                                        let file_diffs =
-                                            load_single_commit_diffs(&commit.sha, &options.file);
+                                        let file_diffs = load_single_commit_diffs(
+                                            &commit.commit_id,
+                                            &options.file,
+                                            backend,
+                                        );
                                         state.reload(file_diffs, None);
                                         // Load viewed files for new commit
                                         state.load_stacked_viewed_files();
@@ -318,8 +323,11 @@ fn run_app_internal(
                                     if let Some(commit) =
                                         state.stacked_commits.get(state.current_commit_index)
                                     {
-                                        let file_diffs =
-                                            load_single_commit_diffs(&commit.sha, &options.file);
+                                        let file_diffs = load_single_commit_diffs(
+                                            &commit.commit_id,
+                                            &options.file,
+                                            backend,
+                                        );
                                         state.reload(file_diffs, None);
                                         // Load viewed files for new commit
                                         state.load_stacked_viewed_files();
@@ -513,8 +521,11 @@ fn run_app_internal(
                                 if let Some(commit) =
                                     state.stacked_commits.get(state.current_commit_index)
                                 {
-                                    let file_diffs =
-                                        load_single_commit_diffs(&commit.sha, &options.file);
+                                    let file_diffs = load_single_commit_diffs(
+                                        &commit.commit_id,
+                                        &options.file,
+                                        backend,
+                                    );
                                     state.reload(file_diffs, None);
                                     // Load viewed files for new commit
                                     state.load_stacked_viewed_files();
@@ -530,8 +541,11 @@ fn run_app_internal(
                                 if let Some(commit) =
                                     state.stacked_commits.get(state.current_commit_index)
                                 {
-                                    let file_diffs =
-                                        load_single_commit_diffs(&commit.sha, &options.file);
+                                    let file_diffs = load_single_commit_diffs(
+                                        &commit.commit_id,
+                                        &options.file,
+                                        backend,
+                                    );
                                     state.reload(file_diffs, None);
                                     // Load viewed files for new commit
                                     state.load_stacked_viewed_files();

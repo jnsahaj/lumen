@@ -1,18 +1,11 @@
 use std::fs;
+use std::path::Path;
 use std::process::Command;
 
 use super::types::{FileDiff, FileStatus};
 use super::{DiffOptions, PrInfo};
 use crate::commit_reference::CommitReference;
 use crate::vcs::VcsBackend;
-
-/// Information about a single commit for stacked diff navigation
-#[derive(Clone)]
-pub struct CommitInfo {
-    pub sha: String,
-    pub short_sha: String,
-    pub message: String,
-}
 
 pub fn get_current_branch(backend: &dyn VcsBackend) -> String {
     backend
@@ -80,8 +73,6 @@ pub fn get_changed_files(options: &DiffOptions, backend: &dyn VcsBackend) -> Vec
 
 /// Get content of a file at the "old" side of the diff
 pub fn get_old_content(filename: &str, refs: &DiffRefs, backend: &dyn VcsBackend) -> String {
-    use std::path::Path;
-
     let ref_str = match refs {
         DiffRefs::Single(sha) => {
             // Use get_parent_ref_or_empty to handle root commits gracefully
@@ -103,8 +94,6 @@ pub fn get_old_content(filename: &str, refs: &DiffRefs, backend: &dyn VcsBackend
 
 /// Get content of a file at the "new" side of the diff
 pub fn get_new_content(filename: &str, refs: &DiffRefs, backend: &dyn VcsBackend) -> String {
-    use std::path::Path;
-
     match refs {
         DiffRefs::Single(sha) => backend
             .get_file_content_at_ref(sha, Path::new(filename))
@@ -239,101 +228,44 @@ fn parse_changed_files_from_diff(diff: &str) -> Vec<String> {
     files
 }
 
-/// Check if a commit has any file changes
-fn commit_has_changes(sha: &str) -> bool {
-    let output = Command::new("git")
-        .args(["diff-tree", "--no-commit-id", "--name-only", "-r", sha])
-        .output();
-
-    match output {
-        Ok(o) if o.status.success() => !String::from_utf8_lossy(&o.stdout).trim().is_empty(),
-        _ => false,
-    }
-}
-
-/// Get list of commits in a range for stacked diff mode
-/// Filters out merge commits and commits with no file changes
-pub fn get_commits_in_range(from: &str, to: &str) -> Vec<CommitInfo> {
-    let range = format!("{}..{}", from, to);
-    let output = Command::new("git")
-        .args(["log", "--reverse", "--format=%H%x00%h%x00%s", &range])
-        .output();
-
-    match output {
-        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
-            .lines()
-            .filter_map(|line| {
-                let parts: Vec<&str> = line.split('\0').collect();
-                if parts.len() >= 3 {
-                    let sha = parts[0].to_string();
-                    // Filter out commits with no changes (like merge commits)
-                    if commit_has_changes(&sha) {
-                        Some(CommitInfo {
-                            sha,
-                            short_sha: parts[1].to_string(),
-                            message: parts[2].to_string(),
-                        })
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            })
-            .collect(),
-        _ => Vec::new(),
-    }
-}
-
-/// Load file diffs for a single commit (comparing commit to its parent)
-pub fn load_single_commit_diffs(sha: &str, file_filter: &Option<Vec<String>>) -> Vec<FileDiff> {
+/// Load file diffs for a single commit (comparing commit to its parent).
+/// Uses VcsBackend for backend-agnostic file content retrieval.
+pub fn load_single_commit_diffs(
+    commit_id: &str,
+    file_filter: &Option<Vec<String>>,
+    backend: &dyn VcsBackend,
+) -> Vec<FileDiff> {
     // Get the list of changed files for this commit
-    let output = Command::new("git")
-        .args(["diff-tree", "--no-commit-id", "--name-only", "-r", sha])
-        .output()
-        .expect("Failed to run git");
+    let files = backend.get_changed_files(commit_id).unwrap_or_default();
 
-    let files: Vec<String> = String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter(|s| !s.is_empty())
-        .map(String::from)
-        .collect();
-
-    let files = if let Some(ref filter) = file_filter {
+    let files: Vec<String> = if let Some(ref filter) = file_filter {
         files.into_iter().filter(|f| filter.contains(f)).collect()
     } else {
         files
     };
 
+    // Get parent ref (handles root commits gracefully)
+    let parent_ref = backend
+        .get_parent_ref_or_empty(commit_id)
+        .unwrap_or_default();
+
     files
         .into_iter()
         .map(|filename| {
+            let path = Path::new(&filename);
+
             // Get old content (from parent commit)
-            let old_ref = format!("{}^:{}", sha, filename);
-            let old_content = Command::new("git")
-                .args(["show", &old_ref])
-                .output()
-                .map(|o| {
-                    if o.status.success() {
-                        String::from_utf8_lossy(&o.stdout).to_string()
-                    } else {
-                        String::new()
-                    }
-                })
-                .unwrap_or_default();
+            let old_content = if parent_ref.is_empty() {
+                String::new()
+            } else {
+                backend
+                    .get_file_content_at_ref(&parent_ref, path)
+                    .unwrap_or_default()
+            };
 
             // Get new content (from the commit itself)
-            let new_ref = format!("{}:{}", sha, filename);
-            let new_content = Command::new("git")
-                .args(["show", &new_ref])
-                .output()
-                .map(|o| {
-                    if o.status.success() {
-                        String::from_utf8_lossy(&o.stdout).to_string()
-                    } else {
-                        String::new()
-                    }
-                })
+            let new_content = backend
+                .get_file_content_at_ref(commit_id, path)
                 .unwrap_or_default();
 
             let status = if old_content.is_empty() && !new_content.is_empty() {
@@ -352,4 +284,187 @@ pub fn load_single_commit_diffs(sha: &str, file_filter: &Option<Vec<String>>) ->
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::vcs::test_utils::{git, make_temp_dir, RepoGuard};
+    use crate::vcs::GitBackend;
+    use std::fs;
+
+    #[test]
+    fn test_load_single_commit_diffs_added_file() {
+        let _repo = RepoGuard::new();
+        let backend = GitBackend::new();
+
+        // HEAD is the initial commit with README.md added
+        let diffs = load_single_commit_diffs("HEAD", &None, &backend);
+
+        assert_eq!(diffs.len(), 1, "should have 1 file diff");
+        assert_eq!(diffs[0].filename, "README.md");
+        assert_eq!(diffs[0].status, FileStatus::Added);
+        assert!(
+            diffs[0].old_content.is_empty(),
+            "old content should be empty for added file"
+        );
+        assert_eq!(diffs[0].new_content.trim(), "hello");
+    }
+
+    #[test]
+    fn test_load_single_commit_diffs_modified_file() {
+        let _lock = crate::vcs::test_utils::cwd_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = make_temp_dir("git-diff-modified");
+        let original = std::env::current_dir().expect("get cwd");
+
+        git(&dir, &["init"]);
+        git(&dir, &["config", "user.email", "test@example.com"]);
+        git(&dir, &["config", "user.name", "Test User"]);
+
+        // First commit
+        fs::write(dir.join("file.txt"), "original content\n").expect("write file");
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-m", "first"]);
+
+        // Second commit - modify file
+        fs::write(dir.join("file.txt"), "modified content\n").expect("modify file");
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-m", "second"]);
+
+        std::env::set_current_dir(&dir).expect("set cwd");
+
+        let backend = GitBackend::new();
+        let diffs = load_single_commit_diffs("HEAD", &None, &backend);
+
+        assert_eq!(diffs.len(), 1);
+        assert_eq!(diffs[0].filename, "file.txt");
+        assert_eq!(diffs[0].status, FileStatus::Modified);
+        assert_eq!(diffs[0].old_content, "original content\n");
+        assert_eq!(diffs[0].new_content, "modified content\n");
+
+        let _ = std::env::set_current_dir(&original);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_load_single_commit_diffs_multiple_files() {
+        let _lock = crate::vcs::test_utils::cwd_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = make_temp_dir("git-diff-multi");
+        let original = std::env::current_dir().expect("get cwd");
+
+        git(&dir, &["init"]);
+        git(&dir, &["config", "user.email", "test@example.com"]);
+        git(&dir, &["config", "user.name", "Test User"]);
+
+        // Commit with multiple files
+        fs::write(dir.join("a.txt"), "file a\n").expect("write a");
+        fs::write(dir.join("b.txt"), "file b\n").expect("write b");
+        fs::write(dir.join("c.txt"), "file c\n").expect("write c");
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-m", "multi"]);
+
+        std::env::set_current_dir(&dir).expect("set cwd");
+
+        let backend = GitBackend::new();
+        let diffs = load_single_commit_diffs("HEAD", &None, &backend);
+
+        assert_eq!(diffs.len(), 3, "should have 3 file diffs");
+
+        let filenames: Vec<&str> = diffs.iter().map(|d| d.filename.as_str()).collect();
+        assert!(filenames.contains(&"a.txt"));
+        assert!(filenames.contains(&"b.txt"));
+        assert!(filenames.contains(&"c.txt"));
+
+        let _ = std::env::set_current_dir(&original);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_load_single_commit_diffs_with_filter() {
+        let _lock = crate::vcs::test_utils::cwd_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = make_temp_dir("git-diff-filter");
+        let original = std::env::current_dir().expect("get cwd");
+
+        git(&dir, &["init"]);
+        git(&dir, &["config", "user.email", "test@example.com"]);
+        git(&dir, &["config", "user.name", "Test User"]);
+
+        fs::write(dir.join("wanted.txt"), "wanted\n").expect("write wanted");
+        fs::write(dir.join("unwanted.txt"), "unwanted\n").expect("write unwanted");
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-m", "filter test"]);
+
+        std::env::set_current_dir(&dir).expect("set cwd");
+
+        let backend = GitBackend::new();
+        let filter = Some(vec!["wanted.txt".to_string()]);
+        let diffs = load_single_commit_diffs("HEAD", &filter, &backend);
+
+        assert_eq!(diffs.len(), 1, "filter should limit to 1 file");
+        assert_eq!(diffs[0].filename, "wanted.txt");
+
+        let _ = std::env::set_current_dir(&original);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_stacked_diff_integration_git() {
+        let _lock = crate::vcs::test_utils::cwd_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = make_temp_dir("git-stacked-integration");
+        let original = std::env::current_dir().expect("get cwd");
+
+        git(&dir, &["init"]);
+        git(&dir, &["config", "user.email", "test@example.com"]);
+        git(&dir, &["config", "user.name", "Test User"]);
+
+        // Base commit
+        fs::write(dir.join("base.txt"), "base\n").expect("write base");
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-m", "base"]);
+
+        // Commit A
+        fs::write(dir.join("a.txt"), "commit A\n").expect("write a");
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-m", "commit A"]);
+
+        // Commit B
+        fs::write(dir.join("b.txt"), "commit B\n").expect("write b");
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-m", "commit B"]);
+
+        std::env::set_current_dir(&dir).expect("set cwd");
+
+        let backend = GitBackend::new();
+
+        // Get commits in range (simulating stacked diff)
+        let commits = backend
+            .get_commits_in_range("HEAD~2", "HEAD")
+            .expect("should get commits");
+
+        assert_eq!(commits.len(), 2, "should have 2 commits");
+        assert_eq!(commits[0].summary, "commit A");
+        assert_eq!(commits[1].summary, "commit B");
+
+        // Load diffs for each commit (as stacked diff would do)
+        let diffs_a = load_single_commit_diffs(&commits[0].commit_id, &None, &backend);
+        assert_eq!(diffs_a.len(), 1);
+        assert_eq!(diffs_a[0].filename, "a.txt");
+        assert_eq!(diffs_a[0].new_content, "commit A\n");
+
+        let diffs_b = load_single_commit_diffs(&commits[1].commit_id, &None, &backend);
+        assert_eq!(diffs_b.len(), 1);
+        assert_eq!(diffs_b[0].filename, "b.txt");
+        assert_eq!(diffs_b[0].new_content, "commit B\n");
+
+        let _ = std::env::set_current_dir(&original);
+        let _ = fs::remove_dir_all(&dir);
+    }
 }
