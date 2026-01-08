@@ -296,7 +296,7 @@ mod tests {
     #[test]
     fn test_load_single_commit_diffs_added_file() {
         let _repo = RepoGuard::new();
-        let backend = GitBackend::new();
+        let backend = GitBackend::from_cwd().expect("should open repo");
 
         // HEAD is the initial commit with README.md added
         let diffs = load_single_commit_diffs("HEAD", &None, &backend);
@@ -335,7 +335,7 @@ mod tests {
 
         std::env::set_current_dir(&dir).expect("set cwd");
 
-        let backend = GitBackend::new();
+        let backend = GitBackend::from_cwd().expect("should open repo");
         let diffs = load_single_commit_diffs("HEAD", &None, &backend);
 
         assert_eq!(diffs.len(), 1);
@@ -369,7 +369,7 @@ mod tests {
 
         std::env::set_current_dir(&dir).expect("set cwd");
 
-        let backend = GitBackend::new();
+        let backend = GitBackend::from_cwd().expect("should open repo");
         let diffs = load_single_commit_diffs("HEAD", &None, &backend);
 
         assert_eq!(diffs.len(), 3, "should have 3 file diffs");
@@ -402,7 +402,7 @@ mod tests {
 
         std::env::set_current_dir(&dir).expect("set cwd");
 
-        let backend = GitBackend::new();
+        let backend = GitBackend::from_cwd().expect("should open repo");
         let filter = Some(vec!["wanted.txt".to_string()]);
         let diffs = load_single_commit_diffs("HEAD", &filter, &backend);
 
@@ -442,7 +442,7 @@ mod tests {
 
         std::env::set_current_dir(&dir).expect("set cwd");
 
-        let backend = GitBackend::new();
+        let backend = GitBackend::from_cwd().expect("should open repo");
 
         // Get commits in range (simulating stacked diff)
         let commits = backend

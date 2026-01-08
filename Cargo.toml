@@ -44,6 +44,7 @@ arboard = "3.4"
 inquire = "0.7"
 dark-light = "1.1"
 sha2 = "0.10"
+git2 = "0.20"
 jj-lib = { version = "0.36.0", features = ["git"], optional = true }
 chrono = { version = "0.4", optional = true }
 pollster = { version = "0.4", optional = true }
