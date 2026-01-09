@@ -1,3 +1,4 @@
+use fm_bindings::LanguageModelSession;
 use genai::adapter::AdapterKind;
 use genai::chat::{ChatMessage, ChatRequest};
 use genai::resolver::{AuthData, Endpoint, ServiceTargetResolver};
@@ -15,6 +16,9 @@ pub enum ProviderError {
     #[error("AI request failed: {0}")]
     GenAIError(#[from] genai::Error),
 
+    #[error("AI requrest failed: {0}")]
+    FmError(#[from] fm_bindings::Error),
+
     #[error("API request failed: {0}")]
     RequestError(#[from] reqwest::Error),
 
@@ -27,6 +31,7 @@ pub enum ProviderError {
 
 enum ProviderBackend {
     GenAI { client: Client, model: String },
+    AppleIntelligence,
 }
 
 pub struct LumenProvider {
@@ -48,6 +53,14 @@ impl LumenProvider {
         model: Option<String>,
     ) -> Result<Self, LumenError> {
         let (backend, provider_name) = match provider_type {
+            ProviderType::AppleIntelligence => {
+                let defaults = ProviderInfo::for_provider(provider_type);
+
+                (
+                    ProviderBackend::AppleIntelligence,
+                    defaults.display_name.to_string(),
+                )
+            }
             // Custom endpoint providers (OpenCode Zen, OpenRouter, Vercel) - use ServiceTargetResolver
             ProviderType::OpencodeZen | ProviderType::Openrouter | ProviderType::Vercel => {
                 let defaults = ProviderInfo::for_provider(provider_type);
@@ -137,6 +150,18 @@ impl LumenProvider {
 
     async fn complete(&self, prompt: AIPrompt) -> Result<String, ProviderError> {
         match &self.backend {
+            ProviderBackend::AppleIntelligence => {
+                let system_prompt = prompt.system_prompt + "\ndo not use markdown syntax";
+
+                let session = LanguageModelSession::with_instructions(&system_prompt)
+                    .map_err(ProviderError::FmError)?;
+
+                let response = session
+                    .response(&prompt.user_prompt)
+                    .map_err(ProviderError::FmError)?;
+
+                Ok(response)
+            }
             ProviderBackend::GenAI { client, model } => {
                 let chat_req = ChatRequest::new(vec![
                     ChatMessage::system(prompt.system_prompt),
@@ -171,6 +196,7 @@ impl LumenProvider {
     fn get_model(&self) -> String {
         match &self.backend {
             ProviderBackend::GenAI { model, .. } => model.clone(),
+            ProviderBackend::AppleIntelligence => "Apple Intelligence".to_string(),
         }
     }
 }

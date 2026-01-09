@@ -18,6 +18,13 @@ pub struct ProviderInfo {
 /// Add new providers here to make them available everywhere.
 pub const ALL_PROVIDERS: &[ProviderInfo] = &[
     ProviderInfo {
+        id: "apple-intelligence",
+        provider_type: ProviderType::AppleIntelligence,
+        display_name: "Apple Intelligence",
+        default_model: "",
+        env_key: "",
+    },
+    ProviderInfo {
         id: "openai",
         provider_type: ProviderType::Openai,
         display_name: "OpenAI",
