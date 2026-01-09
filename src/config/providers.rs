@@ -80,6 +80,13 @@ pub const ALL_PROVIDERS: &[ProviderInfo] = &[
         default_model: "anthropic/claude-sonnet-4.5",
         env_key: "VERCEL_API_KEY",
     },
+    ProviderInfo {
+        id: "customopenai",
+        provider_type: ProviderType::Customopenai,
+        display_name: "Custom OpenAI",
+        default_model: "gpt-5-mini",
+        env_key: "CUSTOMOPENAI_API_KEY",
+    },
 ];
 
 impl ProviderInfo {
