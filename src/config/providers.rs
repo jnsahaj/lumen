@@ -46,6 +46,13 @@ pub const ALL_PROVIDERS: &[ProviderInfo] = &[
         env_key: "",
     },
     ProviderInfo {
+        id: "opencode-zen",
+        provider_type: ProviderType::OpencodeZen,
+        display_name: "OpenCode Zen",
+        default_model: "claude-sonnet-4-5",
+        env_key: "OPENCODE_API_KEY",
+    },
+    ProviderInfo {
         id: "openrouter",
         provider_type: ProviderType::Openrouter,
         display_name: "OpenRouter",
