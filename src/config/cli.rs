@@ -50,6 +50,7 @@ pub enum ProviderType {
     Gemini,
     Xai,
     Vercel,
+    AppleIntelligence,
 }
 
 impl FromStr for ProviderType {
@@ -67,6 +68,7 @@ impl FromStr for ProviderType {
             "gemini" => Ok(ProviderType::Gemini),
             "xai" => Ok(ProviderType::Xai),
             "vercel" => Ok(ProviderType::Vercel),
+            "apple-intelligence" => Ok(ProviderType::AppleIntelligence),
             _ => Err(format!("Unknown provider: {}", s)),
         }
     }
