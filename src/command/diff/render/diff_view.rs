@@ -309,6 +309,35 @@ fn segments_to_emphasis_ranges(segments: &[InlineSegment]) -> Vec<(usize, usize)
     ranges
 }
 
+/// Check if a color is "muted" (low luminosity) and would have poor contrast
+/// on a colored background. Returns true for grays and dark colors.
+fn is_muted_color(color: Color) -> bool {
+    match color {
+        Color::Rgb(r, g, b) => {
+            // Calculate relative luminance (simplified)
+            let luminance = (r as u32 * 299 + g as u32 * 587 + b as u32 * 114) / 1000;
+            // Also check if it's grayish (low saturation)
+            let max = r.max(g).max(b);
+            let min = r.min(g).min(b);
+            let saturation = if max == 0 { 0 } else { (max - min) as u32 * 100 / max as u32 };
+            // Muted = low luminance OR (medium luminance AND low saturation)
+            luminance < 140 || (luminance < 180 && saturation < 30)
+        }
+        Color::DarkGray | Color::Gray => true,
+        _ => false,
+    }
+}
+
+/// Boost a muted foreground color to improve contrast on emphasized backgrounds.
+fn boost_muted_fg(fg: Color, default_text: Color) -> Color {
+    if is_muted_color(fg) {
+        // Use a brighter version - the default text color is usually good
+        default_text
+    } else {
+        fg
+    }
+}
+
 /// Apply syntax highlighting with word-level emphasis backgrounds.
 /// This preserves syntax colors while overlaying emphasis backgrounds for changed words.
 fn apply_word_emphasis_highlight<'a>(
@@ -372,8 +401,10 @@ fn apply_word_emphasis_highlight<'a>(
                     (t.ui.search_match_bg, t.ui.search_match_fg, true)
                 }
             } else if in_emphasis {
-                // Emphasis: use darker background but keep original foreground color
-                (word_emphasis_bg, span.style.fg.unwrap_or(t.syntax.default_text), false)
+                // Emphasis: use word highlight background, boost muted fg colors for contrast
+                let original_fg = span.style.fg.unwrap_or(t.syntax.default_text);
+                let boosted_fg = boost_muted_fg(original_fg, t.syntax.default_text);
+                (word_emphasis_bg, boosted_fg, false)
             } else {
                 // Normal: use line background with original foreground
                 (
