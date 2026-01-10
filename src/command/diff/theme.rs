@@ -162,7 +162,7 @@ impl Theme {
                 deleted_gutter_fg: Color::Rgb(200, 140, 140),
                 context_bg: Color::Rgb(40, 40, 50),
                 empty_placeholder_fg: Color::Rgb(55, 60, 70),
-                added_word_bg: Color::Rgb(50, 100, 60),
+                added_word_bg: Color::Rgb(40, 85, 55),
                 deleted_word_bg: Color::Rgb(100, 50, 50),
             },
             ui: UiColors {
