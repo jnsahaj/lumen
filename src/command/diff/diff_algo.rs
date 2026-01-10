@@ -2,37 +2,38 @@ use similar::{ChangeTag, TextDiff};
 
 use super::types::{expand_tabs, ChangeType, DiffLine, InlineSegment};
 
-/// Minimum similarity ratio (0.0-1.0) required to show word-level diff.
-/// If lines are less similar than this threshold, we skip word-level highlighting
-/// and just show the whole line as changed (like GitHub does for very different lines).
-const WORD_DIFF_SIMILARITY_THRESHOLD: f32 = 0.35;
+/// Check if a string contains meaningful (non-whitespace) content.
+fn has_meaningful_content(s: &str) -> bool {
+    s.chars().any(|c| !c.is_whitespace())
+}
 
 /// Compute word-level diff segments for a pair of modified lines.
-/// Returns Some((old_segments, new_segments)) if lines are similar enough for word-level diff,
-/// or None if the lines are too different (below similarity threshold).
+/// Returns Some((old_segments, new_segments)) if word-level highlighting is useful,
+/// or None if the whole line would be highlighted (not useful).
+///
+/// Following Git's diff-highlight approach:
+/// "Pairs are interesting to highlight only if we are going to end up
+/// highlighting a subset (i.e., not the whole line)."
 fn compute_word_diff(
     old_text: &str,
     new_text: &str,
 ) -> Option<(Vec<InlineSegment>, Vec<InlineSegment>)> {
     let diff = TextDiff::from_words(old_text, new_text);
 
-    // Calculate similarity ratio - if too low, skip word-level diff
-    let ratio = diff.ratio();
-    if ratio < WORD_DIFF_SIMILARITY_THRESHOLD {
-        return None;
-    }
-
     let mut old_segments = Vec::new();
     let mut new_segments = Vec::new();
 
-    // Track how much is emphasized vs total
-    let mut old_emphasized_len = 0usize;
-    let mut new_emphasized_len = 0usize;
+    // Track if we have any meaningful equal (unchanged) content
+    let mut has_meaningful_equal = false;
 
     for change in diff.iter_all_changes() {
         let text = change.value().to_string();
         match change.tag() {
             ChangeTag::Equal => {
+                // Check if this equal segment is meaningful (not just whitespace)
+                if has_meaningful_content(&text) {
+                    has_meaningful_equal = true;
+                }
                 // Unchanged text goes to both sides, not emphasized
                 old_segments.push(InlineSegment {
                     text: text.clone(),
@@ -45,7 +46,6 @@ fn compute_word_diff(
             }
             ChangeTag::Delete => {
                 // Deleted text only goes to old side, emphasized
-                old_emphasized_len += text.len();
                 old_segments.push(InlineSegment {
                     text,
                     emphasized: true,
@@ -53,7 +53,6 @@ fn compute_word_diff(
             }
             ChangeTag::Insert => {
                 // Inserted text only goes to new side, emphasized
-                new_emphasized_len += text.len();
                 new_segments.push(InlineSegment {
                     text,
                     emphasized: true,
@@ -62,23 +61,9 @@ fn compute_word_diff(
         }
     }
 
-    // If almost everything is emphasized, skip word-level diff
-    let old_total: usize = old_segments.iter().map(|s| s.text.len()).sum();
-    let new_total: usize = new_segments.iter().map(|s| s.text.len()).sum();
-
-    let old_emphasis_ratio = if old_total > 0 {
-        old_emphasized_len as f32 / old_total as f32
-    } else {
-        1.0
-    };
-    let new_emphasis_ratio = if new_total > 0 {
-        new_emphasized_len as f32 / new_total as f32
-    } else {
-        1.0
-    };
-
-    // If more than 80% of either line is emphasized, skip word-level diff
-    if old_emphasis_ratio > 0.80 && new_emphasis_ratio > 0.80 {
+    // Following Git's diff-highlight: only show word-level diff if we have
+    // meaningful unchanged content (i.e., we're highlighting a subset, not the whole line)
+    if !has_meaningful_equal {
         return None;
     }
 
