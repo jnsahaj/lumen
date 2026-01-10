@@ -97,6 +97,27 @@ const GO_CONTEXT_QUERY: &str = r#"
 (select_statement) @context
 "#;
 
+const CSHARP_CONTEXT_QUERY: &str = r#"
+(namespace_declaration) @context
+(class_declaration) @context
+(struct_declaration) @context
+(interface_declaration) @context
+(enum_declaration) @context
+(record_declaration) @context
+(method_declaration) @context
+(constructor_declaration) @context
+(property_declaration) @context
+(for_statement) @context
+(foreach_statement) @context
+(while_statement) @context
+(do_statement) @context
+(if_statement) @context
+(switch_statement) @context
+(try_statement) @context
+(using_statement) @context
+(lock_statement) @context
+"#;
+
 struct LanguageContext {
     language: Language,
     query: Query,
@@ -183,6 +204,18 @@ static LANGUAGE_CONTEXTS: Lazy<Vec<(&'static str, LanguageContext)>> = Lazy::new
             "go",
             LanguageContext {
                 language: go_lang,
+                query,
+            },
+        ));
+    }
+
+    // C#
+    let csharp_lang: Language = tree_sitter_c_sharp::LANGUAGE.into();
+    if let Ok(query) = Query::new(&csharp_lang, CSHARP_CONTEXT_QUERY) {
+        contexts.push((
+            "cs",
+            LanguageContext {
+                language: csharp_lang,
                 query,
             },
         ));
