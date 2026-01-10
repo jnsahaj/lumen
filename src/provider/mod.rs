@@ -65,7 +65,7 @@ impl LumenProvider {
                 let defaults = ProviderInfo::for_provider(provider_type);
                 let config = match provider_type {
                     ProviderType::OpencodeZen => CustomProviderConfig {
-                        endpoint: "https://opencode.ai/zen/v1/",
+                        endpoint: "https://opencode.ai/zen/v1/".to_string(),
                         env_key: defaults.env_key,
                         adapter_kind: AdapterKind::OpenAI,
                     },
