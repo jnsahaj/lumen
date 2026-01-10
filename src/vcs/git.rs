@@ -142,7 +142,8 @@ impl GitBackend {
     }
 
     /// Open a git repository from the current working directory.
-    /// Convenience method for tests and CLI contexts.
+    /// Convenience method for tests.
+    #[cfg(test)]
     pub fn from_cwd() -> Result<Self, VcsError> {
         Self::new(Path::new("."))
     }
