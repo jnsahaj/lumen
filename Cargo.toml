@@ -46,7 +46,7 @@ inquire = "0.7"
 dark-light = "1.1"
 sha2 = "0.10"
 git2 = { version = "0.20", default-features = false, features = ["vendored-libgit2", "vendored-openssl", "https"] }
-jj-lib = { version = "0.36.0", features = ["git"], optional = true }
+jj-lib = { version = "0.37.0", features = ["git"], optional = true }
 chrono = { version = "0.4", optional = true }
 pollster = { version = "0.4", optional = true }
 futures = { version = "0.3", optional = true }
