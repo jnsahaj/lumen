@@ -9,30 +9,30 @@ fn has_meaningful_content(s: &str) -> bool {
 
 /// Compute word-level diff segments for a pair of modified lines.
 /// Returns Some((old_segments, new_segments)) if word-level highlighting is useful,
-/// or None if the whole line would be highlighted (not useful).
+/// or None if the lines are too different to benefit from word-level highlighting.
 ///
-/// Following Git's diff-highlight approach:
-/// "Pairs are interesting to highlight only if we are going to end up
-/// highlighting a subset (i.e., not the whole line)."
+/// Following Git's diff-highlight approach, word-level highlighting is only shown
+/// when a significant portion of the line is unchanged. This prevents noisy
+/// highlighting when unrelated lines are paired together.
 fn compute_word_diff(
     old_text: &str,
     new_text: &str,
 ) -> Option<(Vec<InlineSegment>, Vec<InlineSegment>)> {
-    let diff = TextDiff::from_words(old_text, new_text);
+    let diff = TextDiff::configure().diff_unicode_words(old_text, new_text);
 
     let mut old_segments = Vec::new();
     let mut new_segments = Vec::new();
 
-    // Track if we have any meaningful equal (unchanged) content
-    let mut has_meaningful_equal = false;
+    // Track lengths for ratio calculation
+    let mut unchanged_len = 0usize;
 
     for change in diff.iter_all_changes() {
         let text = change.value().to_string();
         match change.tag() {
             ChangeTag::Equal => {
-                // Check if this equal segment is meaningful (not just whitespace)
+                // Track meaningful (non-whitespace) unchanged content length
                 if has_meaningful_content(&text) {
-                    has_meaningful_equal = true;
+                    unchanged_len += text.trim().len();
                 }
                 // Unchanged text goes to both sides, not emphasized
                 old_segments.push(InlineSegment {
@@ -61,9 +61,16 @@ fn compute_word_diff(
         }
     }
 
-    // Following Git's diff-highlight: only show word-level diff if we have
-    // meaningful unchanged content (i.e., we're highlighting a subset, not the whole line)
-    if !has_meaningful_equal {
+    // Calculate ratio of unchanged content vs total content
+    // Use the longer line as the baseline to be conservative
+    let old_trimmed_len = old_text.trim().len();
+    let new_trimmed_len = new_text.trim().len();
+    let total_len = old_trimmed_len.max(new_trimmed_len);
+
+    // Only show word-level diff if at least 20% of content is unchanged
+    // This prevents noisy highlighting when unrelated lines are paired
+    const MIN_UNCHANGED_RATIO: f64 = 0.20;
+    if total_len == 0 || (unchanged_len as f64 / total_len as f64) < MIN_UNCHANGED_RATIO {
         return None;
     }
 
