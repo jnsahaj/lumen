@@ -4,12 +4,24 @@
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
+    fenix = {
+      url = "github:nix-community/fenix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, flake-utils, ... }:
+  outputs = { self, nixpkgs, flake-utils, fenix, ... }:
     flake-utils.lib.eachDefaultSystem (system:
     let
       pkgs = import nixpkgs { inherit system; };
+      rustToolchain = fenix.packages.${system}.stable.withComponents [
+        "cargo"
+        "clippy"
+        "rustc"
+        "rustfmt"
+        "rust-src"
+      ];
+      rust-analyzer = fenix.packages.${system}.rust-analyzer;
     in
     {
       packages = {
@@ -29,6 +41,17 @@
             buildInputs = [ pkgs.openssl ];
           };
         default = self.packages.${system}.lumen;
+      };
+
+      devShells.default = pkgs.mkShell {
+        nativeBuildInputs = [
+          rustToolchain
+          rust-analyzer
+          pkgs.pkg-config
+        ];
+        buildInputs = [
+          pkgs.openssl
+        ];
       };
     })
     // {

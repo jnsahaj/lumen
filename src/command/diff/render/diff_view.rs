@@ -11,7 +11,8 @@ use crate::command::diff::highlight::{highlight_line_spans, FileHighlighter};
 use crate::command::diff::search::{MatchPanel, SearchState};
 use crate::command::diff::theme;
 use crate::command::diff::types::{
-    ChangeType, DiffFullscreen, DiffLine, DiffViewSettings, FileDiff, FocusedPanel, SidebarItem,
+    ChangeType, DiffFullscreen, DiffLine, DiffViewSettings, FileDiff, FocusedPanel, InlineSegment,
+    SidebarItem,
 };
 use crate::command::diff::PrInfo;
 
@@ -160,6 +161,55 @@ pub struct LineStats {
     pub removed: usize,
 }
 
+fn expand_tabs_in_spans<'a>(spans: Vec<Span<'a>>, tab_width: usize) -> Vec<Span<'a>> {
+    if tab_width == 0 {
+        let mut col = 0;
+        return spans
+            .into_iter()
+            .map(|span| {
+                if !span.content.contains('\t') {
+                    col += span.content.chars().count();
+                    return span;
+                }
+                let mut buf = String::new();
+                for ch in span.content.chars() {
+                    if ch == '\t' {
+                        continue;
+                    }
+                    buf.push(ch);
+                    col += 1;
+                }
+                Span::styled(buf, span.style)
+            })
+            .collect();
+    }
+
+    let mut col = 0;
+    let mut out: Vec<Span<'a>> = Vec::with_capacity(spans.len());
+    for span in spans {
+        if !span.content.contains('\t') {
+            col += span.content.chars().count();
+            out.push(span);
+            continue;
+        }
+        let mut buf = String::new();
+        for ch in span.content.chars() {
+            if ch == '\t' {
+                let spaces = tab_width - (col % tab_width);
+                for _ in 0..spaces {
+                    buf.push(' ');
+                }
+                col += spaces;
+            } else {
+                buf.push(ch);
+                col += 1;
+            }
+        }
+        out.push(Span::styled(buf, span.style));
+    }
+    out
+}
+
 fn apply_search_highlight<'a>(
     text: &str,
     filename: &str,
@@ -167,6 +217,7 @@ fn apply_search_highlight<'a>(
     match_ranges: &[(usize, usize, bool)],
     highlighter: Option<&FileHighlighter>,
     line_number: Option<usize>,
+    tab_width: usize,
 ) -> Vec<Span<'a>> {
     let t = theme::get();
 
@@ -182,6 +233,7 @@ fn apply_search_highlight<'a>(
     } else {
         highlight_line_spans(text, filename, bg)
     };
+    let base_spans = expand_tabs_in_spans(base_spans, tab_width);
 
     if match_ranges.is_empty() {
         return base_spans;
@@ -243,6 +295,182 @@ fn apply_search_highlight<'a>(
     result
 }
 
+/// Convert InlineSegments to emphasis ranges (start, end) positions.
+fn segments_to_emphasis_ranges(segments: &[InlineSegment]) -> Vec<(usize, usize)> {
+    let mut ranges = Vec::new();
+    let mut pos = 0;
+    for segment in segments {
+        let len = segment.text.len();
+        if segment.emphasized {
+            ranges.push((pos, pos + len));
+        }
+        pos += len;
+    }
+    ranges
+}
+
+/// Check if a color is "muted" (low luminosity) and would have poor contrast
+/// on a colored background. Returns true for grays and dark colors.
+fn is_muted_color(color: Color) -> bool {
+    match color {
+        Color::Rgb(r, g, b) => {
+            // Calculate relative luminance (simplified)
+            let luminance = (r as u32 * 299 + g as u32 * 587 + b as u32 * 114) / 1000;
+            // Also check if it's grayish (low saturation)
+            let max = r.max(g).max(b);
+            let min = r.min(g).min(b);
+            let saturation = if max == 0 { 0 } else { (max - min) as u32 * 100 / max as u32 };
+            // Muted = low luminance OR (medium luminance AND low saturation)
+            luminance < 140 || (luminance < 180 && saturation < 30)
+        }
+        Color::DarkGray | Color::Gray => true,
+        _ => false,
+    }
+}
+
+/// Boost a muted foreground color to improve contrast on emphasized backgrounds.
+fn boost_muted_fg(fg: Color, default_text: Color) -> Color {
+    if is_muted_color(fg) {
+        // Use a brighter version - the default text color is usually good
+        default_text
+    } else {
+        fg
+    }
+}
+
+/// Apply syntax highlighting with word-level emphasis backgrounds.
+/// This preserves syntax colors while overlaying emphasis backgrounds for changed words.
+fn apply_word_emphasis_highlight<'a>(
+    text: &str,
+    filename: &str,
+    line_bg: Option<Color>,
+    word_emphasis_bg: Color,
+    emphasis_ranges: &[(usize, usize)],
+    search_ranges: &[(usize, usize, bool)],
+    highlighter: Option<&FileHighlighter>,
+    line_number: Option<usize>,
+    tab_width: usize,
+) -> Vec<Span<'a>> {
+    let t = theme::get();
+
+    // Get syntax-highlighted base spans
+    let base_spans = if let (Some(hl), Some(line_num)) = (highlighter, line_number) {
+        let spans = hl.get_line_spans(line_num, line_bg);
+        if spans.is_empty() {
+            highlight_line_spans(text, filename, line_bg)
+        } else {
+            spans
+        }
+    } else {
+        highlight_line_spans(text, filename, line_bg)
+    };
+    let base_spans = expand_tabs_in_spans(base_spans, tab_width);
+
+    if emphasis_ranges.is_empty() && search_ranges.is_empty() {
+        return base_spans;
+    }
+
+    let mut result: Vec<Span<'a>> = Vec::new();
+    let mut byte_pos = 0;
+
+    for span in base_spans {
+        let span_text = span.content.to_string();
+        let span_byte_len = span_text.len();
+
+        // Build a list of (byte_offset, char) for safe UTF-8 iteration
+        let char_indices: Vec<(usize, char)> = span_text.char_indices().collect();
+        if char_indices.is_empty() {
+            byte_pos += span_byte_len;
+            continue;
+        }
+
+        let mut idx = 0;
+        while idx < char_indices.len() {
+            let (byte_offset, _) = char_indices[idx];
+            let global_pos = byte_pos + byte_offset;
+
+            // Check if we're in a search match (takes priority)
+            let search_match = search_ranges.iter().find(|(start, end, _)| {
+                global_pos >= *start && global_pos < *end
+            });
+
+            // Check if we're in an emphasis range
+            let in_emphasis = emphasis_ranges.iter().any(|(start, end)| {
+                global_pos >= *start && global_pos < *end
+            });
+
+            // Determine background and style for this character
+            let (bg, fg, bold) = if let Some((_, _, is_current)) = search_match {
+                if *is_current {
+                    (t.ui.search_current_bg, t.ui.search_current_fg, true)
+                } else {
+                    (t.ui.search_match_bg, t.ui.search_match_fg, true)
+                }
+            } else if in_emphasis {
+                // Emphasis: use word highlight background, boost muted fg colors for contrast
+                let original_fg = span.style.fg.unwrap_or(t.syntax.default_text);
+                let boosted_fg = boost_muted_fg(original_fg, t.syntax.default_text);
+                (word_emphasis_bg, boosted_fg, false)
+            } else {
+                // Normal: use line background with original foreground
+                (
+                    span.style.bg.unwrap_or(line_bg.unwrap_or(Color::Reset)),
+                    span.style.fg.unwrap_or(t.syntax.default_text),
+                    false,
+                )
+            };
+
+            // Find the end of this run (same style)
+            let mut run_end_idx = idx + 1;
+            while run_end_idx < char_indices.len() {
+                let (next_byte_offset, _) = char_indices[run_end_idx];
+                let next_global_pos = byte_pos + next_byte_offset;
+
+                let next_search = search_ranges.iter().find(|(start, end, _)| {
+                    next_global_pos >= *start && next_global_pos < *end
+                });
+
+                let next_in_emphasis = emphasis_ranges.iter().any(|(start, end)| {
+                    next_global_pos >= *start && next_global_pos < *end
+                });
+
+                let same_style = match (search_match, next_search) {
+                    (Some((_, _, c1)), Some((_, _, c2))) => c1 == c2,
+                    (None, None) => in_emphasis == next_in_emphasis,
+                    _ => false,
+                };
+
+                if !same_style {
+                    break;
+                }
+                run_end_idx += 1;
+            }
+
+            // Get the byte range for this run
+            let run_start_byte = byte_offset;
+            let run_end_byte = if run_end_idx < char_indices.len() {
+                char_indices[run_end_idx].0
+            } else {
+                span_byte_len
+            };
+
+            // Push this run
+            let run_text = &span_text[run_start_byte..run_end_byte];
+            let mut style = Style::default().fg(fg).bg(bg);
+            if bold {
+                style = style.bold();
+            }
+            result.push(Span::styled(run_text.to_string(), style));
+
+            idx = run_end_idx;
+        }
+
+        byte_pos += span_byte_len;
+    }
+
+    result
+}
+
 pub fn compute_line_stats(side_by_side: &[DiffLine]) -> LineStats {
     let mut added = 0;
     let mut removed = 0;
@@ -278,6 +506,7 @@ fn render_context_lines(
     lines: &mut Vec<Line>,
     filename: &str,
     highlighter: &FileHighlighter,
+    tab_width: usize,
 ) {
     let t = theme::get();
     let context_bg = t.diff.context_bg;
@@ -290,7 +519,10 @@ fn render_context_lines(
                 Style::default().fg(t.ui.line_number).bg(context_bg),
             )];
             // Use FileHighlighter for proper multi-line construct highlighting
-            let hl_spans = highlighter.get_line_spans(cl.line_number, Some(context_bg));
+            let hl_spans = expand_tabs_in_spans(
+                highlighter.get_line_spans(cl.line_number, Some(context_bg)),
+                tab_width,
+            );
             if hl_spans.is_empty() {
                 // Fallback to line-by-line highlighting
                 spans.extend(highlight_line_spans(
@@ -344,15 +576,6 @@ pub fn render_diff(
     vcs_name: &str,
 ) {
     let area = frame.area();
-    let side_by_side =
-        compute_side_by_side(&diff.old_content, &diff.new_content, settings.tab_width);
-    let line_stats = compute_line_stats(&side_by_side);
-
-    // Pre-compute highlights for the entire file to properly handle multi-line constructs
-    // like JSDoc comments that span multiple lines
-    let old_highlighter = FileHighlighter::new(&diff.old_content, &diff.filename);
-    let new_highlighter = FileHighlighter::new(&diff.new_content, &diff.filename);
-
     let t = theme::get();
 
     // Layout: header (if stacked) + main content + footer
@@ -409,6 +632,62 @@ pub fn render_diff(
         content_area
     };
 
+    // Handle binary files - show a message instead of trying to diff
+    if diff.is_binary {
+        let border_style = Style::default().fg(t.ui.border_unfocused);
+        let title_style = if focused_panel == FocusedPanel::DiffView {
+            Style::default().fg(t.ui.border_focused)
+        } else {
+            Style::default().fg(t.ui.border_unfocused)
+        };
+
+        let message = Line::from(vec![Span::styled(
+            "Binary file - not displayed",
+            Style::default().fg(t.ui.text_muted),
+        )]);
+        let para = Paragraph::new(vec![message])
+            .alignment(ratatui::layout::Alignment::Center)
+            .block(
+                Block::default()
+                    .title(Line::styled(
+                        format!(" {} ", diff.filename),
+                        title_style,
+                    ))
+                    .borders(Borders::ALL)
+                    .border_style(border_style),
+            );
+        frame.render_widget(para, main_area);
+
+        render_footer(
+            frame,
+            footer_area,
+            FooterData {
+                filename: &diff.filename,
+                branch,
+                pr_info,
+                watching,
+                current_file,
+                viewed_files,
+                line_stats_added: 0,
+                line_stats_removed: 0,
+                hunk_count: 0,
+                focused_hunk: None,
+                search_state,
+                area_width: area.width,
+            },
+        );
+        return;
+    }
+
+    let side_by_side =
+        compute_side_by_side(&diff.old_content, &diff.new_content, settings.tab_width);
+    let line_stats = compute_line_stats(&side_by_side);
+
+    // Pre-compute highlights for the entire file to properly handle multi-line constructs
+    // like JSDoc comments that span multiple lines
+    let old_highlighter = FileHighlighter::new(&diff.old_content, &diff.filename);
+    let new_highlighter = FileHighlighter::new(&diff.new_content, &diff.filename);
+
     let is_new_file = diff.old_content.is_empty() && !diff.new_content.is_empty();
     let is_deleted_file = !diff.old_content.is_empty() && diff.new_content.is_empty();
 
@@ -445,6 +724,7 @@ pub fn render_diff(
                 &mut new_lines,
                 &diff.filename,
                 &new_highlighter,
+                settings.tab_width,
             );
         }
 
@@ -466,6 +746,7 @@ pub fn render_diff(
                     &matches,
                     Some(&new_highlighter),
                     Some(*num),
+                    settings.tab_width,
                 ));
                 new_lines.push(Line::from(spans));
             }
@@ -504,6 +785,7 @@ pub fn render_diff(
                 &mut old_lines,
                 &diff.filename,
                 &old_highlighter,
+                settings.tab_width,
             );
         }
 
@@ -525,6 +807,7 @@ pub fn render_diff(
                     &matches,
                     Some(&old_highlighter),
                     Some(*num),
+                    settings.tab_width,
                 ));
                 old_lines.push(Line::from(spans));
             }
@@ -588,6 +871,7 @@ pub fn render_diff(
                     &mut old_lines,
                     &diff.filename,
                     &old_highlighter,
+                    settings.tab_width,
                 );
             }
             if new_area.is_some() {
@@ -597,6 +881,7 @@ pub fn render_diff(
                     &mut new_lines,
                     &diff.filename,
                     &new_highlighter,
+                    settings.tab_width,
                 );
             }
         }
@@ -653,7 +938,7 @@ pub fn render_diff(
                 let mut old_spans: Vec<Span> = Vec::new();
                 old_spans.push(Span::styled(focus_indicator, focus_style));
                 match &diff_line.old_line {
-                    Some((num, text)) => {
+                    Some((num, _text)) => {
                         let prefix = format!("{:4} ", num);
                         old_spans.push(Span::styled(
                             prefix,
@@ -662,14 +947,44 @@ pub fn render_diff(
                                 .bg(old_gutter_bg.unwrap_or(Color::Reset)),
                         ));
                         let matches = search_state.get_matches_for_line(line_idx, MatchPanel::Old);
-                        old_spans.extend(apply_search_highlight(
-                            text,
-                            &diff.filename,
-                            old_bg,
-                            &matches,
-                            Some(&old_highlighter),
-                            Some(*num),
-                        ));
+
+                        // Use word-level rendering for modified lines if segments are available
+                        if matches!(diff_line.change_type, ChangeType::Modified) {
+                            if let Some(ref segments) = diff_line.old_segments {
+                                let emphasis_ranges = segments_to_emphasis_ranges(segments);
+                                old_spans.extend(apply_word_emphasis_highlight(
+                                    _text,
+                                    &diff.filename,
+                                    old_bg,
+                                    t.diff.deleted_word_bg,
+                                    &emphasis_ranges,
+                                    &matches,
+                                    Some(&old_highlighter),
+                                    Some(*num),
+                                    settings.tab_width,
+                                ));
+                            } else {
+                                old_spans.extend(apply_search_highlight(
+                                    _text,
+                                    &diff.filename,
+                                    old_bg,
+                                    &matches,
+                                    Some(&old_highlighter),
+                                    Some(*num),
+                                    settings.tab_width,
+                                ));
+                            }
+                        } else {
+                            old_spans.extend(apply_search_highlight(
+                                _text,
+                                &diff.filename,
+                                old_bg,
+                                &matches,
+                                Some(&old_highlighter),
+                                Some(*num),
+                                settings.tab_width,
+                            ));
+                        }
                     }
                     None => {
                         let panel_width = old_area.map(|a| a.width as usize).unwrap_or(80);
@@ -694,7 +1009,7 @@ pub fn render_diff(
                     new_spans.push(Span::styled(focus_indicator, focus_style));
                 }
                 match &diff_line.new_line {
-                    Some((num, text)) => {
+                    Some((num, _text)) => {
                         let prefix = format!("{:4} ", num);
                         new_spans.push(Span::styled(
                             prefix,
@@ -703,14 +1018,44 @@ pub fn render_diff(
                                 .bg(new_gutter_bg.unwrap_or(Color::Reset)),
                         ));
                         let matches = search_state.get_matches_for_line(line_idx, MatchPanel::New);
-                        new_spans.extend(apply_search_highlight(
-                            text,
-                            &diff.filename,
-                            new_bg,
-                            &matches,
-                            Some(&new_highlighter),
-                            Some(*num),
-                        ));
+
+                        // Use word-level rendering for modified lines if segments are available
+                        if matches!(diff_line.change_type, ChangeType::Modified) {
+                            if let Some(ref segments) = diff_line.new_segments {
+                                let emphasis_ranges = segments_to_emphasis_ranges(segments);
+                                new_spans.extend(apply_word_emphasis_highlight(
+                                    _text,
+                                    &diff.filename,
+                                    new_bg,
+                                    t.diff.added_word_bg,
+                                    &emphasis_ranges,
+                                    &matches,
+                                    Some(&new_highlighter),
+                                    Some(*num),
+                                    settings.tab_width,
+                                ));
+                            } else {
+                                new_spans.extend(apply_search_highlight(
+                                    _text,
+                                    &diff.filename,
+                                    new_bg,
+                                    &matches,
+                                    Some(&new_highlighter),
+                                    Some(*num),
+                                    settings.tab_width,
+                                ));
+                            }
+                        } else {
+                            new_spans.extend(apply_search_highlight(
+                                _text,
+                                &diff.filename,
+                                new_bg,
+                                &matches,
+                                Some(&new_highlighter),
+                                Some(*num),
+                                settings.tab_width,
+                            ));
+                        }
                     }
                     None => {
                         let panel_width = new_area.map(|a| a.width as usize).unwrap_or(80);

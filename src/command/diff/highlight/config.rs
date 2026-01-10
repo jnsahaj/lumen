@@ -179,5 +179,13 @@ pub static CONFIGS: Lazy<Vec<(&'static str, LanguageConfig)>> = Lazy::new(|| {
         &mut configs,
     );
 
+    load_config(
+        tree_sitter_c_sharp::LANGUAGE.into(),
+        "c_sharp",
+        CSHARP_HIGHLIGHTS,
+        "cs",
+        &mut configs,
+    );
+
     configs
 });

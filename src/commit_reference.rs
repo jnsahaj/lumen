@@ -99,7 +99,7 @@ mod tests {
     #[test]
     fn test_clap_integration() {
         // Test full range
-        let cli = TestCli::try_parse_from(&["test", "main..feature"]).unwrap();
+        let cli = TestCli::try_parse_from(["test", "main..feature"]).unwrap();
         assert!(matches!(
             cli.reference,
             CommitReference::Range { from, to }
@@ -107,7 +107,7 @@ mod tests {
         ));
 
         // Test from-only range
-        let cli = TestCli::try_parse_from(&["test", "develop.."]).unwrap();
+        let cli = TestCli::try_parse_from(["test", "develop.."]).unwrap();
         assert!(matches!(
             cli.reference,
             CommitReference::Range { from, to }
@@ -115,7 +115,7 @@ mod tests {
         ));
 
         // Test to-only range
-        let cli = TestCli::try_parse_from(&["test", "..feature"]).unwrap();
+        let cli = TestCli::try_parse_from(["test", "..feature"]).unwrap();
         assert!(matches!(
             cli.reference,
             CommitReference::Range { from, to }

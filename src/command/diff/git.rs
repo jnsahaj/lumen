@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-use super::types::{FileDiff, FileStatus};
+use super::types::{is_binary_content, FileDiff, FileStatus};
 use super::{DiffOptions, PrInfo};
 use crate::commit_reference::CommitReference;
 use crate::vcs::VcsBackend;
@@ -122,11 +122,14 @@ pub fn load_file_diffs(options: &DiffOptions, backend: &dyn VcsBackend) -> Vec<F
             } else {
                 FileStatus::Modified
             };
+            let is_binary =
+                is_binary_content(&old_content) || is_binary_content(&new_content);
             FileDiff {
                 filename,
                 old_content,
                 new_content,
                 status,
+                is_binary,
             }
         })
         .collect()
@@ -179,11 +182,14 @@ pub fn load_pr_file_diffs(pr_info: &PrInfo) -> Result<Vec<FileDiff>, String> {
                 FileStatus::Modified
             };
 
+            let is_binary =
+                is_binary_content(&old_content) || is_binary_content(&new_content);
             FileDiff {
                 filename,
                 old_content,
                 new_content,
                 status,
+                is_binary,
             }
         })
         .collect();
@@ -276,11 +282,14 @@ pub fn load_single_commit_diffs(
                 FileStatus::Modified
             };
 
+            let is_binary =
+                is_binary_content(&old_content) || is_binary_content(&new_content);
             FileDiff {
                 filename,
                 old_content,
                 new_content,
                 status,
+                is_binary,
             }
         })
         .collect()
@@ -296,7 +305,7 @@ mod tests {
     #[test]
     fn test_load_single_commit_diffs_added_file() {
         let _repo = RepoGuard::new();
-        let backend = GitBackend::new();
+        let backend = GitBackend::from_cwd().expect("should open repo");
 
         // HEAD is the initial commit with README.md added
         let diffs = load_single_commit_diffs("HEAD", &None, &backend);
@@ -335,7 +344,7 @@ mod tests {
 
         std::env::set_current_dir(&dir).expect("set cwd");
 
-        let backend = GitBackend::new();
+        let backend = GitBackend::from_cwd().expect("should open repo");
         let diffs = load_single_commit_diffs("HEAD", &None, &backend);
 
         assert_eq!(diffs.len(), 1);
@@ -369,7 +378,7 @@ mod tests {
 
         std::env::set_current_dir(&dir).expect("set cwd");
 
-        let backend = GitBackend::new();
+        let backend = GitBackend::from_cwd().expect("should open repo");
         let diffs = load_single_commit_diffs("HEAD", &None, &backend);
 
         assert_eq!(diffs.len(), 3, "should have 3 file diffs");
@@ -402,7 +411,7 @@ mod tests {
 
         std::env::set_current_dir(&dir).expect("set cwd");
 
-        let backend = GitBackend::new();
+        let backend = GitBackend::from_cwd().expect("should open repo");
         let filter = Some(vec!["wanted.txt".to_string()]);
         let diffs = load_single_commit_diffs("HEAD", &filter, &backend);
 
@@ -442,7 +451,7 @@ mod tests {
 
         std::env::set_current_dir(&dir).expect("set cwd");
 
-        let backend = GitBackend::new();
+        let backend = GitBackend::from_cwd().expect("should open repo");
 
         // Get commits in range (simulating stacked diff)
         let commits = backend

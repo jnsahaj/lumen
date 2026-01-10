@@ -9,6 +9,7 @@ use futures::StreamExt;
 use jj_lib::backend::TreeValue;
 use jj_lib::commit::Commit;
 use jj_lib::config::StackedConfig;
+use jj_lib::conflict_labels::ConflictLabels;
 use jj_lib::conflicts::{
     materialize_merge_result_to_bytes, try_materialize_file_conflict_value, ConflictMarkerStyle,
     ConflictMaterializeOptions,
@@ -349,7 +350,8 @@ impl JjBackend {
         value: &MergedTreeValue,
     ) -> Result<Option<String>, VcsError> {
         // Try to materialize as a file conflict
-        let file_conflict = try_materialize_file_conflict_value(repo.store(), path, value)
+        let labels = ConflictLabels::unlabeled();
+        let file_conflict = try_materialize_file_conflict_value(repo.store(), path, value, &labels)
             .block_on()
             .map_err(|e| VcsError::Other(format!("failed to materialize conflict: {}", e)))?;
 
@@ -365,7 +367,7 @@ impl JjBackend {
                     },
                 };
 
-                let content = materialize_merge_result_to_bytes(&file.contents, &options);
+                let content = materialize_merge_result_to_bytes(&file.contents, &labels, &options);
                 Ok(Some(String::from_utf8_lossy(&content).into_owned()))
             }
             None => {

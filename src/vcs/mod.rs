@@ -53,7 +53,7 @@ pub fn get_backend(
     );
 
     match vcs_type {
-        VcsType::Git => Ok(Box::new(GitBackend::new())),
+        VcsType::Git => GitBackend::new(path).map(|b| Box::new(b) as Box<dyn VcsBackend>),
         VcsType::Jj => {
             #[cfg(feature = "jj")]
             {
@@ -63,7 +63,7 @@ pub fn get_backend(
             {
                 // jj feature not enabled, fall back to git for colocated repos
                 eprintln!("Warning: jj repository detected but jj support not compiled in. Using git backend.");
-                Ok(Box::new(GitBackend::new()))
+                GitBackend::new(path).map(|b| Box::new(b) as Box<dyn VcsBackend>)
             }
         }
         VcsType::None => Err(VcsError::NotARepository),
