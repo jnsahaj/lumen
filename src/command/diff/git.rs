@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-use super::types::{FileDiff, FileStatus};
+use super::types::{is_binary_content, FileDiff, FileStatus};
 use super::{DiffOptions, PrInfo};
 use crate::commit_reference::CommitReference;
 use crate::vcs::VcsBackend;
@@ -122,11 +122,14 @@ pub fn load_file_diffs(options: &DiffOptions, backend: &dyn VcsBackend) -> Vec<F
             } else {
                 FileStatus::Modified
             };
+            let is_binary =
+                is_binary_content(&old_content) || is_binary_content(&new_content);
             FileDiff {
                 filename,
                 old_content,
                 new_content,
                 status,
+                is_binary,
             }
         })
         .collect()
@@ -179,11 +182,14 @@ pub fn load_pr_file_diffs(pr_info: &PrInfo) -> Result<Vec<FileDiff>, String> {
                 FileStatus::Modified
             };
 
+            let is_binary =
+                is_binary_content(&old_content) || is_binary_content(&new_content);
             FileDiff {
                 filename,
                 old_content,
                 new_content,
                 status,
+                is_binary,
             }
         })
         .collect();
@@ -276,11 +282,14 @@ pub fn load_single_commit_diffs(
                 FileStatus::Modified
             };
 
+            let is_binary =
+                is_binary_content(&old_content) || is_binary_content(&new_content);
             FileDiff {
                 filename,
                 old_content,
                 new_content,
                 status,
+                is_binary,
             }
         })
         .collect()

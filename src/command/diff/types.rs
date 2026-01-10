@@ -43,6 +43,12 @@ pub struct FileDiff {
     pub old_content: String,
     pub new_content: String,
     pub status: FileStatus,
+    pub is_binary: bool,
+}
+
+/// Detect if content is binary by checking for null bytes in the first 8KB
+pub fn is_binary_content(content: &str) -> bool {
+    content.bytes().take(8192).any(|b| b == 0)
 }
 
 /// Settings for the diff view UI. Designed to be easily extended

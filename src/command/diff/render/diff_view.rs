@@ -371,17 +371,23 @@ fn apply_word_emphasis_highlight<'a>(
     }
 
     let mut result: Vec<Span<'a>> = Vec::new();
-    let mut char_pos = 0;
+    let mut byte_pos = 0;
 
     for span in base_spans {
         let span_text = span.content.to_string();
-        let span_len = span_text.len();
-        let span_end = char_pos + span_len;
+        let span_byte_len = span_text.len();
 
-        // For each character in this span, determine its background
-        let mut i = 0;
-        while i < span_len {
-            let global_pos = char_pos + i;
+        // Build a list of (byte_offset, char) for safe UTF-8 iteration
+        let char_indices: Vec<(usize, char)> = span_text.char_indices().collect();
+        if char_indices.is_empty() {
+            byte_pos += span_byte_len;
+            continue;
+        }
+
+        let mut idx = 0;
+        while idx < char_indices.len() {
+            let (byte_offset, _) = char_indices[idx];
+            let global_pos = byte_pos + byte_offset;
 
             // Check if we're in a search match (takes priority)
             let search_match = search_ranges.iter().find(|(start, end, _)| {
@@ -415,9 +421,10 @@ fn apply_word_emphasis_highlight<'a>(
             };
 
             // Find the end of this run (same style)
-            let mut run_end = i + 1;
-            while run_end < span_len {
-                let next_global_pos = char_pos + run_end;
+            let mut run_end_idx = idx + 1;
+            while run_end_idx < char_indices.len() {
+                let (next_byte_offset, _) = char_indices[run_end_idx];
+                let next_global_pos = byte_pos + next_byte_offset;
 
                 let next_search = search_ranges.iter().find(|(start, end, _)| {
                     next_global_pos >= *start && next_global_pos < *end
@@ -436,21 +443,29 @@ fn apply_word_emphasis_highlight<'a>(
                 if !same_style {
                     break;
                 }
-                run_end += 1;
+                run_end_idx += 1;
             }
 
+            // Get the byte range for this run
+            let run_start_byte = byte_offset;
+            let run_end_byte = if run_end_idx < char_indices.len() {
+                char_indices[run_end_idx].0
+            } else {
+                span_byte_len
+            };
+
             // Push this run
-            let run_text = &span_text[i..run_end];
+            let run_text = &span_text[run_start_byte..run_end_byte];
             let mut style = Style::default().fg(fg).bg(bg);
             if bold {
                 style = style.bold();
             }
             result.push(Span::styled(run_text.to_string(), style));
 
-            i = run_end;
+            idx = run_end_idx;
         }
 
-        char_pos = span_end;
+        byte_pos += span_byte_len;
     }
 
     result
@@ -561,15 +576,6 @@ pub fn render_diff(
     vcs_name: &str,
 ) {
     let area = frame.area();
-    let side_by_side =
-        compute_side_by_side(&diff.old_content, &diff.new_content, settings.tab_width);
-    let line_stats = compute_line_stats(&side_by_side);
-
-    // Pre-compute highlights for the entire file to properly handle multi-line constructs
-    // like JSDoc comments that span multiple lines
-    let old_highlighter = FileHighlighter::new(&diff.old_content, &diff.filename);
-    let new_highlighter = FileHighlighter::new(&diff.new_content, &diff.filename);
-
     let t = theme::get();
 
     // Layout: header (if stacked) + main content + footer
@@ -625,6 +631,62 @@ pub fn render_diff(
     } else {
         content_area
     };
+
+    // Handle binary files - show a message instead of trying to diff
+    if diff.is_binary {
+        let border_style = Style::default().fg(t.ui.border_unfocused);
+        let title_style = if focused_panel == FocusedPanel::DiffView {
+            Style::default().fg(t.ui.border_focused)
+        } else {
+            Style::default().fg(t.ui.border_unfocused)
+        };
+
+        let message = Line::from(vec![Span::styled(
+            "Binary file - not displayed",
+            Style::default().fg(t.ui.text_muted),
+        )]);
+        let para = Paragraph::new(vec![message])
+            .alignment(ratatui::layout::Alignment::Center)
+            .block(
+                Block::default()
+                    .title(Line::styled(
+                        format!(" {} ", diff.filename),
+                        title_style,
+                    ))
+                    .borders(Borders::ALL)
+                    .border_style(border_style),
+            );
+        frame.render_widget(para, main_area);
+
+        render_footer(
+            frame,
+            footer_area,
+            FooterData {
+                filename: &diff.filename,
+                branch,
+                pr_info,
+                watching,
+                current_file,
+                viewed_files,
+                line_stats_added: 0,
+                line_stats_removed: 0,
+                hunk_count: 0,
+                focused_hunk: None,
+                search_state,
+                area_width: area.width,
+            },
+        );
+        return;
+    }
+
+    let side_by_side =
+        compute_side_by_side(&diff.old_content, &diff.new_content, settings.tab_width);
+    let line_stats = compute_line_stats(&side_by_side);
+
+    // Pre-compute highlights for the entire file to properly handle multi-line constructs
+    // like JSDoc comments that span multiple lines
+    let old_highlighter = FileHighlighter::new(&diff.old_content, &diff.filename);
+    let new_highlighter = FileHighlighter::new(&diff.new_content, &diff.filename);
 
     let is_new_file = diff.old_content.is_empty() && !diff.new_content.is_empty();
     let is_deleted_file = !diff.old_content.is_empty() && diff.new_content.is_empty();
