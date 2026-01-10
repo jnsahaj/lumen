@@ -89,6 +89,10 @@ pub struct DiffColors {
     pub deleted_gutter_fg: Color,
     pub context_bg: Color,
     pub empty_placeholder_fg: Color,
+    /// Word-level highlight for added text (darker green)
+    pub added_word_bg: Color,
+    /// Word-level highlight for deleted text (darker red)
+    pub deleted_word_bg: Color,
 }
 
 #[derive(Debug, Clone)]
@@ -158,6 +162,8 @@ impl Theme {
                 deleted_gutter_fg: Color::Rgb(200, 140, 140),
                 context_bg: Color::Rgb(40, 40, 50),
                 empty_placeholder_fg: Color::Rgb(55, 60, 70),
+                added_word_bg: Color::Rgb(50, 100, 60),
+                deleted_word_bg: Color::Rgb(100, 50, 50),
             },
             ui: UiColors {
                 border_focused: Color::Cyan,
@@ -217,6 +223,8 @@ impl Theme {
                 deleted_gutter_fg: Color::Rgb(140, 60, 60),
                 context_bg: Color::Rgb(246, 248, 250),
                 empty_placeholder_fg: Color::Rgb(200, 205, 212),
+                added_word_bg: Color::Rgb(171, 242, 188),
+                deleted_word_bg: Color::Rgb(255, 184, 174),
             },
             ui: UiColors {
                 border_focused: Color::Rgb(9, 105, 218),
@@ -299,6 +307,8 @@ impl Theme {
                 deleted_gutter_fg: Color::Rgb(243, 139, 168), // red
                 context_bg: Color::Rgb(30, 30, 46),           // base
                 empty_placeholder_fg: Color::Rgb(69, 71, 90), // surface1
+                added_word_bg: Color::Rgb(50, 90, 60),
+                deleted_word_bg: Color::Rgb(100, 50, 60),
             },
             ui: UiColors {
                 border_focused: Color::Rgb(137, 180, 250),   // blue
@@ -358,6 +368,8 @@ impl Theme {
                 deleted_gutter_fg: Color::Rgb(210, 15, 57),
                 context_bg: Color::Rgb(239, 241, 245), // base
                 empty_placeholder_fg: Color::Rgb(188, 192, 204), // surface1
+                added_word_bg: Color::Rgb(160, 230, 180),
+                deleted_word_bg: Color::Rgb(255, 180, 180),
             },
             ui: UiColors {
                 border_focused: Color::Rgb(30, 102, 245),
@@ -417,6 +429,8 @@ impl Theme {
                 deleted_gutter_fg: Color::Rgb(255, 85, 85),
                 context_bg: Color::Rgb(40, 42, 54), // background
                 empty_placeholder_fg: Color::Rgb(68, 71, 90), // current line
+                added_word_bg: Color::Rgb(50, 100, 60),
+                deleted_word_bg: Color::Rgb(100, 50, 60),
             },
             ui: UiColors {
                 border_focused: Color::Rgb(189, 147, 249), // purple
@@ -476,6 +490,8 @@ impl Theme {
                 deleted_gutter_fg: Color::Rgb(191, 97, 106), // nord11
                 context_bg: Color::Rgb(46, 52, 64),          // nord0
                 empty_placeholder_fg: Color::Rgb(59, 66, 82), // nord1
+                added_word_bg: Color::Rgb(60, 100, 75),
+                deleted_word_bg: Color::Rgb(110, 65, 70),
             },
             ui: UiColors {
                 border_focused: Color::Rgb(136, 192, 208), // nord8
@@ -535,6 +551,8 @@ impl Theme {
                 deleted_gutter_fg: Color::Rgb(251, 73, 52),
                 context_bg: Color::Rgb(40, 40, 40),           // bg
                 empty_placeholder_fg: Color::Rgb(60, 56, 54), // bg1
+                added_word_bg: Color::Rgb(70, 100, 55),
+                deleted_word_bg: Color::Rgb(115, 55, 50),
             },
             ui: UiColors {
                 border_focused: Color::Rgb(250, 189, 47), // yellow
@@ -594,6 +612,8 @@ impl Theme {
                 deleted_gutter_fg: Color::Rgb(204, 36, 29),
                 context_bg: Color::Rgb(251, 241, 199), // bg
                 empty_placeholder_fg: Color::Rgb(213, 196, 161), // bg2
+                added_word_bg: Color::Rgb(180, 235, 165),
+                deleted_word_bg: Color::Rgb(255, 195, 180),
             },
             ui: UiColors {
                 border_focused: Color::Rgb(69, 133, 136), // blue
@@ -653,6 +673,8 @@ impl Theme {
                 deleted_gutter_fg: Color::Rgb(224, 108, 117),
                 context_bg: Color::Rgb(40, 44, 52),           // bg
                 empty_placeholder_fg: Color::Rgb(62, 68, 81), // gutter
+                added_word_bg: Color::Rgb(55, 100, 65),
+                deleted_word_bg: Color::Rgb(110, 55, 60),
             },
             ui: UiColors {
                 border_focused: Color::Rgb(97, 175, 239), // blue
@@ -712,6 +734,8 @@ impl Theme {
                 deleted_gutter_fg: Color::Rgb(220, 50, 47),
                 context_bg: Color::Rgb(0, 43, 54), // base03
                 empty_placeholder_fg: Color::Rgb(7, 54, 66), // base02
+                added_word_bg: Color::Rgb(20, 85, 75),
+                deleted_word_bg: Color::Rgb(100, 50, 45),
             },
             ui: UiColors {
                 border_focused: Color::Rgb(38, 139, 210), // blue
@@ -771,6 +795,8 @@ impl Theme {
                 deleted_gutter_fg: Color::Rgb(220, 50, 47),
                 context_bg: Color::Rgb(253, 246, 227), // base3
                 empty_placeholder_fg: Color::Rgb(238, 232, 213), // base2
+                added_word_bg: Color::Rgb(175, 235, 190),
+                deleted_word_bg: Color::Rgb(255, 190, 185),
             },
             ui: UiColors {
                 border_focused: Color::Rgb(38, 139, 210),

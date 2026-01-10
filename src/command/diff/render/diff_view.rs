@@ -11,7 +11,8 @@ use crate::command::diff::highlight::{highlight_line_spans, FileHighlighter};
 use crate::command::diff::search::{MatchPanel, SearchState};
 use crate::command::diff::theme;
 use crate::command::diff::types::{
-    ChangeType, DiffFullscreen, DiffLine, DiffViewSettings, FileDiff, FocusedPanel, SidebarItem,
+    ChangeType, DiffFullscreen, DiffLine, DiffViewSettings, FileDiff, FocusedPanel, InlineSegment,
+    SidebarItem,
 };
 use crate::command::diff::PrInfo;
 
@@ -286,6 +287,136 @@ fn apply_search_highlight<'a>(
 
         if !remaining.is_empty() {
             result.push(Span::styled(remaining.to_string(), span.style));
+        }
+
+        char_pos = span_end;
+    }
+
+    result
+}
+
+/// Convert InlineSegments to emphasis ranges (start, end) positions.
+fn segments_to_emphasis_ranges(segments: &[InlineSegment]) -> Vec<(usize, usize)> {
+    let mut ranges = Vec::new();
+    let mut pos = 0;
+    for segment in segments {
+        let len = segment.text.len();
+        if segment.emphasized {
+            ranges.push((pos, pos + len));
+        }
+        pos += len;
+    }
+    ranges
+}
+
+/// Apply syntax highlighting with word-level emphasis backgrounds.
+/// This preserves syntax colors while overlaying emphasis backgrounds for changed words.
+fn apply_word_emphasis_highlight<'a>(
+    text: &str,
+    filename: &str,
+    line_bg: Option<Color>,
+    word_emphasis_bg: Color,
+    emphasis_ranges: &[(usize, usize)],
+    search_ranges: &[(usize, usize, bool)],
+    highlighter: Option<&FileHighlighter>,
+    line_number: Option<usize>,
+    tab_width: usize,
+) -> Vec<Span<'a>> {
+    let t = theme::get();
+
+    // Get syntax-highlighted base spans
+    let base_spans = if let (Some(hl), Some(line_num)) = (highlighter, line_number) {
+        let spans = hl.get_line_spans(line_num, line_bg);
+        if spans.is_empty() {
+            highlight_line_spans(text, filename, line_bg)
+        } else {
+            spans
+        }
+    } else {
+        highlight_line_spans(text, filename, line_bg)
+    };
+    let base_spans = expand_tabs_in_spans(base_spans, tab_width);
+
+    if emphasis_ranges.is_empty() && search_ranges.is_empty() {
+        return base_spans;
+    }
+
+    let mut result: Vec<Span<'a>> = Vec::new();
+    let mut char_pos = 0;
+
+    for span in base_spans {
+        let span_text = span.content.to_string();
+        let span_len = span_text.len();
+        let span_end = char_pos + span_len;
+
+        // For each character in this span, determine its background
+        let mut i = 0;
+        while i < span_len {
+            let global_pos = char_pos + i;
+
+            // Check if we're in a search match (takes priority)
+            let search_match = search_ranges.iter().find(|(start, end, _)| {
+                global_pos >= *start && global_pos < *end
+            });
+
+            // Check if we're in an emphasis range
+            let in_emphasis = emphasis_ranges.iter().any(|(start, end)| {
+                global_pos >= *start && global_pos < *end
+            });
+
+            // Determine background and style for this character
+            let (bg, fg, bold) = if let Some((_, _, is_current)) = search_match {
+                if *is_current {
+                    (t.ui.search_current_bg, t.ui.search_current_fg, true)
+                } else {
+                    (t.ui.search_match_bg, t.ui.search_match_fg, true)
+                }
+            } else if in_emphasis {
+                // Emphasis: use darker background but keep original foreground color
+                (word_emphasis_bg, span.style.fg.unwrap_or(t.syntax.default_text), false)
+            } else {
+                // Normal: use line background with original foreground
+                (
+                    span.style.bg.unwrap_or(line_bg.unwrap_or(Color::Reset)),
+                    span.style.fg.unwrap_or(t.syntax.default_text),
+                    false,
+                )
+            };
+
+            // Find the end of this run (same style)
+            let mut run_end = i + 1;
+            while run_end < span_len {
+                let next_global_pos = char_pos + run_end;
+
+                let next_search = search_ranges.iter().find(|(start, end, _)| {
+                    next_global_pos >= *start && next_global_pos < *end
+                });
+
+                let next_in_emphasis = emphasis_ranges.iter().any(|(start, end)| {
+                    next_global_pos >= *start && next_global_pos < *end
+                });
+
+                let same_style = match (search_match, next_search) {
+                    (Some((_, _, c1)), Some((_, _, c2))) => c1 == c2,
+                    (None, None) => in_emphasis == next_in_emphasis,
+                    _ => false,
+                };
+
+                if !same_style {
+                    break;
+                }
+                run_end += 1;
+            }
+
+            // Push this run
+            let run_text = &span_text[i..run_end];
+            let mut style = Style::default().fg(fg).bg(bg);
+            if bold {
+                style = style.bold();
+            }
+            result.push(Span::styled(run_text.to_string(), style));
+
+            i = run_end;
         }
 
         char_pos = span_end;
@@ -714,7 +845,7 @@ pub fn render_diff(
                 let mut old_spans: Vec<Span> = Vec::new();
                 old_spans.push(Span::styled(focus_indicator, focus_style));
                 match &diff_line.old_line {
-                    Some((num, text)) => {
+                    Some((num, _text)) => {
                         let prefix = format!("{:4} ", num);
                         old_spans.push(Span::styled(
                             prefix,
@@ -723,15 +854,44 @@ pub fn render_diff(
                                 .bg(old_gutter_bg.unwrap_or(Color::Reset)),
                         ));
                         let matches = search_state.get_matches_for_line(line_idx, MatchPanel::Old);
-                        old_spans.extend(apply_search_highlight(
-                            text,
-                            &diff.filename,
-                            old_bg,
-                            &matches,
-                            Some(&old_highlighter),
-                            Some(*num),
-                            settings.tab_width,
-                        ));
+
+                        // Use word-level rendering for modified lines if segments are available
+                        if matches!(diff_line.change_type, ChangeType::Modified) {
+                            if let Some(ref segments) = diff_line.old_segments {
+                                let emphasis_ranges = segments_to_emphasis_ranges(segments);
+                                old_spans.extend(apply_word_emphasis_highlight(
+                                    _text,
+                                    &diff.filename,
+                                    old_bg,
+                                    t.diff.deleted_word_bg,
+                                    &emphasis_ranges,
+                                    &matches,
+                                    Some(&old_highlighter),
+                                    Some(*num),
+                                    settings.tab_width,
+                                ));
+                            } else {
+                                old_spans.extend(apply_search_highlight(
+                                    _text,
+                                    &diff.filename,
+                                    old_bg,
+                                    &matches,
+                                    Some(&old_highlighter),
+                                    Some(*num),
+                                    settings.tab_width,
+                                ));
+                            }
+                        } else {
+                            old_spans.extend(apply_search_highlight(
+                                _text,
+                                &diff.filename,
+                                old_bg,
+                                &matches,
+                                Some(&old_highlighter),
+                                Some(*num),
+                                settings.tab_width,
+                            ));
+                        }
                     }
                     None => {
                         let panel_width = old_area.map(|a| a.width as usize).unwrap_or(80);
@@ -756,7 +916,7 @@ pub fn render_diff(
                     new_spans.push(Span::styled(focus_indicator, focus_style));
                 }
                 match &diff_line.new_line {
-                    Some((num, text)) => {
+                    Some((num, _text)) => {
                         let prefix = format!("{:4} ", num);
                         new_spans.push(Span::styled(
                             prefix,
@@ -765,15 +925,44 @@ pub fn render_diff(
                                 .bg(new_gutter_bg.unwrap_or(Color::Reset)),
                         ));
                         let matches = search_state.get_matches_for_line(line_idx, MatchPanel::New);
-                        new_spans.extend(apply_search_highlight(
-                            text,
-                            &diff.filename,
-                            new_bg,
-                            &matches,
-                            Some(&new_highlighter),
-                            Some(*num),
-                            settings.tab_width,
-                        ));
+
+                        // Use word-level rendering for modified lines if segments are available
+                        if matches!(diff_line.change_type, ChangeType::Modified) {
+                            if let Some(ref segments) = diff_line.new_segments {
+                                let emphasis_ranges = segments_to_emphasis_ranges(segments);
+                                new_spans.extend(apply_word_emphasis_highlight(
+                                    _text,
+                                    &diff.filename,
+                                    new_bg,
+                                    t.diff.added_word_bg,
+                                    &emphasis_ranges,
+                                    &matches,
+                                    Some(&new_highlighter),
+                                    Some(*num),
+                                    settings.tab_width,
+                                ));
+                            } else {
+                                new_spans.extend(apply_search_highlight(
+                                    _text,
+                                    &diff.filename,
+                                    new_bg,
+                                    &matches,
+                                    Some(&new_highlighter),
+                                    Some(*num),
+                                    settings.tab_width,
+                                ));
+                            }
+                        } else {
+                            new_spans.extend(apply_search_highlight(
+                                _text,
+                                &diff.filename,
+                                new_bg,
+                                &matches,
+                                Some(&new_highlighter),
+                                Some(*num),
+                                settings.tab_width,
+                            ));
+                        }
                     }
                     None => {
                         let panel_width = new_area.map(|a| a.width as usize).unwrap_or(80);
