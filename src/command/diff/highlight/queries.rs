@@ -344,9 +344,9 @@ pub const RUBY_HIGHLIGHTS: &str = r#"
 "," @punctuation.delimiter
 ";" @punctuation.delimiter
 "." @punctuation.delimiter
+":" @punctuation.delimiter
 "::" @punctuation.delimiter
 "#;
-
 
 pub const JSON_HIGHLIGHTS: &str = r#"
 (string) @string
