@@ -319,7 +319,11 @@ fn is_muted_color(color: Color) -> bool {
             // Also check if it's grayish (low saturation)
             let max = r.max(g).max(b);
             let min = r.min(g).min(b);
-            let saturation = if max == 0 { 0 } else { (max - min) as u32 * 100 / max as u32 };
+            let saturation = if max == 0 {
+                0
+            } else {
+                (max - min) as u32 * 100 / max as u32
+            };
             // Muted = low luminance OR (medium luminance AND low saturation)
             luminance < 140 || (luminance < 180 && saturation < 30)
         }
@@ -390,14 +394,14 @@ fn apply_word_emphasis_highlight<'a>(
             let global_pos = byte_pos + byte_offset;
 
             // Check if we're in a search match (takes priority)
-            let search_match = search_ranges.iter().find(|(start, end, _)| {
-                global_pos >= *start && global_pos < *end
-            });
+            let search_match = search_ranges
+                .iter()
+                .find(|(start, end, _)| global_pos >= *start && global_pos < *end);
 
             // Check if we're in an emphasis range
-            let in_emphasis = emphasis_ranges.iter().any(|(start, end)| {
-                global_pos >= *start && global_pos < *end
-            });
+            let in_emphasis = emphasis_ranges
+                .iter()
+                .any(|(start, end)| global_pos >= *start && global_pos < *end);
 
             // Determine background and style for this character
             let (bg, fg, bold) = if let Some((_, _, is_current)) = search_match {
@@ -426,13 +430,13 @@ fn apply_word_emphasis_highlight<'a>(
                 let (next_byte_offset, _) = char_indices[run_end_idx];
                 let next_global_pos = byte_pos + next_byte_offset;
 
-                let next_search = search_ranges.iter().find(|(start, end, _)| {
-                    next_global_pos >= *start && next_global_pos < *end
-                });
+                let next_search = search_ranges
+                    .iter()
+                    .find(|(start, end, _)| next_global_pos >= *start && next_global_pos < *end);
 
-                let next_in_emphasis = emphasis_ranges.iter().any(|(start, end)| {
-                    next_global_pos >= *start && next_global_pos < *end
-                });
+                let next_in_emphasis = emphasis_ranges
+                    .iter()
+                    .any(|(start, end)| next_global_pos >= *start && next_global_pos < *end);
 
                 let same_style = match (search_match, next_search) {
                     (Some((_, _, c1)), Some((_, _, c2))) => c1 == c2,
@@ -649,10 +653,7 @@ pub fn render_diff(
             .alignment(ratatui::layout::Alignment::Center)
             .block(
                 Block::default()
-                    .title(Line::styled(
-                        format!(" {} ", diff.filename),
-                        title_style,
-                    ))
+                    .title(Line::styled(format!(" {} ", diff.filename), title_style))
                     .borders(Borders::ALL)
                     .border_style(border_style),
             );

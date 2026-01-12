@@ -54,6 +54,12 @@ pub enum ModalContent {
         query: String,
         selected: usize,
     },
+    CommitInput {
+        title: String,
+        message: String,
+        cursor_pos: usize,
+        files_to_commit: Vec<String>,
+    },
 }
 
 pub struct Modal {
@@ -66,6 +72,7 @@ pub enum ModalResult {
     #[allow(dead_code)]
     Selected(usize, String),
     FileSelected(usize),
+    CommitConfirmed(String),
 }
 
 impl Modal {
@@ -112,6 +119,17 @@ impl Modal {
         }
     }
 
+    pub fn commit_input(title: impl Into<String>, files_to_commit: Vec<String>) -> Self {
+        Self {
+            content: ModalContent::CommitInput {
+                title: title.into(),
+                message: String::new(),
+                cursor_pos: 0,
+                files_to_commit,
+            },
+        }
+    }
+
     pub fn render(&self, frame: &mut Frame) {
         let area = frame.area();
 
@@ -143,6 +161,15 @@ impl Modal {
                 let width = 80.min(area.width.saturating_sub(4));
                 let items_count = filtered_indices.len().min(15) as u16;
                 let height = (items_count + 5).min(area.height * 80 / 100).max(8);
+                (width, height)
+            }
+            ModalContent::CommitInput {
+                files_to_commit, ..
+            } => {
+                let width = 70.min(area.width.saturating_sub(4));
+                // Height: 1 for input, 1 for separator, files list (max 8), 1 for hint, 2 for padding
+                let files_count = files_to_commit.len().min(8) as u16;
+                let height = (files_count + 6).min(area.height * 80 / 100).max(8);
                 (width, height)
             }
         };
@@ -182,6 +209,21 @@ impl Modal {
                     filtered_indices,
                     query,
                     *selected,
+                );
+            }
+            ModalContent::CommitInput {
+                title,
+                message,
+                cursor_pos,
+                files_to_commit,
+            } => {
+                self.render_commit_input(
+                    frame,
+                    modal_area,
+                    title,
+                    message,
+                    *cursor_pos,
+                    files_to_commit,
                 );
             }
         }
@@ -388,11 +430,109 @@ impl Modal {
         frame.render_widget(list, chunks[2]);
     }
 
+    fn render_commit_input(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        title: &str,
+        message: &str,
+        cursor_pos: usize,
+        files_to_commit: &[String],
+    ) {
+        let t = theme::get();
+        let block = Block::default()
+            .title(format!(" {} ", title))
+            .title_style(Style::default().fg(t.ui.border_focused).bold())
+            .borders(Borders::ALL)
+            .border_type(ratatui::widgets::BorderType::Rounded)
+            .border_style(Style::default().fg(t.ui.border_unfocused));
+
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+
+        use ratatui::layout::{Constraint, Direction, Layout};
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(1), // Input line
+                Constraint::Length(1), // Separator
+                Constraint::Min(1),    // Files list
+                Constraint::Length(1), // Hint line
+            ])
+            .split(inner);
+
+        // Render input line with cursor
+        let (before_cursor, after_cursor) = message.split_at(cursor_pos.min(message.len()));
+        let cursor_char = after_cursor.chars().next().unwrap_or(' ');
+        let after_cursor_rest = if after_cursor.len() > 1 {
+            &after_cursor[cursor_char.len_utf8()..]
+        } else {
+            ""
+        };
+
+        let input_line = Line::from(vec![
+            Span::styled(before_cursor, Style::default().fg(t.ui.text_primary)),
+            Span::styled(
+                cursor_char.to_string(),
+                Style::default().fg(t.ui.text_primary).bg(t.ui.selection_bg),
+            ),
+            Span::styled(after_cursor_rest, Style::default().fg(t.ui.text_primary)),
+        ]);
+        frame.render_widget(Paragraph::new(input_line), chunks[0]);
+
+        // Separator
+        let separator = Line::from(Span::styled(
+            "─".repeat(chunks[1].width as usize),
+            Style::default().fg(t.ui.border_unfocused),
+        ));
+        frame.render_widget(Paragraph::new(separator), chunks[1]);
+
+        // Files list
+        let visible_count = chunks[2].height as usize;
+        let list_items: Vec<ListItem> = files_to_commit
+            .iter()
+            .take(visible_count)
+            .map(|file| {
+                ListItem::new(Line::from(vec![
+                    Span::styled("  ", Style::default()),
+                    Span::styled(file.clone(), Style::default().fg(t.ui.text_muted)),
+                ]))
+            })
+            .collect();
+
+        if files_to_commit.len() > visible_count {
+            // Show indicator that there are more files
+            let remaining = files_to_commit.len() - visible_count;
+            let mut items = list_items;
+            if let Some(last) = items.last_mut() {
+                *last = ListItem::new(Line::from(Span::styled(
+                    format!("  ... and {} more files", remaining + 1),
+                    Style::default().fg(t.ui.text_muted),
+                )));
+            }
+            frame.render_widget(List::new(items), chunks[2]);
+        } else {
+            frame.render_widget(List::new(list_items), chunks[2]);
+        }
+
+        // Hint line
+        let hint = Line::from(vec![
+            Span::styled("Enter", Style::default().fg(t.ui.status_added)),
+            Span::styled(": commit  ", Style::default().fg(t.ui.text_muted)),
+            Span::styled("Esc", Style::default().fg(t.ui.status_deleted)),
+            Span::styled(": cancel", Style::default().fg(t.ui.text_muted)),
+        ]);
+        frame.render_widget(Paragraph::new(hint), chunks[3]);
+    }
+
     /// Handle keyboard input for the modal.
     /// Returns Some(ModalResult) if the modal should close.
     pub fn handle_input(&mut self, key: KeyEvent) -> Option<ModalResult> {
-        // FilePicker handles its own dismiss logic (needs to allow typing 'q')
-        if !matches!(self.content, ModalContent::FilePicker { .. }) {
+        // FilePicker and CommitInput handle their own dismiss logic (need to allow typing 'q')
+        if !matches!(
+            self.content,
+            ModalContent::FilePicker { .. } | ModalContent::CommitInput { .. }
+        ) {
             // Close on Esc, q, or Ctrl+C
             if key.code == KeyCode::Esc
                 || key.code == KeyCode::Char('q')
@@ -491,6 +631,197 @@ impl Modal {
                 }
                 _ => None,
             },
+            ModalContent::CommitInput {
+                message,
+                cursor_pos,
+                ..
+            } => {
+                // macOS-style keybinds for text editing
+                match key.code {
+                    KeyCode::Esc => Some(ModalResult::Dismissed),
+                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        Some(ModalResult::Dismissed)
+                    }
+                    KeyCode::Enter => {
+                        if message.trim().is_empty() {
+                            // Don't allow empty commit messages
+                            None
+                        } else {
+                            Some(ModalResult::CommitConfirmed(message.clone()))
+                        }
+                    }
+                    // Cmd+Backspace (or Ctrl+U): delete to beginning of line
+                    KeyCode::Backspace if key.modifiers.contains(KeyModifiers::SUPER) => {
+                        message.drain(..*cursor_pos);
+                        *cursor_pos = 0;
+                        None
+                    }
+                    KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        message.drain(..*cursor_pos);
+                        *cursor_pos = 0;
+                        None
+                    }
+                    // Option+Backspace (Alt+Backspace): delete word backwards
+                    KeyCode::Backspace if key.modifiers.contains(KeyModifiers::ALT) => {
+                        if *cursor_pos > 0 {
+                            let before = &message[..*cursor_pos];
+                            // Find start of previous word
+                            let word_start = before
+                                .trim_end()
+                                .rfind(|c: char| c.is_whitespace())
+                                .map(|i| i + 1)
+                                .unwrap_or(0);
+                            message.drain(word_start..*cursor_pos);
+                            *cursor_pos = word_start;
+                        }
+                        None
+                    }
+                    // Ctrl+W: delete word backwards (unix style)
+                    KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        if *cursor_pos > 0 {
+                            let before = &message[..*cursor_pos];
+                            let word_start = before
+                                .trim_end()
+                                .rfind(|c: char| c.is_whitespace())
+                                .map(|i| i + 1)
+                                .unwrap_or(0);
+                            message.drain(word_start..*cursor_pos);
+                            *cursor_pos = word_start;
+                        }
+                        None
+                    }
+                    // Regular backspace
+                    KeyCode::Backspace => {
+                        if *cursor_pos > 0 {
+                            // Find the byte index of the previous character
+                            let prev_char_boundary = message[..*cursor_pos]
+                                .char_indices()
+                                .last()
+                                .map(|(i, _)| i)
+                                .unwrap_or(0);
+                            message.drain(prev_char_boundary..*cursor_pos);
+                            *cursor_pos = prev_char_boundary;
+                        }
+                        None
+                    }
+                    // Delete forward
+                    KeyCode::Delete => {
+                        if *cursor_pos < message.len() {
+                            let next_char_len = message[*cursor_pos..]
+                                .chars()
+                                .next()
+                                .map(|c| c.len_utf8())
+                                .unwrap_or(0);
+                            message.drain(*cursor_pos..*cursor_pos + next_char_len);
+                        }
+                        None
+                    }
+                    // Cmd+Left (or Home): move to beginning
+                    KeyCode::Left if key.modifiers.contains(KeyModifiers::SUPER) => {
+                        *cursor_pos = 0;
+                        None
+                    }
+                    KeyCode::Home => {
+                        *cursor_pos = 0;
+                        None
+                    }
+                    KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        *cursor_pos = 0;
+                        None
+                    }
+                    // Cmd+Right (or End): move to end
+                    KeyCode::Right if key.modifiers.contains(KeyModifiers::SUPER) => {
+                        *cursor_pos = message.len();
+                        None
+                    }
+                    KeyCode::End => {
+                        *cursor_pos = message.len();
+                        None
+                    }
+                    KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        *cursor_pos = message.len();
+                        None
+                    }
+                    // Option+Left (Alt+Left): move word backwards
+                    KeyCode::Left if key.modifiers.contains(KeyModifiers::ALT) => {
+                        if *cursor_pos > 0 {
+                            let before = &message[..*cursor_pos];
+                            *cursor_pos = before
+                                .trim_end()
+                                .rfind(|c: char| c.is_whitespace())
+                                .map(|i| i + 1)
+                                .unwrap_or(0);
+                        }
+                        None
+                    }
+                    KeyCode::Char('b') if key.modifiers.contains(KeyModifiers::ALT) => {
+                        if *cursor_pos > 0 {
+                            let before = &message[..*cursor_pos];
+                            *cursor_pos = before
+                                .trim_end()
+                                .rfind(|c: char| c.is_whitespace())
+                                .map(|i| i + 1)
+                                .unwrap_or(0);
+                        }
+                        None
+                    }
+                    // Option+Right (Alt+Right): move word forwards
+                    KeyCode::Right if key.modifiers.contains(KeyModifiers::ALT) => {
+                        if *cursor_pos < message.len() {
+                            let after = &message[*cursor_pos..];
+                            let word_end = after
+                                .trim_start()
+                                .find(|c: char| c.is_whitespace())
+                                .map(|i| *cursor_pos + after.len() - after.trim_start().len() + i)
+                                .unwrap_or(message.len());
+                            *cursor_pos = word_end;
+                        }
+                        None
+                    }
+                    KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::ALT) => {
+                        if *cursor_pos < message.len() {
+                            let after = &message[*cursor_pos..];
+                            let word_end = after
+                                .trim_start()
+                                .find(|c: char| c.is_whitespace())
+                                .map(|i| *cursor_pos + after.len() - after.trim_start().len() + i)
+                                .unwrap_or(message.len());
+                            *cursor_pos = word_end;
+                        }
+                        None
+                    }
+                    // Regular Left: move one character back
+                    KeyCode::Left => {
+                        if *cursor_pos > 0 {
+                            *cursor_pos = message[..*cursor_pos]
+                                .char_indices()
+                                .last()
+                                .map(|(i, _)| i)
+                                .unwrap_or(0);
+                        }
+                        None
+                    }
+                    // Regular Right: move one character forward
+                    KeyCode::Right => {
+                        if *cursor_pos < message.len() {
+                            let next_char_len = message[*cursor_pos..]
+                                .chars()
+                                .next()
+                                .map(|c| c.len_utf8())
+                                .unwrap_or(0);
+                            *cursor_pos += next_char_len;
+                        }
+                        None
+                    }
+                    // Type character
+                    KeyCode::Char(c) => {
+                        message.insert(*cursor_pos, c);
+                        *cursor_pos += c.len_utf8();
+                        None
+                    }
+                    _ => None,
+                }
+            }
         }
     }
 

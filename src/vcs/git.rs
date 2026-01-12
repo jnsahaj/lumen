@@ -217,6 +217,77 @@ impl GitBackend {
 
         Ok(output)
     }
+
+    /// Stage specific files for commit.
+    /// Files should be relative paths from the repository root.
+    pub fn stage_files(&self, paths: &[&Path]) -> Result<(), VcsError> {
+        let mut index = self
+            .repo
+            .index()
+            .map_err(|e| VcsError::Other(format!("failed to get index: {}", e)))?;
+
+        for path in paths {
+            index.add_path(path).map_err(|e| {
+                VcsError::Other(format!("failed to stage {}: {}", path.display(), e))
+            })?;
+        }
+
+        index
+            .write()
+            .map_err(|e| VcsError::Other(format!("failed to write index: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// Create a commit with the given message using the currently staged files.
+    /// Returns the commit SHA on success.
+    pub fn commit(&self, message: &str) -> Result<String, VcsError> {
+        // Get user's git config for author/committer
+        let config = self
+            .repo
+            .config()
+            .map_err(|e| VcsError::Other(format!("failed to get git config: {}", e)))?;
+
+        let name = config.get_string("user.name").map_err(|_| {
+            VcsError::Other(
+                "git user.name not configured. Run: git config user.name \"Your Name\"".to_string(),
+            )
+        })?;
+
+        let email = config.get_string("user.email").map_err(|_| {
+            VcsError::Other(
+                "git user.email not configured. Run: git config user.email \"you@example.com\""
+                    .to_string(),
+            )
+        })?;
+
+        let sig = git2::Signature::now(&name, &email)
+            .map_err(|e| VcsError::Other(format!("failed to create signature: {}", e)))?;
+
+        let mut index = self
+            .repo
+            .index()
+            .map_err(|e| VcsError::Other(format!("failed to get index: {}", e)))?;
+
+        let tree_oid = index
+            .write_tree()
+            .map_err(|e| VcsError::Other(format!("failed to write tree: {}", e)))?;
+
+        let tree = self
+            .repo
+            .find_tree(tree_oid)
+            .map_err(|e| VcsError::Other(format!("failed to find tree: {}", e)))?;
+
+        let parent = self.repo.head().ok().and_then(|h| h.peel_to_commit().ok());
+        let parents: Vec<&git2::Commit> = parent.iter().collect();
+
+        let oid = self
+            .repo
+            .commit(Some("HEAD"), &sig, &sig, message, &tree, &parents)
+            .map_err(|e| VcsError::Other(format!("failed to create commit: {}", e)))?;
+
+        Ok(oid.to_string())
+    }
 }
 
 impl VcsBackend for GitBackend {

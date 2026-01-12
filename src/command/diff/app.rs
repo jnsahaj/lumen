@@ -29,7 +29,7 @@ use super::watcher::{setup_watcher, WatchEvent};
 use super::{
     fetch_viewed_files, mark_file_as_viewed_async, unmark_file_as_viewed_async, DiffOptions, PrInfo,
 };
-use crate::vcs::{StackedCommitInfo, VcsBackend};
+use crate::vcs::{GitBackend, StackedCommitInfo, VcsBackend};
 
 pub fn run_app_with_pr(
     options: DiffOptions,
@@ -260,25 +260,92 @@ fn run_app_internal(
                 Event::Key(key) if key.kind == KeyEventKind::Press && active_modal.is_some() => {
                     if let Some(ref mut modal) = active_modal {
                         if let Some(result) = modal.handle_input(key) {
-                            if let ModalResult::FileSelected(file_index) = result {
-                                state.select_file(file_index);
-                                if let Some(idx) = state.sidebar_items.iter().position(|item| {
-                                    matches!(item, SidebarItem::File { file_index: fi, .. } if *fi == state.current_file)
-                                }) {
-                                    state.sidebar_selected = idx;
-                                    let visible_height =
-                                        terminal.size()?.height.saturating_sub(5) as usize;
-                                    if state.sidebar_selected
-                                        >= state.sidebar_scroll + visible_height
-                                    {
-                                        state.sidebar_scroll = state
-                                            .sidebar_selected
-                                            .saturating_sub(visible_height)
-                                            + 1;
-                                    } else if state.sidebar_selected < state.sidebar_scroll {
-                                        state.sidebar_scroll = state.sidebar_selected;
+                            match result {
+                                ModalResult::FileSelected(file_index) => {
+                                    state.select_file(file_index);
+                                    if let Some(idx) = state.sidebar_items.iter().position(|item| {
+                                        matches!(item, SidebarItem::File { file_index: fi, .. } if *fi == state.current_file)
+                                    }) {
+                                        state.sidebar_selected = idx;
+                                        let visible_height =
+                                            terminal.size()?.height.saturating_sub(5) as usize;
+                                        if state.sidebar_selected
+                                            >= state.sidebar_scroll + visible_height
+                                        {
+                                            state.sidebar_scroll = state
+                                                .sidebar_selected
+                                                .saturating_sub(visible_height)
+                                                + 1;
+                                        } else if state.sidebar_selected < state.sidebar_scroll {
+                                            state.sidebar_scroll = state.sidebar_selected;
+                                        }
                                     }
                                 }
+                                ModalResult::CommitConfirmed(message) => {
+                                    // Get the current working directory for GitBackend
+                                    let cwd = std::env::current_dir().unwrap_or_default();
+                                    match GitBackend::new(&cwd) {
+                                        Ok(git) => {
+                                            // Collect file paths to stage
+                                            let file_paths: Vec<String> = state
+                                                .viewed_files
+                                                .iter()
+                                                .filter_map(|&idx| {
+                                                    state
+                                                        .file_diffs
+                                                        .get(idx)
+                                                        .map(|f| f.filename.clone())
+                                                })
+                                                .collect();
+
+                                            // Stage the viewed files
+                                            let paths: Vec<std::path::PathBuf> = file_paths
+                                                .iter()
+                                                .map(std::path::PathBuf::from)
+                                                .collect();
+                                            let path_refs: Vec<&std::path::Path> =
+                                                paths.iter().map(|p| p.as_path()).collect();
+
+                                            if let Err(e) = git.stage_files(&path_refs) {
+                                                active_modal = Some(Modal::info(
+                                                    "Staging Failed",
+                                                    format!("{}", e),
+                                                ));
+                                                continue;
+                                            }
+
+                                            // Create the commit
+                                            match git.commit(&message) {
+                                                Ok(sha) => {
+                                                    // Clear viewed files after successful commit
+                                                    state.viewed_files.clear();
+                                                    active_modal = Some(Modal::info(
+                                                        "Committed",
+                                                        format!(
+                                                            "Created commit {}\n\n{}",
+                                                            &sha[..7.min(sha.len())],
+                                                            message
+                                                        ),
+                                                    ));
+                                                }
+                                                Err(e) => {
+                                                    active_modal = Some(Modal::info(
+                                                        "Commit Failed",
+                                                        format!("{}", e),
+                                                    ));
+                                                }
+                                            }
+                                        }
+                                        Err(e) => {
+                                            active_modal = Some(Modal::info(
+                                                "Error",
+                                                format!("Failed to open git repository: {}", e),
+                                            ));
+                                        }
+                                    }
+                                    continue;
+                                }
+                                ModalResult::Dismissed | ModalResult::Selected(_, _) => {}
                             }
                             active_modal = None;
                         }
@@ -1023,6 +1090,34 @@ fn run_app_internal(
                                 );
                             }
                         }
+                        KeyCode::Char('c') => {
+                            // Commit viewed files - only supported for git
+                            if backend.name() != "git" {
+                                // Show error for non-git backends
+                                active_modal = Some(Modal::info(
+                                    "Not Supported",
+                                    "Commit from diff view is only supported for git repositories",
+                                ));
+                            } else if state.viewed_files.is_empty() {
+                                active_modal = Some(Modal::info(
+                                    "No Files",
+                                    "No files marked as viewed to commit",
+                                ));
+                            } else {
+                                // Collect viewed file names
+                                let files_to_commit: Vec<String> = state
+                                    .viewed_files
+                                    .iter()
+                                    .filter_map(|&idx| {
+                                        state.file_diffs.get(idx).map(|f| f.filename.clone())
+                                    })
+                                    .collect();
+                                active_modal = Some(Modal::commit_input(
+                                    "Commit Viewed Files",
+                                    files_to_commit,
+                                ));
+                            }
+                        }
                         KeyCode::Char('?') => {
                             active_modal = Some(Modal::keybindings(
                                 "Keybindings",
@@ -1069,6 +1164,10 @@ fn run_app_internal(
                                             KeyBind {
                                                 key: "o",
                                                 description: "Open file in browser (PR mode)",
+                                            },
+                                            KeyBind {
+                                                key: "c",
+                                                description: "Commit viewed files (git only)",
                                             },
                                             KeyBind {
                                                 key: "ctrl+l / ctrl+h",
