@@ -63,6 +63,7 @@ impl ConfigureCommand {
     fn get_api_key(provider: &ProviderInfo) -> Result<Option<String>, LumenError> {
         if provider.env_key.is_empty() {
             match provider.provider_type {
+                #[cfg(target_os = "macos")]
                 ProviderType::AppleIntelligence => {
                     println!(
                         "\n  \x1b[2mApple Intelligence runs locally — no API key needed.\x1b[0m"
@@ -95,6 +96,7 @@ impl ConfigureCommand {
     /// Prompts the user for a custom model name.
     /// Returns `None` if the user accepts the default model by pressing Enter.
     fn get_model_name(provider: &ProviderInfo) -> Result<Option<String>, LumenError> {
+        #[cfg(target_os = "macos")]
         if matches!(provider.provider_type, ProviderType::AppleIntelligence) {
             return Ok(None);
         }
