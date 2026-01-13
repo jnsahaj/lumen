@@ -1,3 +1,4 @@
+#[cfg(target_os = "macos")]
 use fm_bindings::LanguageModelSession;
 use genai::adapter::AdapterKind;
 use genai::chat::{ChatMessage, ChatRequest};
@@ -16,7 +17,8 @@ pub enum ProviderError {
     #[error("AI request failed: {0}")]
     GenAIError(#[from] genai::Error),
 
-    #[error("AI requrest failed: {0}")]
+    #[cfg(target_os = "macos")]
+    #[error("AI request failed: {0}")]
     FmError(#[from] fm_bindings::Error),
 
     #[error("API request failed: {0}")]
@@ -30,7 +32,12 @@ pub enum ProviderError {
 }
 
 enum ProviderBackend {
-    GenAI { client: Client, model: String },
+    GenAI {
+        client: Client,
+        model: String,
+    },
+
+    #[cfg(target_os = "macos")]
     AppleIntelligence,
 }
 
@@ -53,6 +60,7 @@ impl LumenProvider {
         model: Option<String>,
     ) -> Result<Self, LumenError> {
         let (backend, provider_name) = match provider_type {
+            #[cfg(target_os = "macos")]
             ProviderType::AppleIntelligence => {
                 let defaults = ProviderInfo::for_provider(provider_type);
 
@@ -150,6 +158,7 @@ impl LumenProvider {
 
     async fn complete(&self, prompt: AIPrompt) -> Result<String, ProviderError> {
         match &self.backend {
+            #[cfg(target_os = "macos")]
             ProviderBackend::AppleIntelligence => {
                 let system_prompt = prompt.system_prompt + "\ndo not use markdown syntax";
 
@@ -196,6 +205,7 @@ impl LumenProvider {
     fn get_model(&self) -> String {
         match &self.backend {
             ProviderBackend::GenAI { model, .. } => model.clone(),
+            #[cfg(target_os = "macos")]
             ProviderBackend::AppleIntelligence => "Apple Intelligence".to_string(),
         }
     }
