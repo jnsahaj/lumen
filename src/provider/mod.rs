@@ -160,14 +160,18 @@ impl LumenProvider {
         match &self.backend {
             #[cfg(target_os = "macos")]
             ProviderBackend::AppleIntelligence => {
-                let system_prompt = prompt.system_prompt + "\ndo not use markdown syntax";
+                let response = tokio::task::spawn_blocking(move || {
+                    let system_prompt = prompt.system_prompt + "\ndo not use markdown syntax";
 
-                let session = LanguageModelSession::with_instructions(&system_prompt)
-                    .map_err(ProviderError::FmError)?;
+                    let session = LanguageModelSession::with_instructions(&system_prompt)
+                        .map_err(ProviderError::FmError)?;
 
-                let response = session
-                    .response(&prompt.user_prompt)
-                    .map_err(ProviderError::FmError)?;
+                    session
+                        .response(&prompt.user_prompt)
+                        .map_err(ProviderError::FmError)
+                })
+                .await
+                .expect("failed to perform request to apple-intelligence")?;
 
                 Ok(response)
             }
