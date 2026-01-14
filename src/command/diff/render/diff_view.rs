@@ -319,7 +319,11 @@ fn is_muted_color(color: Color) -> bool {
             // Also check if it's grayish (low saturation)
             let max = r.max(g).max(b);
             let min = r.min(g).min(b);
-            let saturation = if max == 0 { 0 } else { (max - min) as u32 * 100 / max as u32 };
+            let saturation = if max == 0 {
+                0
+            } else {
+                (max - min) as u32 * 100 / max as u32
+            };
             // Muted = low luminance OR (medium luminance AND low saturation)
             luminance < 140 || (luminance < 180 && saturation < 30)
         }
@@ -390,14 +394,14 @@ fn apply_word_emphasis_highlight<'a>(
             let global_pos = byte_pos + byte_offset;
 
             // Check if we're in a search match (takes priority)
-            let search_match = search_ranges.iter().find(|(start, end, _)| {
-                global_pos >= *start && global_pos < *end
-            });
+            let search_match = search_ranges
+                .iter()
+                .find(|(start, end, _)| global_pos >= *start && global_pos < *end);
 
             // Check if we're in an emphasis range
-            let in_emphasis = emphasis_ranges.iter().any(|(start, end)| {
-                global_pos >= *start && global_pos < *end
-            });
+            let in_emphasis = emphasis_ranges
+                .iter()
+                .any(|(start, end)| global_pos >= *start && global_pos < *end);
 
             // Determine background and style for this character
             let (bg, fg, bold) = if let Some((_, _, is_current)) = search_match {
@@ -426,13 +430,13 @@ fn apply_word_emphasis_highlight<'a>(
                 let (next_byte_offset, _) = char_indices[run_end_idx];
                 let next_global_pos = byte_pos + next_byte_offset;
 
-                let next_search = search_ranges.iter().find(|(start, end, _)| {
-                    next_global_pos >= *start && next_global_pos < *end
-                });
+                let next_search = search_ranges
+                    .iter()
+                    .find(|(start, end, _)| next_global_pos >= *start && next_global_pos < *end);
 
-                let next_in_emphasis = emphasis_ranges.iter().any(|(start, end)| {
-                    next_global_pos >= *start && next_global_pos < *end
-                });
+                let next_in_emphasis = emphasis_ranges
+                    .iter()
+                    .any(|(start, end)| next_global_pos >= *start && next_global_pos < *end);
 
                 let same_style = match (search_match, next_search) {
                     (Some((_, _, c1)), Some((_, _, c2))) => c1 == c2,
@@ -577,6 +581,7 @@ pub fn render_diff(
 ) {
     let area = frame.area();
     let t = theme::get();
+    let bg = t.ui.footer_bg;
 
     // Layout: header (if stacked) + main content + footer
     let (content_area, footer_area) = if stacked_mode {
@@ -649,10 +654,7 @@ pub fn render_diff(
             .alignment(ratatui::layout::Alignment::Center)
             .block(
                 Block::default()
-                    .title(Line::styled(
-                        format!(" {} ", diff.filename),
-                        title_style,
-                    ))
+                    .title(Line::styled(format!(" {} ", diff.filename), title_style))
                     .borders(Borders::ALL)
                     .border_style(border_style),
             );
@@ -904,7 +906,14 @@ pub fn render_diff(
             let in_focused = is_in_focused_hunk(line_idx, diff_line.change_type);
             let (old_bg, old_gutter_bg, old_gutter_fg, new_bg, new_gutter_bg, new_gutter_fg) =
                 match diff_line.change_type {
-                    ChangeType::Equal => (None, None, None, None, None, None),
+                    ChangeType::Equal => (
+                        Some(bg),               // old_bg: Set to theme background
+                        Some(bg),               // old_gutter_bg
+                        Some(t.ui.line_number), // old_gutter_fg
+                        Some(bg),               // new_bg: Set to theme background
+                        Some(bg),               // new_gutter_bg
+                        Some(t.ui.line_number), // new_gutter_
+                    ),
                     ChangeType::Delete => (
                         Some(t.diff.deleted_bg),
                         Some(t.diff.deleted_gutter_bg),
@@ -1076,12 +1085,15 @@ pub fn render_diff(
         }
 
         if let Some(area) = old_area {
-            let old_para = Paragraph::new(old_lines).scroll((0, h_scroll)).block(
-                Block::default()
-                    .title(Line::styled(" [2] Old ", title_style))
-                    .borders(Borders::ALL)
-                    .border_style(border_style),
-            );
+            let old_para = Paragraph::new(old_lines)
+                .style(Style::default().bg(bg))
+                .scroll((0, h_scroll))
+                .block(
+                    Block::default()
+                        .title(Line::styled(" [2] Old ", title_style))
+                        .borders(Borders::ALL)
+                        .border_style(border_style),
+                );
             frame.render_widget(old_para, area);
         }
 
@@ -1092,12 +1104,16 @@ pub fn render_diff(
             } else {
                 Borders::ALL
             };
-            let new_para = Paragraph::new(new_lines).scroll((0, h_scroll)).block(
-                Block::default()
-                    .title(Line::styled(" New ", title_style))
-                    .borders(new_borders)
-                    .border_style(border_style),
-            );
+            let new_para = Paragraph::new(new_lines)
+                .style(Style::default().bg(bg))
+                .scroll((0, h_scroll))
+                .block(
+                    Block::default()
+                        .title(Line::styled(" New ", title_style))
+                        .borders(new_borders)
+                        .style(Style::default().bg(bg))
+                        .border_style(border_style),
+                );
             frame.render_widget(new_para, area);
         }
     }
