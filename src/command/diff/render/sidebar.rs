@@ -13,6 +13,8 @@ pub fn render_sidebar(
     frame: &mut Frame,
     area: Rect,
     sidebar_items: &[SidebarItem],
+    sidebar_visible: &[usize],
+    collapsed_dirs: &HashSet<String>,
     current_file: usize,
     sidebar_selected: usize,
     sidebar_scroll: usize,
@@ -23,10 +25,11 @@ pub fn render_sidebar(
     let t = theme::get();
     let bg = t.ui.bg;
     let visible_height = area.height.saturating_sub(2) as usize;
-    let lines: Vec<Line> = sidebar_items
+    let lines: Vec<Line> = sidebar_visible
         .iter()
         .enumerate()
-        .map(|(i, item)| {
+        .map(|(i, item_idx)| {
+            let item = &sidebar_items[*item_idx];
             let (prefix, status_symbol, status_color, name, is_current_file, is_viewed) = match item
             {
                 SidebarItem::Directory {
@@ -61,9 +64,18 @@ pub fn render_sidebar(
                     } else {
                         "  "
                     };
+                    let status_symbol = if has_children {
+                        if collapsed_dirs.contains(path) {
+                            "▶"
+                        } else {
+                            "▼"
+                        }
+                    } else {
+                        " "
+                    };
                     (
                         format!("{}{}", indent, marker),
-                        "▼".to_string(),
+                        status_symbol.to_string(),
                         None,
                         format!(" {}", name),
                         false,
@@ -142,7 +154,7 @@ pub fn render_sidebar(
         .collect();
 
     let para = Paragraph::new(visible_lines)
-    .style(Style::default().bg(bg))
+        .style(Style::default().bg(bg))
         .scroll((0, sidebar_h_scroll))
         .block(
             Block::default()
