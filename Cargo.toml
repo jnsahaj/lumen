@@ -61,3 +61,6 @@ tempfile = "3"
 
 [profile.release]
 lto = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+fm-bindings = "0.1.3"
