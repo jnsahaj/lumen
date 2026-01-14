@@ -21,7 +21,7 @@ pub fn render_sidebar(
     is_focused: bool,
 ) {
     let t = theme::get();
-    let bg = t.ui.footer_bg;
+    let bg = t.ui.bg;
     let visible_height = area.height.saturating_sub(2) as usize;
     let lines: Vec<Line> = sidebar_items
         .iter()

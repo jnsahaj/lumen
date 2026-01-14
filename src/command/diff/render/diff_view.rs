@@ -29,7 +29,7 @@ fn render_stacked_header(
     vcs_name: &str,
 ) {
     let t = theme::get();
-    let bg = t.ui.footer_bg;
+    let bg = t.ui.bg;
 
     let can_go_prev = index > 0;
     let can_go_next = index < total.saturating_sub(1);
@@ -581,7 +581,7 @@ pub fn render_diff(
 ) {
     let area = frame.area();
     let t = theme::get();
-    let bg = t.ui.footer_bg;
+    let bg = t.ui.bg;
 
     // Layout: header (if stacked) + main content + footer
     let (content_area, footer_area) = if stacked_mode {

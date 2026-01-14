@@ -36,7 +36,7 @@ fn truncate_middle(s: &str, max_len: usize) -> String {
 
 pub fn render_footer(frame: &mut Frame, footer_area: Rect, data: FooterData) {
     let t = theme::get();
-    let bg = t.ui.footer_bg;
+    let bg = t.ui.bg;
 
     if data.search_state.is_active() {
         let prefix = match data.search_state.mode {
