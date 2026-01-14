@@ -739,7 +739,7 @@ impl Theme {
             },
             ui: UiColors {
                 border_focused: Color::Rgb(38, 139, 210), // blue
-                border_unfocused: Color::Rgb(7, 54, 66),
+                border_unfocused: Color::Rgb(88, 110, 117),
                 text_primary: Color::Rgb(131, 148, 150), // base0
                 text_secondary: Color::Rgb(147, 161, 161), // base1
                 text_muted: Color::Rgb(88, 110, 117),    // base01
@@ -800,7 +800,7 @@ impl Theme {
             },
             ui: UiColors {
                 border_focused: Color::Rgb(38, 139, 210),
-                border_unfocused: Color::Rgb(238, 232, 213),
+                border_unfocused: Color::Rgb(147, 161, 161),
                 text_primary: Color::Rgb(101, 123, 131), // base00
                 text_secondary: Color::Rgb(88, 110, 117), // base01
                 text_muted: Color::Rgb(147, 161, 161),   // base1

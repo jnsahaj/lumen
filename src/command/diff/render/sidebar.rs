@@ -21,6 +21,7 @@ pub fn render_sidebar(
     is_focused: bool,
 ) {
     let t = theme::get();
+    let bg = t.ui.footer_bg;
     let visible_height = area.height.saturating_sub(2) as usize;
     let lines: Vec<Line> = sidebar_items
         .iter()
@@ -141,12 +142,14 @@ pub fn render_sidebar(
         .collect();
 
     let para = Paragraph::new(visible_lines)
+    .style(Style::default().bg(bg))
         .scroll((0, sidebar_h_scroll))
         .block(
             Block::default()
                 .title(Line::styled(" [1] Files ", title_style))
                 .borders(Borders::ALL)
-                .border_style(border_style),
+                .border_style(border_style)
+                .style(Style::default().bg(bg)),
         );
 
     frame.render_widget(para, area);
