@@ -187,5 +187,13 @@ pub static CONFIGS: Lazy<Vec<(&'static str, LanguageConfig)>> = Lazy::new(|| {
         &mut configs,
     );
 
+    load_config(
+        tree_sitter_ruby::LANGUAGE.into(),
+        "ruby",
+        RUBY_HIGHLIGHTS,
+        "rb",
+        &mut configs,
+    );
+
     configs
 });
