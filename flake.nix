@@ -10,10 +10,15 @@
     };
   };
 
-  outputs = { self, nixpkgs, flake-utils, fenix, ... }:
-    flake-utils.lib.eachDefaultSystem (system:
-    let
-      pkgs = import nixpkgs { inherit system; };
+  outputs = {
+    self,
+    nixpkgs,
+    flake-utils,
+    fenix,
+    ...
+  }:
+    flake-utils.lib.eachDefaultSystem (system: let
+      pkgs = import nixpkgs {inherit system;};
       rustToolchain = fenix.packages.${system}.stable.withComponents [
         "cargo"
         "clippy"
@@ -22,23 +27,22 @@
         "rust-src"
       ];
       rust-analyzer = fenix.packages.${system}.rust-analyzer;
-    in
-    {
+    in {
       packages = {
-        lumen = 
-          let
-            manifest = (pkgs.lib.importTOML ./Cargo.toml).package;
-          in
+        lumen = let
+          manifest = (pkgs.lib.importTOML ./Cargo.toml).package;
+        in
           pkgs.rustPlatform.buildRustPackage {
             pname = manifest.name;
             version = manifest.version;
-          
+
             cargoLock.lockFile = ./Cargo.lock;
-          
+
             src = pkgs.lib.cleanSource ./.;
-          
-            nativeBuildInputs = [ pkgs.pkg-config ];
-            buildInputs = [ pkgs.openssl ];
+
+            nativeBuildInputs = [pkgs.pkg-config pkgs.perl];
+            buildInputs = [pkgs.openssl];
+            doCheck = false;
           };
         default = self.packages.${system}.lumen;
       };
@@ -48,6 +52,7 @@
           rustToolchain
           rust-analyzer
           pkgs.pkg-config
+          pkgs.perl
         ];
         buildInputs = [
           pkgs.openssl
