@@ -34,6 +34,9 @@ pub struct Cli {
     #[arg(value_enum, long = "vcs")]
     pub vcs: Option<VcsOverride>,
 
+    #[arg(short = 'u', long = "base-url")]
+    pub base_url: Option<String>,
+
     #[command(subcommand)]
     pub command: Commands,
 }
@@ -50,6 +53,7 @@ pub enum ProviderType {
     Gemini,
     Xai,
     Vercel,
+    Customopenai
 }
 
 impl FromStr for ProviderType {
@@ -67,6 +71,7 @@ impl FromStr for ProviderType {
             "gemini" => Ok(ProviderType::Gemini),
             "xai" => Ok(ProviderType::Xai),
             "vercel" => Ok(ProviderType::Vercel),
+            "customopenai" => Ok(ProviderType::Customopenai),
             _ => Err(format!("Unknown provider: {}", s)),
         }
     }
