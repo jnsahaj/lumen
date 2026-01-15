@@ -145,21 +145,29 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(file_diffs: Vec<FileDiff>) -> Self {
+    pub fn new(file_diffs: Vec<FileDiff>, focus_file: Option<&str>) -> Self {
         let sidebar_items = build_file_tree(&file_diffs);
         let collapsed_dirs = HashSet::new();
         let sidebar_visible = build_sidebar_visible_indices(&sidebar_items, &collapsed_dirs);
-        let sidebar_selected = sidebar_visible
-            .iter()
-            .position(|idx| matches!(sidebar_items[*idx], SidebarItem::File { .. }))
-            .unwrap_or(0);
-        let current_file = sidebar_visible
-            .get(sidebar_selected)
-            .and_then(|idx| match &sidebar_items[*idx] {
-                SidebarItem::File { file_index, .. } => Some(*file_index),
-                _ => None,
-            })
-            .unwrap_or(0);
+        let (sidebar_selected, current_file) = if let Some(focus_path) = focus_file {
+            if let Some(file_idx) = file_diffs.iter().position(|f| f.filename == focus_path) {
+                let sidebar_idx = sidebar_visible
+                    .iter()
+                    .position(|&idx| {
+                        matches!(sidebar_items[idx], SidebarItem::File { file_index, .. } if file_index == file_idx)
+                    })
+                    .unwrap_or(0);
+                (sidebar_idx, file_idx)
+            } else {
+                eprintln!(
+                    "\x1b[93mwarning:\x1b[0m --focus file '{}' not found in diff, using first file",
+                    focus_path
+                );
+                Self::find_first_file(&sidebar_items, &sidebar_visible)
+            }
+        } else {
+            Self::find_first_file(&sidebar_items, &sidebar_visible)
+        };
         let settings = DiffViewSettings::default();
         let (scroll, focused_hunk) = if !file_diffs.is_empty() && current_file < file_diffs.len() {
             let diff = &file_diffs[current_file];
@@ -204,6 +212,15 @@ impl AppState {
             vcs_name: "git", // Default, will be set by caller
             diff_reference: None,
         }
+    }
+
+    fn find_first_file(sidebar_items: &[SidebarItem], sidebar_visible: &[usize]) -> (usize, usize) {
+        for (visible_idx, &item_idx) in sidebar_visible.iter().enumerate() {
+            if let SidebarItem::File { file_index, .. } = &sidebar_items[item_idx] {
+                return (visible_idx, *file_index);
+            }
+        }
+        (0, 0)
     }
 
     /// Set the VCS backend name
@@ -743,4 +760,80 @@ pub fn adjust_scroll_for_hunk(
 
     // Hunk is within viewport, don't scroll
     scroll
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::command::diff::types::FileStatus;
+
+    fn make_file_diff(filename: &str) -> FileDiff {
+        FileDiff {
+            filename: filename.to_string(),
+            old_content: String::new(),
+            new_content: "content\n".to_string(),
+            status: FileStatus::Added,
+            is_binary: false,
+        }
+    }
+
+    #[test]
+    fn test_focus_selects_matching_file() {
+        let diffs = vec![
+            make_file_diff("src/main.rs"),
+            make_file_diff("src/lib.rs"),
+            make_file_diff("README.md"),
+        ];
+
+        let state = AppState::new(diffs, Some("src/lib.rs"));
+
+        assert_eq!(state.file_diffs[state.current_file].filename, "src/lib.rs");
+    }
+
+    #[test]
+    fn test_focus_none_selects_first_file_in_sidebar() {
+        let diffs = vec![make_file_diff("bbb.rs"), make_file_diff("aaa.rs")];
+
+        let state = AppState::new(diffs, None);
+
+        // Sidebar sorts alphabetically, so aaa.rs (index 1) appears first
+        assert_eq!(state.file_diffs[state.current_file].filename, "aaa.rs");
+    }
+
+    #[test]
+    fn test_focus_not_found_falls_back_to_first_in_sidebar() {
+        let diffs = vec![make_file_diff("bbb.rs"), make_file_diff("aaa.rs")];
+
+        let state = AppState::new(diffs, Some("nonexistent.rs"));
+
+        // Falls back to first file in sorted sidebar order
+        assert_eq!(state.file_diffs[state.current_file].filename, "aaa.rs");
+    }
+
+    #[test]
+    fn test_focus_updates_sidebar_selection() {
+        let diffs = vec![
+            make_file_diff("aaa.rs"),
+            make_file_diff("bbb.rs"),
+            make_file_diff("ccc.rs"),
+        ];
+
+        let state = AppState::new(diffs, Some("ccc.rs"));
+
+        if let Some(SidebarItem::File { file_index, .. }) = state.sidebar_item_at_visible(state.sidebar_selected) {
+            assert_eq!(*file_index, state.current_file);
+        } else {
+            panic!("sidebar_selected should point to a file");
+        }
+    }
+
+    #[test]
+    fn test_focus_empty_diffs() {
+        let diffs = vec![];
+
+        let state = AppState::new(diffs, Some("any.rs"));
+
+        assert_eq!(state.current_file, 0);
+        assert!(state.file_diffs.is_empty());
+    }
 }

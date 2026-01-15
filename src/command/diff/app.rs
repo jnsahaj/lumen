@@ -152,7 +152,7 @@ fn run_app_internal(
         None
     };
 
-    let mut state = AppState::new(file_diffs);
+    let mut state = AppState::new(file_diffs, options.focus.as_deref());
     state.set_vcs_name(backend.name());
 
     // Set diff reference for annotation export context
