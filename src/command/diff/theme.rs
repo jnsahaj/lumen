@@ -317,7 +317,7 @@ impl Theme {
                 text_secondary: Color::Rgb(166, 173, 200),   // subtext0
                 text_muted: Color::Rgb(108, 112, 134),       // overlay0
                 line_number: Color::Rgb(88, 91, 112),        // overlay0
-                bg: Color::Rgb(24, 24, 37),           // mantle
+                bg: Color::Rgb(24, 24, 37),                  // mantle
                 footer_branch_bg: Color::Rgb(49, 50, 68),    // surface0
                 footer_branch_fg: Color::Rgb(137, 180, 250), // blue
                 status_added: Color::Rgb(166, 227, 161),     // green
@@ -500,7 +500,7 @@ impl Theme {
                 text_secondary: Color::Rgb(216, 222, 233), // nord4
                 text_muted: Color::Rgb(76, 86, 106),       // nord3
                 line_number: Color::Rgb(76, 86, 106),
-                bg: Color::Rgb(59, 66, 82),        // nord1
+                bg: Color::Rgb(59, 66, 82),               // nord1
                 footer_branch_bg: Color::Rgb(67, 76, 94), // nord2
                 footer_branch_fg: Color::Rgb(136, 192, 208),
                 status_added: Color::Rgb(163, 190, 140),
