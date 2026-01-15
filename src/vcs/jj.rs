@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use chrono::Local;
@@ -33,6 +34,12 @@ use jj_lib::workspace::{default_working_copy_factories, Workspace};
 use pollster::FutureExt;
 
 use super::backend::{CommitInfo, StackedCommitInfo, VcsBackend, VcsError};
+
+fn find_workspace_dir(path: &Path) -> &Path {
+    path.ancestors()
+        .find(|p| p.join(".jj").is_dir())
+        .unwrap_or(path)
+}
 
 /// Files to exclude from diff output (same as GIT_DIFF_EXCLUSIONS in git_entity).
 const DIFF_EXCLUDED_FILES: &[&str] = &[
@@ -117,8 +124,10 @@ pub struct JjBackend {
 
 impl JjBackend {
     /// Load a jj workspace and repository from the given path.
-    pub fn new(workspace_path: &Path) -> Result<Self, VcsError> {
-        // Create minimal settings
+    /// Walks up the directory tree to find the workspace root if needed.
+    pub fn new(path: &Path) -> Result<Self, VcsError> {
+        let workspace_root = find_workspace_dir(path);
+
         let config = StackedConfig::with_defaults();
         let settings = UserSettings::from_config(config)
             .map_err(|e| VcsError::Other(format!("failed to create settings: {}", e)))?;
@@ -126,7 +135,7 @@ impl JjBackend {
         // Load workspace
         let workspace = Workspace::load(
             &settings,
-            workspace_path,
+            workspace_root,
             &StoreFactories::default(),
             &default_working_copy_factories(),
         )
@@ -142,7 +151,7 @@ impl JjBackend {
             workspace,
             repo,
             settings,
-            workspace_path: workspace_path.to_path_buf(),
+            workspace_path: workspace_root.to_path_buf(),
         })
     }
 
@@ -972,6 +981,10 @@ impl VcsBackend for JjBackend {
 
     fn name(&self) -> &'static str {
         "jj"
+    }
+
+    fn get_workspace_root(&self) -> PathBuf {
+        self.workspace_path.clone()
     }
 }
 
