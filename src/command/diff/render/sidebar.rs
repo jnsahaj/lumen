@@ -142,7 +142,7 @@ pub fn render_sidebar(
         .collect();
 
     let para = Paragraph::new(visible_lines)
-    .style(Style::default().bg(bg))
+        .style(Style::default().bg(bg))
         .scroll((0, sidebar_h_scroll))
         .block(
             Block::default()

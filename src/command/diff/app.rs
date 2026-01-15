@@ -99,7 +99,7 @@ fn run_app_internal(
         None
     };
 
-    let mut state = AppState::new(file_diffs);
+    let mut state = AppState::new(file_diffs, options.focus.as_deref());
     state.set_vcs_name(backend.name());
     let mut active_modal: Option<Modal> = None;
     let mut pending_watch_event: Option<WatchEvent> = None;
