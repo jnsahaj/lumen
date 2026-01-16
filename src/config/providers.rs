@@ -60,6 +60,13 @@ pub const ALL_PROVIDERS: &[ProviderInfo] = &[
         env_key: "OPENROUTER_API_KEY",
     },
     ProviderInfo {
+        id: "poe",
+        provider_type: ProviderType::Poe,
+        display_name: "Poe",
+        default_model: "claude-sonnet-4.5",
+        env_key: "POE_API_KEY",
+    },
+    ProviderInfo {
         id: "deepseek",
         provider_type: ProviderType::Deepseek,
         display_name: "DeepSeek",
