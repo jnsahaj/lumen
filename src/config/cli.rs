@@ -12,6 +12,20 @@ pub enum VcsOverride {
     Jj,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, ValueEnum, Debug)]
+pub enum CompletionShell {
+    #[value(name = "bash")]
+    Bash,
+    #[value(name = "zsh")]
+    Zsh,
+    #[value(name = "fish")]
+    Fish,
+    #[value(name = "powershell")]
+    PowerShell,
+    #[value(name = "elvish")]
+    Elvish,
+}
+
 #[derive(Parser)]
 #[command(name = "lumen")]
 #[command(about = "AI-powered CLI tool for git commit summaries", long_about = None)]
@@ -134,6 +148,12 @@ pub enum Commands {
     },
     /// Interactively configure Lumen (provider, API key)
     Configure,
+    /// Generate shell completions for a given shell
+    Completion {
+        /// Shell to generate completions for
+        #[arg(value_enum, long)]
+        shell: CompletionShell,
+    },
 }
 
 #[cfg(test)]
