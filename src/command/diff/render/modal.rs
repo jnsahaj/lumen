@@ -4,6 +4,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph},
 };
 
+use crate::command::diff::state::HunkAnnotation;
 use crate::command::diff::theme;
 
 #[derive(Clone)]
@@ -54,6 +55,13 @@ pub enum ModalContent {
         query: String,
         selected: usize,
     },
+    Annotations {
+        title: String,
+        items: Vec<String>,
+        annotations: Vec<HunkAnnotation>,
+        selected: usize,
+        export_input: Option<String>,
+    },
 }
 
 pub struct Modal {
@@ -66,6 +74,11 @@ pub enum ModalResult {
     #[allow(dead_code)]
     Selected(usize, String),
     FileSelected(usize),
+    AnnotationJump { file_index: usize, hunk_index: usize },
+    AnnotationEdit { file_index: usize, hunk_index: usize },
+    AnnotationDelete { file_index: usize, hunk_index: usize },
+    AnnotationCopyAll,
+    AnnotationExport(String),
 }
 
 impl Modal {
@@ -112,6 +125,22 @@ impl Modal {
         }
     }
 
+    pub fn annotations(
+        title: impl Into<String>,
+        items: Vec<String>,
+        annotations: Vec<HunkAnnotation>,
+    ) -> Self {
+        Self {
+            content: ModalContent::Annotations {
+                title: title.into(),
+                items,
+                annotations,
+                selected: 0,
+                export_input: None,
+            },
+        }
+    }
+
     pub fn render(&self, frame: &mut Frame) {
         let area = frame.area();
 
@@ -143,6 +172,16 @@ impl Modal {
                 let width = 80.min(area.width.saturating_sub(4));
                 let items_count = filtered_indices.len().min(15) as u16;
                 let height = (items_count + 5).min(area.height * 80 / 100).max(8);
+                (width, height)
+            }
+            ModalContent::Annotations {
+                items, export_input, ..
+            } => {
+                let width = 80.min(area.width.saturating_sub(4));
+                let items_count = items.len().min(10) as u16;
+                // Extra height for footer and export input
+                let extra = if export_input.is_some() { 3 } else { 2 };
+                let height = (items_count * 2 + extra + 4).min(area.height * 80 / 100).max(10);
                 (width, height)
             }
         };
@@ -183,6 +222,15 @@ impl Modal {
                     query,
                     *selected,
                 );
+            }
+            ModalContent::Annotations {
+                title,
+                items,
+                selected,
+                export_input,
+                ..
+            } => {
+                self.render_annotations(frame, modal_area, title, items, *selected, export_input.as_deref());
             }
         }
     }
@@ -388,11 +436,125 @@ impl Modal {
         frame.render_widget(list, chunks[2]);
     }
 
+    fn render_annotations(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        title: &str,
+        items: &[String],
+        selected: usize,
+        export_input: Option<&str>,
+    ) {
+        let t = theme::get();
+        let block = Block::default()
+            .title(format!(" {} ", title))
+            .title_style(Style::default().fg(t.ui.border_focused).bold())
+            .borders(Borders::ALL)
+            .border_type(ratatui::widgets::BorderType::Rounded)
+            .border_style(Style::default().fg(t.ui.border_unfocused));
+
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+
+        use ratatui::layout::{Constraint, Direction, Layout};
+
+        // Different layout based on export input state
+        let (list_area, footer_area) = if export_input.is_some() {
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Min(1),
+                    Constraint::Length(3), // export input
+                    Constraint::Length(1), // footer
+                ])
+                .split(inner);
+            (chunks[0], chunks[2])
+        } else {
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Min(1), Constraint::Length(2)])
+                .split(inner);
+            (chunks[0], chunks[1])
+        };
+
+        // Render annotations list
+        let visible_count = list_area.height as usize;
+        let scroll_offset = if selected >= visible_count {
+            selected - visible_count + 1
+        } else {
+            0
+        };
+
+        let list_items: Vec<ListItem> = items
+            .iter()
+            .enumerate()
+            .skip(scroll_offset)
+            .take(visible_count)
+            .map(|(i, item)| {
+                let is_selected = i == selected;
+                let style = if is_selected {
+                    Style::default().fg(t.ui.selection_fg).bg(t.ui.selection_bg)
+                } else {
+                    Style::default().fg(t.ui.text_primary)
+                };
+                let prefix = if is_selected { "> " } else { "  " };
+                ListItem::new(format!("{}{}", prefix, item)).style(style)
+            })
+            .collect();
+
+        let list = List::new(list_items);
+        frame.render_widget(list, list_area);
+
+        // Render export input if active
+        if let Some(input) = export_input {
+            let input_area = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Min(1),
+                    Constraint::Length(3),
+                    Constraint::Length(1),
+                ])
+                .split(inner)[1];
+
+            let input_block = Block::default()
+                .title(" Export to file ")
+                .title_style(Style::default().fg(t.ui.text_secondary))
+                .borders(Borders::ALL)
+                .border_type(ratatui::widgets::BorderType::Rounded)
+                .border_style(Style::default().fg(t.ui.border_unfocused));
+
+            let input_inner = input_block.inner(input_area);
+            frame.render_widget(input_block, input_area);
+
+            let input_line = Line::from(vec![
+                Span::styled("> ", Style::default().fg(t.ui.status_added)),
+                Span::styled(input, Style::default().fg(t.ui.text_primary)),
+                Span::styled("_", Style::default().fg(t.ui.text_muted)),
+            ]);
+            frame.render_widget(Paragraph::new(input_line), input_inner);
+        }
+
+        // Render footer with keybindings
+        let footer_text = if export_input.is_some() {
+            "Enter: Confirm  |  Esc: Cancel"
+        } else {
+            "Enter: Jump  |  e: Edit  |  d: Delete  |  y: Copy All  |  o: Export  |  Esc: Close"
+        };
+        let footer = Paragraph::new(Line::from(Span::styled(
+            footer_text,
+            Style::default().fg(t.ui.text_muted),
+        )));
+        frame.render_widget(footer, footer_area);
+    }
+
     /// Handle keyboard input for the modal.
     /// Returns Some(ModalResult) if the modal should close.
     pub fn handle_input(&mut self, key: KeyEvent) -> Option<ModalResult> {
-        // FilePicker handles its own dismiss logic (needs to allow typing 'q')
-        if !matches!(self.content, ModalContent::FilePicker { .. }) {
+        // FilePicker and Annotations handle their own dismiss logic
+        if !matches!(
+            self.content,
+            ModalContent::FilePicker { .. } | ModalContent::Annotations { .. }
+        ) {
             // Close on Esc, q, or Ctrl+C
             if key.code == KeyCode::Esc
                 || key.code == KeyCode::Char('q')
@@ -491,6 +653,83 @@ impl Modal {
                 }
                 _ => None,
             },
+            ModalContent::Annotations {
+                items,
+                annotations,
+                selected,
+                export_input,
+                ..
+            } => {
+                // Export input mode
+                if let Some(ref mut input) = export_input {
+                    match key.code {
+                        KeyCode::Esc => {
+                            *export_input = None;
+                            None
+                        }
+                        KeyCode::Enter => {
+                            let filename = input.clone();
+                            Some(ModalResult::AnnotationExport(filename))
+                        }
+                        KeyCode::Backspace => {
+                            input.pop();
+                            None
+                        }
+                        KeyCode::Char(c) => {
+                            input.push(c);
+                            None
+                        }
+                        _ => None,
+                    }
+                } else {
+                    // Normal mode
+                    match key.code {
+                        KeyCode::Esc
+                        | KeyCode::Char('q')
+                        | KeyCode::Char('c')
+                            if key.code == KeyCode::Esc
+                                || key.code == KeyCode::Char('q')
+                                || key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
+                            Some(ModalResult::Dismissed)
+                        }
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            if *selected < items.len().saturating_sub(1) {
+                                *selected += 1;
+                            }
+                            None
+                        }
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            *selected = selected.saturating_sub(1);
+                            None
+                        }
+                        KeyCode::Enter => annotations.get(*selected).map(|ann| {
+                            ModalResult::AnnotationJump {
+                                file_index: ann.file_index,
+                                hunk_index: ann.hunk_index,
+                            }
+                        }),
+                        KeyCode::Char('e') => annotations.get(*selected).map(|ann| {
+                            ModalResult::AnnotationEdit {
+                                file_index: ann.file_index,
+                                hunk_index: ann.hunk_index,
+                            }
+                        }),
+                        KeyCode::Char('d') => annotations.get(*selected).map(|ann| {
+                            ModalResult::AnnotationDelete {
+                                file_index: ann.file_index,
+                                hunk_index: ann.hunk_index,
+                            }
+                        }),
+                        KeyCode::Char('y') => Some(ModalResult::AnnotationCopyAll),
+                        KeyCode::Char('o') => {
+                            *export_input = Some(String::from("annotations.txt"));
+                            None
+                        }
+                        _ => None,
+                    }
+                }
+            }
         }
     }
 

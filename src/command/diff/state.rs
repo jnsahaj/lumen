@@ -14,6 +14,16 @@ pub enum PendingKey {
     G,
 }
 
+/// An annotation attached to a specific hunk in a file
+#[derive(Clone)]
+pub struct HunkAnnotation {
+    pub file_index: usize,
+    pub hunk_index: usize,
+    pub content: String,
+    pub line_range: (usize, usize),
+    pub filename: String,
+}
+
 pub struct AppState {
     pub file_diffs: Vec<FileDiff>,
     pub sidebar_items: Vec<SidebarItem>,
@@ -32,6 +42,8 @@ pub struct AppState {
     pub pending_key: PendingKey,
     pub needs_reload: bool,
     pub focused_hunk: Option<usize>,
+    // Annotation fields
+    pub annotations: Vec<HunkAnnotation>,
     // Stacked mode fields
     pub stacked_mode: bool,
     pub stacked_commits: Vec<StackedCommitInfo>,
@@ -93,6 +105,7 @@ impl AppState {
             pending_key: PendingKey::default(),
             needs_reload: false,
             focused_hunk,
+            annotations: Vec::new(),
             stacked_mode: false,
             stacked_commits: Vec::new(),
             current_commit_index: 0,
@@ -253,6 +266,46 @@ impl AppState {
             .unwrap_or(0);
         self.h_scroll = 0;
         self.focused_hunk = if hunks.is_empty() { None } else { Some(0) };
+    }
+
+    /// Get annotation for a specific hunk in a file
+    pub fn get_annotation(&self, file_index: usize, hunk_index: usize) -> Option<&HunkAnnotation> {
+        self.annotations
+            .iter()
+            .find(|a| a.file_index == file_index && a.hunk_index == hunk_index)
+    }
+
+    /// Add or update an annotation
+    pub fn set_annotation(&mut self, annotation: HunkAnnotation) {
+        if let Some(existing) = self
+            .annotations
+            .iter_mut()
+            .find(|a| a.file_index == annotation.file_index && a.hunk_index == annotation.hunk_index)
+        {
+            *existing = annotation;
+        } else {
+            self.annotations.push(annotation);
+        }
+    }
+
+    /// Remove an annotation
+    pub fn remove_annotation(&mut self, file_index: usize, hunk_index: usize) {
+        self.annotations
+            .retain(|a| !(a.file_index == file_index && a.hunk_index == hunk_index));
+    }
+
+    /// Format all annotations for export
+    pub fn format_annotations_for_export(&self) -> String {
+        self.annotations
+            .iter()
+            .map(|a| {
+                format!(
+                    "{}:{}-{}\n{}\n",
+                    a.filename, a.line_range.0, a.line_range.1, a.content
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 }
 pub fn adjust_scroll_to_line(

@@ -22,9 +22,10 @@ use super::render::{
     render_diff, render_empty_state, FilePickerItem, KeyBind, KeyBindSection, Modal,
     ModalFileStatus, ModalResult,
 };
-use super::state::{adjust_scroll_for_hunk, adjust_scroll_to_line, AppState, PendingKey};
+use super::annotation::{AnnotationEditor, AnnotationEditorResult};
+use super::state::{adjust_scroll_for_hunk, adjust_scroll_to_line, AppState, HunkAnnotation, PendingKey};
 use super::theme;
-use super::types::{DiffFullscreen, FileStatus, FocusedPanel, SidebarItem};
+use super::types::{ChangeType, DiffFullscreen, FileStatus, FocusedPanel, SidebarItem};
 use super::watcher::{setup_watcher, WatchEvent};
 use super::{
     fetch_viewed_files, mark_file_as_viewed_async, unmark_file_as_viewed_async, DiffOptions, PrInfo,
@@ -102,6 +103,7 @@ fn run_app_internal(
     let mut state = AppState::new(file_diffs);
     state.set_vcs_name(backend.name());
     let mut active_modal: Option<Modal> = None;
+    let mut annotation_editor: Option<AnnotationEditor> = None;
     let mut pending_watch_event: Option<WatchEvent> = None;
     let mut pending_events: VecDeque<Event> = VecDeque::new();
 
@@ -200,7 +202,12 @@ fn run_app_internal(
                     state.current_commit_index,
                     state.stacked_commits.len(),
                     state.vcs_name,
+                    &state.annotations,
                 );
+                // Render annotation editor (on top of everything except modal)
+                if let Some(ref editor) = annotation_editor {
+                    editor.render(frame);
+                }
                 if let Some(ref modal) = active_modal {
                     modal.render(frame);
                 }
@@ -257,30 +264,133 @@ fn run_app_internal(
                         _ => {}
                     }
                 }
+                Event::Key(key)
+                    if key.kind == KeyEventKind::Press
+                        && annotation_editor.is_some()
+                        && active_modal.is_none() =>
+                {
+                    let editor = annotation_editor.as_mut().unwrap();
+                    match editor.handle_input(key) {
+                        AnnotationEditorResult::Continue => {}
+                        AnnotationEditorResult::Save(content) => {
+                            let annotation = HunkAnnotation {
+                                file_index: editor.file_index,
+                                hunk_index: editor.hunk_index,
+                                content,
+                                line_range: editor.line_range,
+                                filename: editor.filename.clone(),
+                            };
+                            state.set_annotation(annotation);
+                            annotation_editor = None;
+                        }
+                        AnnotationEditorResult::Cancel => {
+                            annotation_editor = None;
+                        }
+                    }
+                }
                 Event::Key(key) if key.kind == KeyEventKind::Press && active_modal.is_some() => {
                     if let Some(ref mut modal) = active_modal {
                         if let Some(result) = modal.handle_input(key) {
-                            if let ModalResult::FileSelected(file_index) = result {
-                                state.select_file(file_index);
-                                if let Some(idx) = state.sidebar_items.iter().position(|item| {
-                                    matches!(item, SidebarItem::File { file_index: fi, .. } if *fi == state.current_file)
-                                }) {
-                                    state.sidebar_selected = idx;
-                                    let visible_height =
-                                        terminal.size()?.height.saturating_sub(5) as usize;
-                                    if state.sidebar_selected
-                                        >= state.sidebar_scroll + visible_height
-                                    {
-                                        state.sidebar_scroll = state
-                                            .sidebar_selected
-                                            .saturating_sub(visible_height)
-                                            + 1;
-                                    } else if state.sidebar_selected < state.sidebar_scroll {
-                                        state.sidebar_scroll = state.sidebar_selected;
+                            match result {
+                                ModalResult::FileSelected(file_index) => {
+                                    state.select_file(file_index);
+                                    if let Some(idx) = state.sidebar_items.iter().position(|item| {
+                                        matches!(item, SidebarItem::File { file_index: fi, .. } if *fi == state.current_file)
+                                    }) {
+                                        state.sidebar_selected = idx;
+                                        let visible_height =
+                                            terminal.size()?.height.saturating_sub(5) as usize;
+                                        if state.sidebar_selected
+                                            >= state.sidebar_scroll + visible_height
+                                        {
+                                            state.sidebar_scroll = state
+                                                .sidebar_selected
+                                                .saturating_sub(visible_height)
+                                                + 1;
+                                        } else if state.sidebar_selected < state.sidebar_scroll {
+                                            state.sidebar_scroll = state.sidebar_selected;
+                                        }
+                                    }
+                                    active_modal = None;
+                                }
+                                ModalResult::AnnotationJump { file_index, hunk_index } => {
+                                    // Jump to the file and hunk
+                                    state.select_file(file_index);
+                                    state.focused_hunk = Some(hunk_index);
+                                    // Scroll to the hunk
+                                    let diff = &state.file_diffs[file_index];
+                                    let side_by_side = compute_side_by_side(
+                                        &diff.old_content,
+                                        &diff.new_content,
+                                        state.settings.tab_width,
+                                    );
+                                    let hunks = find_hunk_starts(&side_by_side);
+                                    if let Some(&hunk_start) = hunks.get(hunk_index) {
+                                        state.scroll = adjust_scroll_for_hunk(
+                                            hunk_start,
+                                            state.scroll,
+                                            visible_height,
+                                            max_scroll,
+                                        );
+                                    }
+                                    active_modal = None;
+                                }
+                                ModalResult::AnnotationEdit { file_index, hunk_index } => {
+                                    // Close modal and open annotation editor for editing
+                                    if let Some(ann) = state.get_annotation(file_index, hunk_index) {
+                                        let editor = AnnotationEditor::new(
+                                            file_index,
+                                            hunk_index,
+                                            ann.filename.clone(),
+                                            ann.line_range,
+                                        ).with_content(&ann.content);
+                                        annotation_editor = Some(editor);
+                                        // Also jump to the hunk
+                                        state.select_file(file_index);
+                                        state.focused_hunk = Some(hunk_index);
+                                    }
+                                    active_modal = None;
+                                }
+                                ModalResult::AnnotationDelete { file_index, hunk_index } => {
+                                    state.remove_annotation(file_index, hunk_index);
+                                    // Refresh the modal if there are still annotations
+                                    if !state.annotations.is_empty() {
+                                        let items: Vec<String> = state
+                                            .annotations
+                                            .iter()
+                                            .map(|a| {
+                                                let preview = a.content.lines().next().unwrap_or("");
+                                                let preview = if preview.len() > 40 {
+                                                    format!("{}...", &preview[..40])
+                                                } else {
+                                                    preview.to_string()
+                                                };
+                                                format!("{}:{}-{} | {}", a.filename, a.line_range.0, a.line_range.1, preview)
+                                            })
+                                            .collect();
+                                        active_modal = Some(Modal::annotations("Annotations", items, state.annotations.clone()));
+                                    } else {
+                                        active_modal = None;
                                     }
                                 }
+                                ModalResult::AnnotationCopyAll => {
+                                    // Copy all annotations to clipboard
+                                    let formatted = state.format_annotations_for_export();
+                                    if let Ok(mut clipboard) = arboard::Clipboard::new() {
+                                        let _ = clipboard.set_text(&formatted);
+                                    }
+                                    active_modal = None;
+                                }
+                                ModalResult::AnnotationExport(filename) => {
+                                    // Write annotations to file
+                                    let formatted = state.format_annotations_for_export();
+                                    let _ = std::fs::write(&filename, &formatted);
+                                    active_modal = None;
+                                }
+                                ModalResult::Dismissed | ModalResult::Selected(_, _) => {
+                                    active_modal = None;
+                                }
                             }
-                            active_modal = None;
                         }
                     }
                 }
@@ -912,6 +1022,90 @@ fn run_app_internal(
                                 }
                             }
                         }
+                        KeyCode::Char('i') => {
+                            // Add annotation to focused hunk
+                            if let Some(hunk_index) = state.focused_hunk {
+                                let file_index = state.current_file;
+                                let diff = &state.file_diffs[file_index];
+
+                                // Calculate line range for this hunk
+                                let side_by_side = compute_side_by_side(
+                                    &diff.old_content,
+                                    &diff.new_content,
+                                    state.settings.tab_width,
+                                );
+                                let hunks = find_hunk_starts(&side_by_side);
+                                let hunk_start = hunks.get(hunk_index).copied().unwrap_or(0);
+                                let next_hunk_start = hunks
+                                    .get(hunk_index + 1)
+                                    .copied()
+                                    .unwrap_or(side_by_side.len());
+
+                                // Find the actual end of the hunk (last changed line, not start of next hunk)
+                                let mut actual_hunk_end = hunk_start;
+                                for i in hunk_start..next_hunk_start {
+                                    if let Some(dl) = side_by_side.get(i) {
+                                        if !matches!(dl.change_type, ChangeType::Equal) {
+                                            actual_hunk_end = i;
+                                        }
+                                    }
+                                }
+
+                                let start_line = side_by_side
+                                    .get(hunk_start)
+                                    .and_then(|dl| {
+                                        dl.new_line
+                                            .as_ref()
+                                            .map(|(n, _)| *n)
+                                            .or(dl.old_line.as_ref().map(|(n, _)| *n))
+                                    })
+                                    .unwrap_or(1);
+                                let end_line = side_by_side
+                                    .get(actual_hunk_end)
+                                    .and_then(|dl| {
+                                        dl.new_line
+                                            .as_ref()
+                                            .map(|(n, _)| *n)
+                                            .or(dl.old_line.as_ref().map(|(n, _)| *n))
+                                    })
+                                    .unwrap_or(start_line);
+
+                                let editor = AnnotationEditor::new(
+                                    file_index,
+                                    hunk_index,
+                                    diff.filename.clone(),
+                                    (start_line, end_line),
+                                );
+
+                                // If editing existing, pre-fill content
+                                let editor = if let Some(ann) = state.get_annotation(file_index, hunk_index) {
+                                    editor.with_content(&ann.content)
+                                } else {
+                                    editor
+                                };
+
+                                annotation_editor = Some(editor);
+                            }
+                        }
+                        KeyCode::Char('I') => {
+                            // Open annotations menu
+                            if !state.annotations.is_empty() {
+                                let items: Vec<String> = state
+                                    .annotations
+                                    .iter()
+                                    .map(|a| {
+                                        let preview = a.content.lines().next().unwrap_or("");
+                                        let preview = if preview.len() > 40 {
+                                            format!("{}...", &preview[..40])
+                                        } else {
+                                            preview.to_string()
+                                        };
+                                        format!("{}:{}-{} | {}", a.filename, a.line_range.0, a.line_range.1, preview)
+                                    })
+                                    .collect();
+                                active_modal = Some(Modal::annotations("Annotations", items, state.annotations.clone()));
+                            }
+                        }
                         KeyCode::Char('r') => {
                             state.needs_reload = true;
                         }
@@ -1160,6 +1354,19 @@ fn run_app_internal(
                                             KeyBind {
                                                 key: "ctrl+c or esc",
                                                 description: "Cancel search",
+                                            },
+                                        ],
+                                    },
+                                    KeyBindSection {
+                                        title: "Annotations",
+                                        bindings: vec![
+                                            KeyBind {
+                                                key: "i",
+                                                description: "Add annotation to focused hunk",
+                                            },
+                                            KeyBind {
+                                                key: "I",
+                                                description: "View all annotations",
                                             },
                                         ],
                                     },
