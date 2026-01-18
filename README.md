@@ -20,6 +20,7 @@ A command-line tool that uses AI to streamline your git workflow - generate comm
   - [Generate Git Commands](#generate-git-commands)
   - [Explain Changes](#explain-changes)
   - [Interactive Mode](#interactive-mode)
+  - [Shell Completion](#shell-completion)
   - [Tips & Tricks](#tips--tricks)
 - [AI Providers](#ai-providers-)
 - [Advanced Configuration](#advanced-configuration-)
@@ -224,6 +225,24 @@ lumen explain --list
 
 # Deprecated: lumen list (use lumen explain --list instead)
 ```
+
+### Shell Completion
+
+Enable tab completion for `lumen` subcommands and flags:
+
+**Bash**
+
+```bash
+eval "$(lumen completion --shell bash)"
+```
+
+**Zsh**
+
+```bash
+eval "$(lumen completion --shell zsh)"
+```
+
+To persist, add the relevant line(s) to your `~/.bashrc` or `~/.zshrc`.
 
 ### Tips & Tricks
 
