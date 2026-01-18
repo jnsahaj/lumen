@@ -30,6 +30,7 @@ use super::watcher::{setup_watcher, WatchEvent};
 use super::{
     fetch_viewed_files, mark_file_as_viewed_async, unmark_file_as_viewed_async, DiffOptions, PrInfo,
 };
+use crate::commit_reference::CommitReference;
 use crate::vcs::{StackedCommitInfo, VcsBackend};
 
 pub fn run_app_with_pr(
@@ -102,6 +103,17 @@ fn run_app_internal(
 
     let mut state = AppState::new(file_diffs);
     state.set_vcs_name(backend.name());
+
+    // Set diff reference for annotation export context
+    let diff_ref_str = match (&pr_info, &options.reference) {
+        (Some(pr), _) => Some(format!("PR #{} ({}...{})", pr.number, pr.base_ref, pr.head_ref)),
+        (None, Some(CommitReference::Single(s))) => Some(s.clone()),
+        (None, Some(CommitReference::Range { from, to })) => Some(format!("{}..{}", from, to)),
+        (None, Some(CommitReference::TripleDots { from, to })) => Some(format!("{}...{}", from, to)),
+        (None, None) => None,
+    };
+    state.set_diff_reference(diff_ref_str);
+
     let mut active_modal: Option<Modal> = None;
     let mut annotation_editor: Option<AnnotationEditor> = None;
     let mut pending_watch_event: Option<WatchEvent> = None;

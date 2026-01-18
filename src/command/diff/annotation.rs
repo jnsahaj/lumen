@@ -108,6 +108,12 @@ impl<'a> AnnotationEditor<'a> {
                 AnnotationEditorResult::Continue
             }
 
+            // Cmd+Backspace (macOS): delete from cursor to beginning of line
+            KeyCode::Backspace if key.modifiers.contains(KeyModifiers::SUPER) => {
+                self.textarea.delete_line_by_head();
+                AnnotationEditorResult::Continue
+            }
+
             // Let tui-textarea handle everything else (but not Enter which we handle above)
             _ => {
                 self.textarea.input(key);
