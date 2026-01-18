@@ -127,9 +127,9 @@ impl<'a> AnnotationEditor<'a> {
         let t = theme::get();
         let area = frame.area();
 
-        // Calculate modal size - generous size for comfortable editing
-        let width = 70.min(area.width.saturating_sub(4));
-        let height = 14.min(area.height.saturating_sub(4));
+        // Calculate modal size - compact but comfortable
+        let width = 60.min(area.width.saturating_sub(4));
+        let height = 10.min(area.height.saturating_sub(4));
         let x = (area.width.saturating_sub(width)) / 2;
         let y = (area.height.saturating_sub(height)) / 2;
         let modal_area = Rect::new(x, y, width, height);
@@ -137,16 +137,24 @@ impl<'a> AnnotationEditor<'a> {
         // Clear the area
         frame.render_widget(Clear, modal_area);
 
-        // Draw outer block
-        let title = if self.is_edit {
-            format!(" Edit Annotation — {}:{}-{} ", self.filename, self.line_range.0, self.line_range.1)
-        } else {
-            format!(" Add Annotation — {}:{}-{} ", self.filename, self.line_range.0, self.line_range.1)
-        };
+        // Extract just the filename without path for cleaner display
+        let short_filename = self
+            .filename
+            .rsplit('/')
+            .next()
+            .unwrap_or(&self.filename);
+
+        // Compact title
+        let title = format!(
+            " {} · L{}-{} ",
+            short_filename,
+            self.line_range.0,
+            self.line_range.1
+        );
 
         let block = Block::default()
             .title(title)
-            .title_style(Style::default().fg(t.ui.border_focused).bold())
+            .title_style(Style::default().fg(t.ui.text_secondary))
             .borders(Borders::ALL)
             .border_type(ratatui::widgets::BorderType::Rounded)
             .border_style(Style::default().fg(t.ui.border_focused))
@@ -158,20 +166,22 @@ impl<'a> AnnotationEditor<'a> {
         // Split inner into textarea and footer
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Min(1), Constraint::Length(2)])
+            .constraints([Constraint::Min(1), Constraint::Length(1)])
             .split(inner);
 
         // Render textarea
         frame.render_widget(&self.textarea, chunks[0]);
 
-        // Render footer with hints
+        // Compact footer
         let footer_text = Line::from(vec![
-            Span::styled("Enter", Style::default().fg(t.ui.status_added).bold()),
-            Span::styled(" Save  ", Style::default().fg(t.ui.text_muted)),
-            Span::styled("Esc", Style::default().fg(t.ui.status_deleted).bold()),
-            Span::styled(" Cancel  ", Style::default().fg(t.ui.text_muted)),
-            Span::styled("Ctrl+J", Style::default().fg(t.ui.text_secondary)),
-            Span::styled(" New line", Style::default().fg(t.ui.text_muted)),
+            Span::styled("enter", Style::default().fg(t.ui.text_muted)),
+            Span::styled(" save  ", Style::default().fg(t.ui.text_muted)),
+            Span::styled("│  ", Style::default().fg(t.ui.border_unfocused)),
+            Span::styled("esc", Style::default().fg(t.ui.text_muted)),
+            Span::styled(" cancel  ", Style::default().fg(t.ui.text_muted)),
+            Span::styled("│  ", Style::default().fg(t.ui.border_unfocused)),
+            Span::styled("shift+enter", Style::default().fg(t.ui.text_muted)),
+            Span::styled(" newline", Style::default().fg(t.ui.text_muted)),
         ]);
 
         let footer = Paragraph::new(footer_text)

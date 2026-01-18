@@ -550,6 +550,70 @@ fn render_context_lines(
 
 use crate::vcs::StackedCommitInfo;
 
+/// Render annotation overlays for single-panel views (new file, deleted file)
+fn render_annotation_overlays(
+    frame: &mut Frame,
+    overlays: &[(usize, &HunkAnnotation)],
+    area: Rect,
+    context_count: usize,
+    bg: Color,
+    t: &crate::command::diff::theme::Theme,
+) {
+    let content_start_y = area.y + 1;
+    let content_x = area.x + 1;
+    let content_width = area.width.saturating_sub(2);
+
+    for (line_pos, annotation) in overlays {
+        let screen_y = content_start_y + *line_pos as u16 + context_count as u16;
+        let content_lines: Vec<&str> = annotation.content.lines().collect();
+        let num_lines = content_lines.len() + 2;
+
+        if screen_y >= area.y + area.height {
+            continue;
+        }
+
+        let available_height = (area.y + area.height).saturating_sub(screen_y) as usize;
+        if available_height == 0 {
+            continue;
+        }
+
+        let overlay_height = num_lines.min(available_height) as u16;
+        let overlay_area = Rect::new(content_x, screen_y, content_width, overlay_height);
+
+        frame.render_widget(ratatui::widgets::Clear, overlay_area);
+
+        let mut ann_lines: Vec<Line> = Vec::new();
+        let note_style = Style::default().fg(t.ui.text_muted).italic();
+        let border_style_ann = Style::default().fg(t.ui.border_unfocused);
+        let border_width = content_width.saturating_sub(3) as usize;
+
+        ann_lines.push(Line::from(vec![Span::styled(
+            format!(" ┌{}┐", "─".repeat(border_width)),
+            border_style_ann,
+        )]));
+
+        for content_line in content_lines.iter().take(available_height.saturating_sub(2)) {
+            let content_width_inner = border_width.saturating_sub(1);
+            let padded_content = format!("{:<width$}", content_line, width = content_width_inner);
+            ann_lines.push(Line::from(vec![
+                Span::styled(" │ ", border_style_ann),
+                Span::styled(padded_content, note_style),
+                Span::styled("│", border_style_ann),
+            ]));
+        }
+
+        if ann_lines.len() < available_height {
+            ann_lines.push(Line::from(vec![Span::styled(
+                format!(" └{}┘", "─".repeat(border_width)),
+                border_style_ann,
+            )]));
+        }
+
+        let ann_para = Paragraph::new(ann_lines).style(Style::default().bg(bg));
+        frame.render_widget(ann_para, overlay_area);
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn render_diff(
     frame: &mut Frame,
@@ -713,14 +777,17 @@ pub fn render_diff(
         );
         let context_count = new_context.len();
         let content_height = visible_height.saturating_sub(context_count);
+        let scroll_usize = scroll as usize;
 
         let visible_lines: Vec<&DiffLine> = side_by_side
             .iter()
-            .skip(scroll as usize)
+            .skip(scroll_usize)
             .take(content_height)
             .collect();
 
         let mut new_lines: Vec<Line> = Vec::new();
+        let mut annotation_overlays: Vec<(usize, &HunkAnnotation)> = Vec::new();
+
         if settings.context.enabled && context_count > 0 {
             render_context_lines(
                 &new_context,
@@ -732,8 +799,28 @@ pub fn render_diff(
             );
         }
 
+        // Helper to check if line is last changed line of a hunk
+        let is_last_line_of_hunk = |line_idx: usize| -> Option<usize> {
+            for (hunk_idx, &hunk_start) in hunks.iter().enumerate() {
+                let hunk_end = hunks.get(hunk_idx + 1).copied().unwrap_or(side_by_side.len());
+                if line_idx >= hunk_start && line_idx < hunk_end {
+                    // Check if this is the last changed line of this hunk
+                    let next_line_idx = line_idx + 1;
+                    let is_last = next_line_idx >= hunk_end
+                        || side_by_side
+                            .get(next_line_idx)
+                            .map(|dl| matches!(dl.change_type, ChangeType::Equal))
+                            .unwrap_or(true);
+                    if is_last {
+                        return Some(hunk_idx);
+                    }
+                }
+            }
+            None
+        };
+
         for (i, diff_line) in visible_lines.iter().enumerate() {
-            let line_idx = scroll as usize + i;
+            let line_idx = scroll_usize + i;
             if let Some((num, text)) = &diff_line.new_line {
                 let prefix = format!("{:4}  ", num);
                 let mut spans: Vec<Span> = vec![Span::styled(
@@ -754,6 +841,23 @@ pub fn render_diff(
                 ));
                 new_lines.push(Line::from(spans));
             }
+
+            // Check for annotation at end of hunk (check actual file, not just visible)
+            if !matches!(diff_line.change_type, ChangeType::Equal) {
+                if let Some(hunk_idx) = is_last_line_of_hunk(line_idx) {
+                    if let Some(annotation) = annotations
+                        .iter()
+                        .find(|a| a.file_index == current_file && a.hunk_index == hunk_idx)
+                    {
+                        let content_lines: Vec<&str> = annotation.content.lines().collect();
+                        let num_lines = content_lines.len() + 2;
+                        for _ in 0..num_lines {
+                            new_lines.push(Line::from(vec![Span::raw("")]));
+                        }
+                        annotation_overlays.push((new_lines.len() - num_lines, annotation));
+                    }
+                }
+            }
         }
 
         let new_para = Paragraph::new(new_lines).scroll((0, h_scroll)).block(
@@ -763,6 +867,16 @@ pub fn render_diff(
                 .border_style(border_style),
         );
         frame.render_widget(new_para, main_area);
+
+        // Render annotation overlays
+        render_annotation_overlays(
+            frame,
+            &annotation_overlays,
+            main_area,
+            context_count,
+            bg,
+            t,
+        );
     } else if is_deleted_file {
         let visible_height = main_area.height.saturating_sub(2) as usize;
         let old_context = compute_context_lines(
@@ -774,14 +888,17 @@ pub fn render_diff(
         );
         let context_count = old_context.len();
         let content_height = visible_height.saturating_sub(context_count);
+        let scroll_usize = scroll as usize;
 
         let visible_lines: Vec<&DiffLine> = side_by_side
             .iter()
-            .skip(scroll as usize)
+            .skip(scroll_usize)
             .take(content_height)
             .collect();
 
         let mut old_lines: Vec<Line> = Vec::new();
+        let mut annotation_overlays: Vec<(usize, &HunkAnnotation)> = Vec::new();
+
         if settings.context.enabled && context_count > 0 {
             render_context_lines(
                 &old_context,
@@ -793,8 +910,28 @@ pub fn render_diff(
             );
         }
 
+        // Helper to check if line is last changed line of a hunk
+        let is_last_line_of_hunk = |line_idx: usize| -> Option<usize> {
+            for (hunk_idx, &hunk_start) in hunks.iter().enumerate() {
+                let hunk_end = hunks.get(hunk_idx + 1).copied().unwrap_or(side_by_side.len());
+                if line_idx >= hunk_start && line_idx < hunk_end {
+                    // Check if this is the last changed line of this hunk
+                    let next_line_idx = line_idx + 1;
+                    let is_last = next_line_idx >= hunk_end
+                        || side_by_side
+                            .get(next_line_idx)
+                            .map(|dl| matches!(dl.change_type, ChangeType::Equal))
+                            .unwrap_or(true);
+                    if is_last {
+                        return Some(hunk_idx);
+                    }
+                }
+            }
+            None
+        };
+
         for (i, diff_line) in visible_lines.iter().enumerate() {
-            let line_idx = scroll as usize + i;
+            let line_idx = scroll_usize + i;
             if let Some((num, text)) = &diff_line.old_line {
                 let prefix = format!("{:4}  ", num);
                 let mut spans: Vec<Span> = vec![Span::styled(
@@ -815,6 +952,23 @@ pub fn render_diff(
                 ));
                 old_lines.push(Line::from(spans));
             }
+
+            // Check for annotation at end of hunk (check actual file, not just visible)
+            if !matches!(diff_line.change_type, ChangeType::Equal) {
+                if let Some(hunk_idx) = is_last_line_of_hunk(line_idx) {
+                    if let Some(annotation) = annotations
+                        .iter()
+                        .find(|a| a.file_index == current_file && a.hunk_index == hunk_idx)
+                    {
+                        let content_lines: Vec<&str> = annotation.content.lines().collect();
+                        let num_lines = content_lines.len() + 2;
+                        for _ in 0..num_lines {
+                            old_lines.push(Line::from(vec![Span::raw("")]));
+                        }
+                        annotation_overlays.push((old_lines.len() - num_lines, annotation));
+                    }
+                }
+            }
         }
 
         let old_para = Paragraph::new(old_lines).scroll((0, h_scroll)).block(
@@ -824,6 +978,16 @@ pub fn render_diff(
                 .border_style(border_style),
         );
         frame.render_widget(old_para, main_area);
+
+        // Render annotation overlays
+        render_annotation_overlays(
+            frame,
+            &annotation_overlays,
+            main_area,
+            context_count,
+            bg,
+            t,
+        );
     } else {
         let (old_area, new_area) = match diff_fullscreen {
             DiffFullscreen::OldOnly => (Some(main_area), None),

@@ -177,11 +177,11 @@ impl Modal {
             ModalContent::Annotations {
                 items, export_input, ..
             } => {
-                let width = 80.min(area.width.saturating_sub(4));
-                let items_count = items.len().min(10) as u16;
-                // Extra height for footer and export input
-                let extra = if export_input.is_some() { 3 } else { 2 };
-                let height = (items_count * 2 + extra + 4).min(area.height * 80 / 100).max(10);
+                let width = 70.min(area.width.saturating_sub(4));
+                let items_count = items.len().min(12) as u16;
+                // Compact height
+                let extra = if export_input.is_some() { 4 } else { 2 };
+                let height = (items_count + extra + 2).min(area.height * 80 / 100).max(8);
                 (width, height)
             }
         };
@@ -446,12 +446,16 @@ impl Modal {
         export_input: Option<&str>,
     ) {
         let t = theme::get();
+
+        // Compact title with count
+        let title_text = format!(" {} ({}) ", title, items.len());
+
         let block = Block::default()
-            .title(format!(" {} ", title))
-            .title_style(Style::default().fg(t.ui.border_focused).bold())
+            .title(title_text)
+            .title_style(Style::default().fg(t.ui.text_secondary))
             .borders(Borders::ALL)
             .border_type(ratatui::widgets::BorderType::Rounded)
-            .border_style(Style::default().fg(t.ui.border_unfocused));
+            .border_style(Style::default().fg(t.ui.border_focused));
 
         let inner = block.inner(area);
         frame.render_widget(block, area);
@@ -464,15 +468,15 @@ impl Modal {
                 .direction(Direction::Vertical)
                 .constraints([
                     Constraint::Min(1),
-                    Constraint::Length(3), // export input
-                    Constraint::Length(1), // footer
+                    Constraint::Length(3),
+                    Constraint::Length(1),
                 ])
                 .split(inner);
             (chunks[0], chunks[2])
         } else {
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints([Constraint::Min(1), Constraint::Length(2)])
+                .constraints([Constraint::Min(1), Constraint::Length(1)])
                 .split(inner);
             (chunks[0], chunks[1])
         };
@@ -492,13 +496,39 @@ impl Modal {
             .take(visible_count)
             .map(|(i, item)| {
                 let is_selected = i == selected;
-                let style = if is_selected {
-                    Style::default().fg(t.ui.selection_fg).bg(t.ui.selection_bg)
+
+                // Parse the item to extract filename and preview
+                // Format is: "filename:L#-# | preview..."
+                let (location, preview) = item.split_once(" | ").unwrap_or((item, ""));
+
+                let spans = if is_selected {
+                    vec![
+                        Span::styled(
+                            format!(" {} ", location),
+                            Style::default().fg(t.ui.selection_fg).bg(t.ui.selection_bg),
+                        ),
+                        Span::styled(
+                            format!(" {}", preview),
+                            Style::default()
+                                .fg(t.ui.selection_fg)
+                                .bg(t.ui.selection_bg)
+                                .italic(),
+                        ),
+                    ]
                 } else {
-                    Style::default().fg(t.ui.text_primary)
+                    vec![
+                        Span::styled(
+                            format!(" {} ", location),
+                            Style::default().fg(t.ui.text_secondary),
+                        ),
+                        Span::styled(
+                            format!(" {}", preview),
+                            Style::default().fg(t.ui.text_muted).italic(),
+                        ),
+                    ]
                 };
-                let prefix = if is_selected { "> " } else { "  " };
-                ListItem::new(format!("{}{}", prefix, item)).style(style)
+
+                ListItem::new(Line::from(spans))
             })
             .collect();
 
@@ -517,8 +547,8 @@ impl Modal {
                 .split(inner)[1];
 
             let input_block = Block::default()
-                .title(" Export to file ")
-                .title_style(Style::default().fg(t.ui.text_secondary))
+                .title(" Export path ")
+                .title_style(Style::default().fg(t.ui.text_muted))
                 .borders(Borders::ALL)
                 .border_type(ratatui::widgets::BorderType::Rounded)
                 .border_style(Style::default().fg(t.ui.border_unfocused));
@@ -527,23 +557,40 @@ impl Modal {
             frame.render_widget(input_block, input_area);
 
             let input_line = Line::from(vec![
-                Span::styled("> ", Style::default().fg(t.ui.status_added)),
                 Span::styled(input, Style::default().fg(t.ui.text_primary)),
                 Span::styled("_", Style::default().fg(t.ui.text_muted)),
             ]);
             frame.render_widget(Paragraph::new(input_line), input_inner);
         }
 
-        // Render footer with keybindings
+        // Compact footer
         let footer_text = if export_input.is_some() {
-            "Enter: Confirm  |  Esc: Cancel"
+            Line::from(vec![
+                Span::styled("enter", Style::default().fg(t.ui.text_muted)),
+                Span::styled(" confirm  ", Style::default().fg(t.ui.text_muted)),
+                Span::styled("│  ", Style::default().fg(t.ui.border_unfocused)),
+                Span::styled("esc", Style::default().fg(t.ui.text_muted)),
+                Span::styled(" cancel", Style::default().fg(t.ui.text_muted)),
+            ])
         } else {
-            "Enter: Jump  |  e: Edit  |  d: Delete  |  y: Copy All  |  o: Export  |  Esc: Close"
+            Line::from(vec![
+                Span::styled("enter", Style::default().fg(t.ui.text_muted)),
+                Span::styled(" jump  ", Style::default().fg(t.ui.text_muted)),
+                Span::styled("│  ", Style::default().fg(t.ui.border_unfocused)),
+                Span::styled("e", Style::default().fg(t.ui.text_muted)),
+                Span::styled(" edit  ", Style::default().fg(t.ui.text_muted)),
+                Span::styled("│  ", Style::default().fg(t.ui.border_unfocused)),
+                Span::styled("d", Style::default().fg(t.ui.text_muted)),
+                Span::styled(" del  ", Style::default().fg(t.ui.text_muted)),
+                Span::styled("│  ", Style::default().fg(t.ui.border_unfocused)),
+                Span::styled("y", Style::default().fg(t.ui.text_muted)),
+                Span::styled(" copy  ", Style::default().fg(t.ui.text_muted)),
+                Span::styled("│  ", Style::default().fg(t.ui.border_unfocused)),
+                Span::styled("o", Style::default().fg(t.ui.text_muted)),
+                Span::styled(" export", Style::default().fg(t.ui.text_muted)),
+            ])
         };
-        let footer = Paragraph::new(Line::from(Span::styled(
-            footer_text,
-            Style::default().fg(t.ui.text_muted),
-        )));
+        let footer = Paragraph::new(footer_text).alignment(ratatui::prelude::Alignment::Center);
         frame.render_widget(footer, footer_area);
     }
 
