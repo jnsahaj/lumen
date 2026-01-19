@@ -188,7 +188,7 @@ impl Modal {
             ModalContent::Annotations {
                 items, export_input, ..
             } => {
-                let width = 70.min(area.width.saturating_sub(4));
+                let width = 100.min(area.width.saturating_sub(4));
                 let items_count = items.len().min(12) as u16;
                 // Compact height
                 let extra = if export_input.is_some() { 4 } else { 2 };
@@ -537,23 +537,48 @@ impl Modal {
                 let preview = parts.get(1).unwrap_or(&"");
                 let time = parts.get(2).unwrap_or(&"");
 
-                // Calculate padding to right-align time
-                // Reserve space for: " location " + " preview" + padding + " time "
-                let location_len = location.len() + 2; // " location "
-                let preview_len = preview.len() + 1;   // " preview"
-                let time_len = time.len() + 2;         // " time "
-                let used_width = location_len + preview_len + time_len;
                 let available_width = list_area.width as usize;
+                let time_width = time.len() + 2; // " time "
+
+                // Reserve space for time and calculate remaining space for location + preview
+                let content_width = available_width.saturating_sub(time_width + 4); // 4 for padding/separators
+
+                // Allocate: 45% for location, 55% for preview (minimum 20 chars each if space allows)
+                let location_max = (content_width * 45 / 100).max(20).min(content_width.saturating_sub(20));
+                let preview_max = content_width.saturating_sub(location_max);
+
+                // Truncate location if needed (using char count for proper UTF-8 handling)
+                let truncated_location = if location.chars().count() > location_max && location_max > 3 {
+                    let truncate_at = location_max - 1;
+                    let truncated: String = location.chars().take(truncate_at).collect();
+                    format!("{}…", truncated)
+                } else {
+                    location.to_string()
+                };
+
+                // Truncate preview if needed (using char count for proper UTF-8 handling)
+                let truncated_preview = if preview.chars().count() > preview_max && preview_max > 3 {
+                    let truncate_at = preview_max - 1;
+                    let truncated: String = preview.chars().take(truncate_at).collect();
+                    format!("{}…", truncated)
+                } else {
+                    preview.to_string()
+                };
+
+                // Calculate padding to right-align time (using char count for proper width calculation)
+                let location_len = truncated_location.chars().count() + 2; // " location "
+                let preview_len = truncated_preview.chars().count() + 1;   // " preview"
+                let used_width = location_len + preview_len + time_width;
                 let padding = available_width.saturating_sub(used_width);
 
                 let spans = if is_selected {
                     vec![
                         Span::styled(
-                            format!(" {} ", location),
+                            format!(" {} ", truncated_location),
                             Style::default().fg(t.ui.selection_fg).bg(t.ui.selection_bg),
                         ),
                         Span::styled(
-                            format!(" {}", preview),
+                            format!(" {}", truncated_preview),
                             Style::default()
                                 .fg(t.ui.selection_fg)
                                 .bg(t.ui.selection_bg)
@@ -571,11 +596,11 @@ impl Modal {
                 } else {
                     vec![
                         Span::styled(
-                            format!(" {} ", location),
+                            format!(" {} ", truncated_location),
                             Style::default().fg(t.ui.text_secondary),
                         ),
                         Span::styled(
-                            format!(" {}", preview),
+                            format!(" {}", truncated_preview),
                             Style::default().fg(t.ui.text_muted).italic(),
                         ),
                         Span::styled(
