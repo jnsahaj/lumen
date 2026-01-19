@@ -380,7 +380,7 @@ impl AppState {
 
         // Add header with diff reference context
         if let Some(ref reference) = self.diff_reference {
-            result.push_str(&format!("# Annotations for diff: {}\n\n", reference));
+            result.push_str(&format!("Annotations for diff: {}\n\n", reference));
         }
 
         let annotations_text = self
@@ -390,7 +390,7 @@ impl AppState {
                 // Try to get the diff content for this hunk
                 let diff_content = self.get_hunk_diff_content(a.file_index, a.hunk_index);
 
-                let mut output = format!("## {}", a.filename);
+                let mut output = format!("- {}", a.filename);
 
                 // Add line info based on what we have
                 if let Some((old_range, new_range, _)) = &diff_content {
