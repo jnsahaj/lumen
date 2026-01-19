@@ -609,12 +609,17 @@ fn render_annotation_overlays(
             ]));
         }
 
-        // Add bottom border if there's room
+        // Add bottom border with time if there's room
         if ann_lines.len() < available_height {
-            ann_lines.push(Line::from(vec![Span::styled(
-                format!(" └{}┘", "─".repeat(border_width)),
-                border_style_ann,
-            )]));
+            let time_str = annotation.format_time();
+            let time_with_padding = format!(" {} ", time_str);
+            let time_len = time_with_padding.len();
+            let dashes_before = border_width.saturating_sub(time_len + 1);
+            ann_lines.push(Line::from(vec![
+                Span::styled(format!(" └{}", "─".repeat(dashes_before)), border_style_ann),
+                Span::styled(time_with_padding, Style::default().fg(t.ui.text_muted)),
+                Span::styled("─┘", border_style_ann),
+            ]));
         }
 
         let ann_para = Paragraph::new(ann_lines).style(Style::default().bg(bg));

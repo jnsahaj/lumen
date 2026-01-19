@@ -1,3 +1,5 @@
+use std::time::SystemTime;
+
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     prelude::*,
@@ -28,6 +30,8 @@ pub struct AnnotationEditor<'a> {
     pub filename: String,
     pub line_range: (usize, usize),
     is_edit: bool,
+    /// Original creation time (preserved when editing)
+    original_created_at: Option<SystemTime>,
 }
 
 impl<'a> AnnotationEditor<'a> {
@@ -52,12 +56,14 @@ impl<'a> AnnotationEditor<'a> {
             filename,
             line_range,
             is_edit: false,
+            original_created_at: None,
         }
     }
 
-    pub fn with_content(mut self, content: &str) -> Self {
+    pub fn with_content(mut self, content: &str, created_at: SystemTime) -> Self {
         self.textarea = TextArea::new(content.lines().map(String::from).collect());
         self.is_edit = true;
+        self.original_created_at = Some(created_at);
 
         let t = theme::get();
         self.textarea.set_cursor_line_style(Style::default());
@@ -214,6 +220,7 @@ impl<'a> AnnotationEditor<'a> {
             content: self.textarea.lines().join("\n"),
             line_range: self.line_range,
             filename: self.filename.clone(),
+            created_at: self.original_created_at.unwrap_or_else(SystemTime::now),
         }
     }
 }

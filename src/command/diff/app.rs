@@ -23,7 +23,7 @@ use super::render::{
     ModalContent, ModalFileStatus, ModalResult,
 };
 use super::annotation::{AnnotationEditor, AnnotationEditorResult};
-use super::state::{adjust_scroll_for_hunk, adjust_scroll_to_line, AppState, HunkAnnotation, PendingKey};
+use super::state::{adjust_scroll_for_hunk, adjust_scroll_to_line, AppState, PendingKey};
 use super::theme;
 use super::types::{ChangeType, DiffFullscreen, FileStatus, FocusedPanel, SidebarItem};
 use super::watcher::{setup_watcher, WatchEvent};
@@ -284,15 +284,8 @@ fn run_app_internal(
                     if let Some(editor) = annotation_editor.as_mut() {
                         match editor.handle_input(key) {
                             AnnotationEditorResult::Continue => {}
-                            AnnotationEditorResult::Save(content) => {
-                                let annotation = HunkAnnotation {
-                                    file_index: editor.file_index,
-                                    hunk_index: editor.hunk_index,
-                                    content,
-                                    line_range: editor.line_range,
-                                    filename: editor.filename.clone(),
-                                };
-                                state.set_annotation(annotation);
+                            AnnotationEditorResult::Save(_) => {
+                                state.set_annotation(editor.to_annotation());
                                 annotation_editor = None;
                             }
                             AnnotationEditorResult::Delete => {
@@ -360,7 +353,7 @@ fn run_app_internal(
                                             hunk_index,
                                             ann.filename.clone(),
                                             ann.line_range,
-                                        ).with_content(&ann.content);
+                                        ).with_content(&ann.content, ann.created_at);
                                         annotation_editor = Some(editor);
                                         // Also jump to the hunk
                                         state.select_file(file_index);
@@ -372,8 +365,10 @@ fn run_app_internal(
                                     state.remove_annotation(file_index, hunk_index);
                                     // Refresh the modal if there are still annotations
                                     if !state.annotations.is_empty() {
-                                        let items: Vec<String> = state
-                                            .annotations
+                                        // Sort by creation time ascending
+                                        let mut sorted_annotations = state.annotations.clone();
+                                        sorted_annotations.sort_by_key(|a| a.created_at);
+                                        let items: Vec<String> = sorted_annotations
                                             .iter()
                                             .map(|a| {
                                                 let preview = a.content.lines().next().unwrap_or("");
@@ -382,10 +377,10 @@ fn run_app_internal(
                                                 } else {
                                                     preview.to_string()
                                                 };
-                                                format!("{}:{}-{} | {}", a.filename, a.line_range.0, a.line_range.1, preview)
+                                                format!("{}:{}-{} | {} | {}", a.filename, a.line_range.0, a.line_range.1, preview, a.format_time())
                                             })
                                             .collect();
-                                        active_modal = Some(Modal::annotations("Annotations", items, state.annotations.clone()));
+                                        active_modal = Some(Modal::annotations("Annotations", items, sorted_annotations));
                                     } else {
                                         active_modal = None;
                                     }
@@ -1116,7 +1111,7 @@ fn run_app_internal(
 
                                 // If editing existing, pre-fill content
                                 let editor = if let Some(ann) = state.get_annotation(file_index, hunk_index) {
-                                    editor.with_content(&ann.content)
+                                    editor.with_content(&ann.content, ann.created_at)
                                 } else {
                                     editor
                                 };
@@ -1127,8 +1122,10 @@ fn run_app_internal(
                         KeyCode::Char('I') => {
                             // Open annotations menu
                             if !state.annotations.is_empty() {
-                                let items: Vec<String> = state
-                                    .annotations
+                                // Sort by creation time ascending
+                                let mut sorted_annotations = state.annotations.clone();
+                                sorted_annotations.sort_by_key(|a| a.created_at);
+                                let items: Vec<String> = sorted_annotations
                                     .iter()
                                     .map(|a| {
                                         let preview = a.content.lines().next().unwrap_or("");
@@ -1137,10 +1134,10 @@ fn run_app_internal(
                                         } else {
                                             preview.to_string()
                                         };
-                                        format!("{}:{}-{} | {}", a.filename, a.line_range.0, a.line_range.1, preview)
+                                        format!("{}:{}-{} | {} | {}", a.filename, a.line_range.0, a.line_range.1, preview, a.format_time())
                                     })
                                     .collect();
-                                active_modal = Some(Modal::annotations("Annotations", items, state.annotations.clone()));
+                                active_modal = Some(Modal::annotations("Annotations", items, sorted_annotations));
                             }
                         }
                         KeyCode::Char('r') => {

@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::time::SystemTime;
 
 use crate::command::diff::diff_algo::{compute_side_by_side, find_hunk_starts};
 
@@ -36,6 +37,29 @@ pub struct HunkAnnotation {
     pub line_range: (usize, usize),
     /// The filename for display in export and UI
     pub filename: String,
+    /// When the annotation was created
+    pub created_at: SystemTime,
+}
+
+impl HunkAnnotation {
+    /// Format the creation time as HH:MM in local time
+    #[cfg(feature = "jj")]
+    pub fn format_time(&self) -> String {
+        use chrono::{DateTime, Local};
+        let datetime: DateTime<Local> = self.created_at.into();
+        datetime.format("%H:%M").to_string()
+    }
+
+    /// Format the creation time as HH:MM (UTC fallback when chrono unavailable)
+    #[cfg(not(feature = "jj"))]
+    pub fn format_time(&self) -> String {
+        use std::time::UNIX_EPOCH;
+        let duration = self.created_at.duration_since(UNIX_EPOCH).unwrap_or_default();
+        let secs = duration.as_secs();
+        let hours = (secs / 3600) % 24;
+        let minutes = (secs / 60) % 60;
+        format!("{:02}:{:02}", hours, minutes)
+    }
 }
 
 pub struct AppState {

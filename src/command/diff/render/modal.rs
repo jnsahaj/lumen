@@ -504,9 +504,21 @@ impl Modal {
             .map(|(i, item)| {
                 let is_selected = i == selected;
 
-                // Parse the item to extract filename and preview
-                // Format is: "filename:L#-# | preview..."
-                let (location, preview) = item.split_once(" | ").unwrap_or((item, ""));
+                // Parse the item to extract filename, preview, and time
+                // Format is: "filename:L#-# | preview... | HH:MM"
+                let parts: Vec<&str> = item.splitn(3, " | ").collect();
+                let location = parts.first().unwrap_or(&"");
+                let preview = parts.get(1).unwrap_or(&"");
+                let time = parts.get(2).unwrap_or(&"");
+
+                // Calculate padding to right-align time
+                // Reserve space for: " location " + " preview" + padding + " time "
+                let location_len = location.len() + 2; // " location "
+                let preview_len = preview.len() + 1;   // " preview"
+                let time_len = time.len() + 2;         // " time "
+                let used_width = location_len + preview_len + time_len;
+                let available_width = list_area.width as usize;
+                let padding = available_width.saturating_sub(used_width);
 
                 let spans = if is_selected {
                     vec![
@@ -521,6 +533,14 @@ impl Modal {
                                 .bg(t.ui.selection_bg)
                                 .italic(),
                         ),
+                        Span::styled(
+                            format!("{:>width$}", "", width = padding),
+                            Style::default().bg(t.ui.selection_bg),
+                        ),
+                        Span::styled(
+                            format!(" {} ", time),
+                            Style::default().fg(t.ui.selection_fg).bg(t.ui.selection_bg),
+                        ),
                     ]
                 } else {
                     vec![
@@ -531,6 +551,14 @@ impl Modal {
                         Span::styled(
                             format!(" {}", preview),
                             Style::default().fg(t.ui.text_muted).italic(),
+                        ),
+                        Span::styled(
+                            format!("{:>width$}", "", width = padding),
+                            Style::default(),
+                        ),
+                        Span::styled(
+                            format!(" {} ", time),
+                            Style::default().fg(t.ui.text_muted),
                         ),
                     ]
                 };
