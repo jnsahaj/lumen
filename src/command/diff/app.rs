@@ -19,7 +19,7 @@ use super::git::{
 };
 use super::highlight;
 use super::render::{
-    render_diff, render_empty_state, FilePickerItem, KeyBind, KeyBindSection, Modal,
+    render_diff, render_empty_state, truncate_path, FilePickerItem, KeyBind, KeyBindSection, Modal,
     ModalContent, ModalFileStatus, ModalResult,
 };
 use super::annotation::{AnnotationEditor, AnnotationEditorResult};
@@ -73,9 +73,10 @@ fn format_annotation_preview(annotation: &super::state::HunkAnnotation) -> Strin
     } else {
         preview.to_string()
     };
+    let truncated_filename = truncate_path(&annotation.filename, 30);
     format!(
         "{}:{}-{} | {} | {}",
-        annotation.filename,
+        truncated_filename,
         annotation.line_range.0,
         annotation.line_range.1,
         preview,

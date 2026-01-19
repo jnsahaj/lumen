@@ -24,7 +24,7 @@ pub struct FooterData<'a> {
 /// Truncates a file path by abbreviating directory names to their first character.
 /// For example: "aadfadf/bsdff/casdfdsf/config.rs" -> "a/b/casdfdsf/config.rs"
 /// Keeps the last directory component and filename intact when possible.
-fn truncate_path(path: &str, max_len: usize) -> String {
+pub fn truncate_path(path: &str, max_len: usize) -> String {
     if path.len() <= max_len {
         return path.to_string();
     }
