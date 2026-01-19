@@ -1,3 +1,4 @@
+mod annotation;
 mod app;
 mod context;
 mod diff_algo;

@@ -8,7 +8,7 @@ use crate::command::diff::PrInfo;
 
 pub struct FooterData<'a> {
     pub filename: &'a str,
-    pub branch: &'a str,
+    pub commit_ref: &'a str,
     pub pr_info: Option<&'a PrInfo>,
     pub watching: bool,
     pub current_file: usize,
@@ -21,17 +21,67 @@ pub struct FooterData<'a> {
     pub area_width: u16,
 }
 
-fn truncate_middle(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
-        return s.to_string();
+/// Truncates a file path by abbreviating directory names to their first character.
+/// For example: "aadfadf/bsdff/casdfdsf/config.rs" -> "a/b/casdfdsf/config.rs"
+/// Keeps the last directory component and filename intact when possible.
+fn truncate_path(path: &str, max_len: usize) -> String {
+    if path.len() <= max_len {
+        return path.to_string();
     }
-    if max_len < 5 {
-        return s.chars().take(max_len).collect();
+
+    let parts: Vec<&str> = path.split('/').collect();
+    if parts.len() <= 1 {
+        // No directories, just truncate the filename at the end
+        if path.len() > max_len {
+            return format!("{}...", &path[..max_len.saturating_sub(3)]);
+        }
+        return path.to_string();
     }
-    let half = (max_len - 3) / 2;
-    let start: String = s.chars().take(half).collect();
-    let end: String = s.chars().skip(s.len() - half).collect();
-    format!("{}...{}", start, end)
+
+    // Start by abbreviating directories from the beginning
+    let filename = parts[parts.len() - 1];
+    let dirs = &parts[..parts.len() - 1];
+
+    // Try progressively abbreviating more directories from the start
+    for abbrev_count in 0..=dirs.len() {
+        let mut result_parts: Vec<String> = Vec::new();
+
+        // Abbreviate first `abbrev_count` directories to first char
+        for (i, dir) in dirs.iter().enumerate() {
+            if i < abbrev_count {
+                // Abbreviate to first character
+                if let Some(first_char) = dir.chars().next() {
+                    result_parts.push(first_char.to_string());
+                }
+            } else {
+                result_parts.push((*dir).to_string());
+            }
+        }
+        result_parts.push(filename.to_string());
+
+        let result = result_parts.join("/");
+        if result.len() <= max_len {
+            return result;
+        }
+    }
+
+    // If still too long after abbreviating all dirs, truncate the filename
+    let abbreviated_dirs: Vec<String> = dirs
+        .iter()
+        .filter_map(|d| d.chars().next().map(|c| c.to_string()))
+        .collect();
+    let prefix = if abbreviated_dirs.is_empty() {
+        String::new()
+    } else {
+        format!("{}/", abbreviated_dirs.join("/"))
+    };
+
+    let remaining = max_len.saturating_sub(prefix.len());
+    if remaining > 3 && filename.len() > remaining {
+        format!("{}{}...", prefix, &filename[..remaining.saturating_sub(3)])
+    } else {
+        format!("{}{}", prefix, filename)
+    }
 }
 
 pub fn render_footer(frame: &mut Frame, footer_area: Rect, data: FooterData) {
@@ -67,11 +117,29 @@ pub fn render_footer(frame: &mut Frame, footer_area: Rect, data: FooterData) {
         } else {
             (data.area_width as usize).saturating_sub(60).min(50)
         };
-        let truncated_filename = truncate_middle(data.filename, max_filename_len);
+        let truncated_filename = truncate_path(data.filename, max_filename_len);
         let viewed_indicator = if data.viewed_files.contains(&data.current_file) {
             " ✓"
         } else {
             ""
+        };
+
+        // Build stats spans (shown after filename)
+        let stats_spans: Vec<Span> = if data.search_state.has_query() {
+            vec![]
+        } else {
+            vec![
+                Span::styled(" ", Style::default().bg(bg)),
+                Span::styled(
+                    format!("+{}", data.line_stats_added),
+                    Style::default().fg(t.ui.stats_added).bg(bg),
+                ),
+                Span::styled(" ", Style::default().bg(bg)),
+                Span::styled(
+                    format!("-{}", data.line_stats_removed),
+                    Style::default().fg(t.ui.stats_removed).bg(bg),
+                ),
+            ]
         };
 
         let left_spans = if let Some(pr) = data.pr_info {
@@ -93,7 +161,7 @@ pub fn render_footer(frame: &mut Frame, footer_area: Rect, data: FooterData) {
                 format!(" {} ", pr.head_ref)
             };
 
-            vec![
+            let mut spans = vec![
                 Span::styled(" ", Style::default().bg(bg)),
                 Span::styled(
                     base_label,
@@ -114,13 +182,15 @@ pub fn render_footer(frame: &mut Frame, footer_area: Rect, data: FooterData) {
                     Style::default().fg(t.ui.text_secondary).bg(bg),
                 ),
                 Span::styled(viewed_indicator, Style::default().fg(t.ui.viewed).bg(bg)),
-            ]
+            ];
+            spans.extend(stats_spans);
+            spans
         } else {
-            // Normal diff mode: show branch name
-            vec![
+            // Normal diff mode: show commit reference
+            let mut spans = vec![
                 Span::styled(" ", Style::default().bg(bg)),
                 Span::styled(
-                    format!(" {} ", data.branch),
+                    format!(" {} ", data.commit_ref),
                     Style::default()
                         .fg(t.ui.footer_branch_fg)
                         .bg(t.ui.footer_branch_bg),
@@ -131,11 +201,13 @@ pub fn render_footer(frame: &mut Frame, footer_area: Rect, data: FooterData) {
                     Style::default().fg(t.ui.text_secondary).bg(bg),
                 ),
                 Span::styled(viewed_indicator, Style::default().fg(t.ui.viewed).bg(bg)),
-                Span::styled(watch_indicator, Style::default().fg(t.ui.watching).bg(bg)),
-            ]
+            ];
+            spans.extend(stats_spans);
+            spans.push(Span::styled(watch_indicator, Style::default().fg(t.ui.watching).bg(bg)));
+            spans
         };
 
-        let (center_spans, right_spans) = if data.search_state.has_query() {
+        let right_spans: Vec<Span> = if data.search_state.has_query() {
             let match_count = data.search_state.match_count();
             let current_idx = data
                 .search_state
@@ -144,90 +216,69 @@ pub fn render_footer(frame: &mut Frame, footer_area: Rect, data: FooterData) {
                 .unwrap_or(0);
             let search_info = if match_count > 0 {
                 format!(
-                    "[{}/{}] /{}",
+                    "[{}/{}] /{} ",
                     current_idx, match_count, data.search_state.query
                 )
             } else {
-                format!("[0/0] /{}", data.search_state.query)
+                format!("[0/0] /{} ", data.search_state.query)
             };
-            (
-                vec![Span::styled(
+            vec![
+                Span::styled(
                     search_info,
                     Style::default().fg(t.ui.highlight).bg(bg),
-                )],
-                vec![Span::styled(
+                ),
+                Span::styled(
                     " n/N navigate ",
                     Style::default().fg(t.ui.text_muted).bg(bg),
-                )],
-            )
+                ),
+            ]
         } else {
-            (
-                vec![
-                    Span::styled(
-                        format!("+{}", data.line_stats_added),
-                        Style::default().fg(t.ui.stats_added).bg(bg),
-                    ),
-                    Span::styled(" ", Style::default().bg(bg)),
-                    Span::styled(
-                        format!("-{}", data.line_stats_removed),
-                        Style::default().fg(t.ui.stats_removed).bg(bg),
-                    ),
-                    Span::styled(" ", Style::default().bg(bg)),
-                    Span::styled(
-                        if let Some(idx) = data.focused_hunk {
-                            format!(
-                                "({}/{} {})",
-                                idx + 1,
-                                data.hunk_count,
-                                if data.hunk_count == 1 {
-                                    "hunk"
-                                } else {
-                                    "hunks"
-                                }
-                            )
-                        } else {
-                            format!(
-                                "({} {})",
-                                data.hunk_count,
-                                if data.hunk_count == 1 {
-                                    "hunk"
-                                } else {
-                                    "hunks"
-                                }
-                            )
-                        },
-                        Style::default().fg(t.ui.text_muted).bg(bg),
-                    ),
-                ],
-                vec![Span::styled(
+            vec![
+                Span::styled(
+                    if let Some(idx) = data.focused_hunk {
+                        format!(
+                            "({}/{} {}) ",
+                            idx + 1,
+                            data.hunk_count,
+                            if data.hunk_count == 1 {
+                                "hunk"
+                            } else {
+                                "hunks"
+                            }
+                        )
+                    } else {
+                        format!(
+                            "({} {}) ",
+                            data.hunk_count,
+                            if data.hunk_count == 1 {
+                                "hunk"
+                            } else {
+                                "hunks"
+                            }
+                        )
+                    },
+                    Style::default().fg(t.ui.text_muted).bg(bg),
+                ),
+                Span::styled(
                     " ? help ",
                     Style::default().fg(t.ui.text_muted).bg(bg),
-                )],
-            )
+                ),
+            ]
         };
 
         let left_line = Line::from(left_spans);
-        let center_line = Line::from(center_spans);
         let right_line = Line::from(right_spans);
 
         let footer_width = footer_area.width as usize;
         let left_len = left_line.width();
-        let center_len = center_line.width();
         let right_len = right_line.width();
 
-        let center_pos = footer_width / 2;
-        let center_start = center_pos.saturating_sub(center_len / 2);
-        let left_padding = center_start.saturating_sub(left_len);
-        let right_padding = footer_width.saturating_sub(center_start + center_len + right_len);
+        // Simple left-aligned layout with right section
+        let padding = footer_width.saturating_sub(left_len + right_len);
 
         let mut final_spans: Vec<Span> = left_line.spans;
         final_spans.push(Span::styled(
-            " ".repeat(left_padding),
-            Style::default().bg(bg),
-        ));
-        final_spans.extend(center_line.spans);
-        final_spans.push(Span::styled(
-            " ".repeat(right_padding),
+            " ".repeat(padding),
             Style::default().bg(bg),
         ));
         final_spans.extend(right_line.spans);

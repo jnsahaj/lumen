@@ -9,6 +9,7 @@ use crate::command::diff::context::{compute_context_lines, ContextLine};
 use crate::command::diff::diff_algo::compute_side_by_side;
 use crate::command::diff::highlight::{highlight_line_spans, FileHighlighter};
 use crate::command::diff::search::{MatchPanel, SearchState};
+use crate::command::diff::state::HunkAnnotation;
 use crate::command::diff::theme;
 use crate::command::diff::types::{
     ChangeType, DiffFullscreen, DiffLine, DiffViewSettings, FileDiff, FocusedPanel, InlineSegment,
@@ -82,32 +83,16 @@ fn render_stacked_header(
     };
 
     // Build center spans: [vcs] [1/6] [id] message
+    let badge_style = Style::default().bg(t.ui.footer_branch_bg);
+    let spacer_style = Style::default().bg(bg);
     let center_spans = vec![
-        Span::styled(
-            vcs_indicator.clone(),
-            Style::default()
-                .fg(t.ui.text_muted)
-                .bg(t.ui.footer_branch_bg),
-        ),
-        Span::styled(" ", Style::default().bg(bg)),
-        Span::styled(
-            nav_indicator.clone(),
-            Style::default()
-                .fg(t.ui.highlight)
-                .bg(t.ui.footer_branch_bg),
-        ),
-        Span::styled(" ", Style::default().bg(bg)),
-        Span::styled(
-            id_label.clone(),
-            Style::default()
-                .fg(t.ui.footer_branch_fg)
-                .bg(t.ui.footer_branch_bg),
-        ),
-        Span::styled("  ", Style::default().bg(bg)),
-        Span::styled(
-            truncated_msg.clone(),
-            Style::default().fg(t.ui.text_secondary).bg(bg),
-        ),
+        Span::styled(&vcs_indicator, badge_style.fg(t.ui.text_muted)),
+        Span::styled(" ", spacer_style),
+        Span::styled(&nav_indicator, badge_style.fg(t.ui.highlight)),
+        Span::styled(" ", spacer_style),
+        Span::styled(&id_label, badge_style.fg(t.ui.footer_branch_fg)),
+        Span::styled("  ", spacer_style),
+        Span::styled(&truncated_msg, Style::default().fg(t.ui.text_secondary).bg(bg)),
     ];
 
     // Calculate widths for centering
@@ -483,7 +468,6 @@ pub fn compute_line_stats(side_by_side: &[DiffLine]) -> LineStats {
             ChangeType::Insert => added += 1,
             ChangeType::Delete => removed += 1,
             ChangeType::Modified => {
-                // A modified line counts as both a removal and an addition
                 added += 1;
                 removed += 1;
             }
@@ -491,6 +475,55 @@ pub fn compute_line_stats(side_by_side: &[DiffLine]) -> LineStats {
         }
     }
     LineStats { added, removed }
+}
+
+/// Style configuration for rendering a diff line's gutter and background.
+struct DiffLineStyle {
+    old_bg: Option<Color>,
+    old_gutter_bg: Option<Color>,
+    old_gutter_fg: Option<Color>,
+    new_bg: Option<Color>,
+    new_gutter_bg: Option<Color>,
+    new_gutter_fg: Option<Color>,
+}
+
+impl DiffLineStyle {
+    fn for_change_type(change_type: ChangeType, bg: Color, t: &crate::command::diff::theme::Theme) -> Self {
+        match change_type {
+            ChangeType::Equal => Self {
+                old_bg: Some(bg),
+                old_gutter_bg: Some(bg),
+                old_gutter_fg: Some(t.ui.line_number),
+                new_bg: Some(bg),
+                new_gutter_bg: Some(bg),
+                new_gutter_fg: Some(t.ui.line_number),
+            },
+            ChangeType::Delete => Self {
+                old_bg: Some(t.diff.deleted_bg),
+                old_gutter_bg: Some(t.diff.deleted_gutter_bg),
+                old_gutter_fg: Some(t.diff.deleted_gutter_fg),
+                new_bg: None,
+                new_gutter_bg: None,
+                new_gutter_fg: None,
+            },
+            ChangeType::Insert => Self {
+                old_bg: None,
+                old_gutter_bg: None,
+                old_gutter_fg: None,
+                new_bg: Some(t.diff.added_bg),
+                new_gutter_bg: Some(t.diff.added_gutter_bg),
+                new_gutter_fg: Some(t.diff.added_gutter_fg),
+            },
+            ChangeType::Modified => Self {
+                old_bg: Some(t.diff.deleted_bg),
+                old_gutter_bg: Some(t.diff.deleted_gutter_bg),
+                old_gutter_fg: Some(t.diff.deleted_gutter_fg),
+                new_bg: Some(t.diff.added_bg),
+                new_gutter_bg: Some(t.diff.added_gutter_bg),
+                new_gutter_fg: Some(t.diff.added_gutter_fg),
+            },
+        }
+    }
 }
 
 pub fn render_empty_state(frame: &mut Frame, watching: bool) {
@@ -549,6 +582,83 @@ fn render_context_lines(
 
 use crate::vcs::StackedCommitInfo;
 
+/// Render annotation overlays at specified positions.
+///
+/// This function renders annotation boxes that can span single or multiple panels.
+/// The `content_x`, `content_start_y`, `content_width`, and `max_area` parameters
+/// allow flexible positioning for both single-panel and side-by-side views.
+fn render_annotation_overlays(
+    frame: &mut Frame,
+    overlays: &[(usize, &HunkAnnotation)],
+    content_x: u16,
+    content_start_y: u16,
+    content_width: u16,
+    max_area: Rect,
+    bg: Color,
+    t: &crate::command::diff::theme::Theme,
+) {
+    for (line_pos, annotation) in overlays {
+        let screen_y = content_start_y + *line_pos as u16;
+        let content_lines: Vec<&str> = annotation.content.lines().collect();
+        let num_lines = content_lines.len() + 2; // +2 for top and bottom borders
+
+        // Check if annotation is visible
+        if screen_y >= max_area.y + max_area.height {
+            continue;
+        }
+
+        let available_height = (max_area.y + max_area.height).saturating_sub(screen_y) as usize;
+        if available_height == 0 {
+            continue;
+        }
+
+        let overlay_height = num_lines.min(available_height) as u16;
+        let overlay_area = Rect::new(content_x, screen_y, content_width, overlay_height);
+
+        // Clear the area first
+        frame.render_widget(ratatui::widgets::Clear, overlay_area);
+
+        // Build annotation lines
+        let mut ann_lines: Vec<Line> = Vec::new();
+        let note_style = Style::default().fg(t.ui.text_muted).italic();
+        let border_style_ann = Style::default().fg(t.ui.border_unfocused);
+        let border_width = content_width.saturating_sub(3) as usize;
+
+        // Add top border
+        ann_lines.push(Line::from(vec![Span::styled(
+            format!(" ┌{}┐", "─".repeat(border_width)),
+            border_style_ann,
+        )]));
+
+        // Add content lines
+        for content_line in content_lines.iter().take(available_height.saturating_sub(2)) {
+            let content_width_inner = border_width.saturating_sub(1);
+            let padded_content = format!("{:<width$}", content_line, width = content_width_inner);
+            ann_lines.push(Line::from(vec![
+                Span::styled(" │ ", border_style_ann),
+                Span::styled(padded_content, note_style),
+                Span::styled("│", border_style_ann),
+            ]));
+        }
+
+        // Add bottom border with time if there's room
+        if ann_lines.len() < available_height {
+            let time_str = annotation.format_time();
+            let time_with_padding = format!(" {} ", time_str);
+            let time_len = time_with_padding.len();
+            let dashes_before = border_width.saturating_sub(time_len + 1);
+            ann_lines.push(Line::from(vec![
+                Span::styled(format!(" └{}", "─".repeat(dashes_before)), border_style_ann),
+                Span::styled(time_with_padding, Style::default().fg(t.ui.text_muted)),
+                Span::styled("─┘", border_style_ann),
+            ]));
+        }
+
+        let ann_para = Paragraph::new(ann_lines).style(Style::default().bg(bg));
+        frame.render_widget(ann_para, overlay_area);
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn render_diff(
     frame: &mut Frame,
@@ -571,7 +681,7 @@ pub fn render_diff(
     hunk_count: usize,
     diff_fullscreen: DiffFullscreen,
     search_state: &SearchState,
-    branch: &str,
+    commit_ref: &str,
     pr_info: Option<&PrInfo>,
     focused_hunk: Option<usize>,
     hunks: &[usize],
@@ -580,6 +690,7 @@ pub fn render_diff(
     stacked_index: usize,
     stacked_total: usize,
     vcs_name: &str,
+    annotations: &[HunkAnnotation],
 ) {
     let area = frame.area();
     let t = theme::get();
@@ -669,7 +780,7 @@ pub fn render_diff(
             footer_area,
             FooterData {
                 filename: &diff.filename,
-                branch,
+                commit_ref,
                 pr_info,
                 watching,
                 current_file,
@@ -714,15 +825,31 @@ pub fn render_diff(
             settings.tab_width,
         );
         let context_count = new_context.len();
-        let content_height = visible_height.saturating_sub(context_count);
+        let scroll_usize = scroll as usize;
+
+        // Check if there's an annotation for this file (hunk 0 for new files)
+        let annotation = annotations
+            .iter()
+            .find(|a| a.file_index == current_file && a.hunk_index == 0);
+
+        // Calculate how much space we need for annotation (shown at top)
+        let annotation_height = annotation
+            .map(|a| a.content.lines().count() + 2)
+            .unwrap_or(0);
+
+        // Reserve space for annotation at top
+        let base_content_height = visible_height.saturating_sub(context_count);
+        let content_height = base_content_height.saturating_sub(annotation_height);
 
         let visible_lines: Vec<&DiffLine> = side_by_side
             .iter()
-            .skip(scroll as usize)
+            .skip(scroll_usize)
             .take(content_height)
             .collect();
 
         let mut new_lines: Vec<Line> = Vec::new();
+        let mut annotation_overlays: Vec<(usize, &HunkAnnotation)> = Vec::new();
+
         if settings.context.enabled && context_count > 0 {
             render_context_lines(
                 &new_context,
@@ -734,8 +861,19 @@ pub fn render_diff(
             );
         }
 
+        // For new files, show annotation at top (after context lines)
+        if let Some(annotation) = annotation {
+            let content_lines: Vec<&str> = annotation.content.lines().collect();
+            let num_lines = content_lines.len() + 2;
+            let annotation_start = new_lines.len();
+            for _ in 0..num_lines {
+                new_lines.push(Line::from(vec![Span::raw("")]));
+            }
+            annotation_overlays.push((annotation_start, annotation));
+        }
+
         for (i, diff_line) in visible_lines.iter().enumerate() {
-            let line_idx = scroll as usize + i;
+            let line_idx = scroll_usize + i;
             if let Some((num, text)) = &diff_line.new_line {
                 let prefix = format!("{:4}  ", num);
                 let mut spans: Vec<Span> = vec![Span::styled(
@@ -765,6 +903,12 @@ pub fn render_diff(
                 .border_style(border_style),
         );
         frame.render_widget(new_para, main_area);
+
+        // Render annotation overlays
+        let content_x = main_area.x + 1;
+        let content_start_y = main_area.y + 1;
+        let content_width = main_area.width.saturating_sub(2);
+        render_annotation_overlays(frame, &annotation_overlays, content_x, content_start_y, content_width, main_area, bg, t);
     } else if is_deleted_file {
         let visible_height = main_area.height.saturating_sub(2) as usize;
         let old_context = compute_context_lines(
@@ -775,15 +919,31 @@ pub fn render_diff(
             settings.tab_width,
         );
         let context_count = old_context.len();
-        let content_height = visible_height.saturating_sub(context_count);
+        let scroll_usize = scroll as usize;
+
+        // Check if there's an annotation for this file (hunk 0 for deleted files)
+        let annotation = annotations
+            .iter()
+            .find(|a| a.file_index == current_file && a.hunk_index == 0);
+
+        // Calculate how much space we need for annotation (shown at top)
+        let annotation_height = annotation
+            .map(|a| a.content.lines().count() + 2)
+            .unwrap_or(0);
+
+        // Reserve space for annotation at top
+        let base_content_height = visible_height.saturating_sub(context_count);
+        let content_height = base_content_height.saturating_sub(annotation_height);
 
         let visible_lines: Vec<&DiffLine> = side_by_side
             .iter()
-            .skip(scroll as usize)
+            .skip(scroll_usize)
             .take(content_height)
             .collect();
 
         let mut old_lines: Vec<Line> = Vec::new();
+        let mut annotation_overlays: Vec<(usize, &HunkAnnotation)> = Vec::new();
+
         if settings.context.enabled && context_count > 0 {
             render_context_lines(
                 &old_context,
@@ -795,8 +955,19 @@ pub fn render_diff(
             );
         }
 
+        // For deleted files, show annotation at top (after context lines)
+        if let Some(annotation) = annotation {
+            let content_lines: Vec<&str> = annotation.content.lines().collect();
+            let num_lines = content_lines.len() + 2;
+            let annotation_start = old_lines.len();
+            for _ in 0..num_lines {
+                old_lines.push(Line::from(vec![Span::raw("")]));
+            }
+            annotation_overlays.push((annotation_start, annotation));
+        }
+
         for (i, diff_line) in visible_lines.iter().enumerate() {
-            let line_idx = scroll as usize + i;
+            let line_idx = scroll_usize + i;
             if let Some((num, text)) = &diff_line.old_line {
                 let prefix = format!("{:4}  ", num);
                 let mut spans: Vec<Span> = vec![Span::styled(
@@ -826,6 +997,12 @@ pub fn render_diff(
                 .border_style(border_style),
         );
         frame.render_widget(old_para, main_area);
+
+        // Render annotation overlays
+        let content_x = main_area.x + 1;
+        let content_start_y = main_area.y + 1;
+        let content_width = main_area.width.saturating_sub(2);
+        render_annotation_overlays(frame, &annotation_overlays, content_x, content_start_y, content_width, main_area, bg, t);
     } else {
         let (old_area, new_area) = match diff_fullscreen {
             DiffFullscreen::OldOnly => (Some(main_area), None),
@@ -868,6 +1045,7 @@ pub fn render_diff(
 
         let mut old_lines: Vec<Line> = Vec::new();
         let mut new_lines: Vec<Line> = Vec::new();
+        let mut annotation_overlays: Vec<(usize, &HunkAnnotation)> = Vec::new();
 
         if settings.context.enabled && context_count > 0 {
             if old_area.is_some() {
@@ -905,44 +1083,54 @@ pub fn render_diff(
             false
         };
 
+        // Find the hunk index for a given line, returns None if the line is not in a hunk
+        let get_hunk_for_line = |line_idx: usize| -> Option<usize> {
+            for (hunk_idx, &hunk_start) in hunks.iter().enumerate() {
+                let hunk_end = hunks.get(hunk_idx + 1).copied().unwrap_or(usize::MAX);
+                if line_idx >= hunk_start && line_idx < hunk_end {
+                    return Some(hunk_idx);
+                }
+            }
+            None
+        };
+
+
+        // Check if this line is the last changed line of a hunk (before Equal or end of hunk)
+        let is_last_changed_line_of_hunk = |line_idx: usize, lines: &[&DiffLine]| -> Option<usize> {
+            let current_idx_in_slice = line_idx.saturating_sub(scroll_usize);
+            if current_idx_in_slice >= lines.len() {
+                return None;
+            }
+            let current_line = lines[current_idx_in_slice];
+            // Current line must be a change
+            if matches!(current_line.change_type, ChangeType::Equal) {
+                return None;
+            }
+            // Check next line
+            let next_idx = current_idx_in_slice + 1;
+            let is_last = if next_idx >= lines.len() {
+                // End of visible lines - only consider it "last" if the hunk actually ends here
+                if let Some(hunk_idx) = get_hunk_for_line(line_idx) {
+                    let hunk_end = hunks.get(hunk_idx + 1).copied().unwrap_or(side_by_side.len());
+                    // Check if next absolute line is at or past hunk end, or at end of file
+                    line_idx + 1 >= hunk_end || line_idx + 1 >= side_by_side.len()
+                } else {
+                    false
+                }
+            } else {
+                matches!(lines[next_idx].change_type, ChangeType::Equal)
+            };
+            if is_last {
+                get_hunk_for_line(line_idx)
+            } else {
+                None
+            }
+        };
+
         for (i, diff_line) in visible_lines.iter().enumerate() {
             let line_idx = scroll_usize + i;
             let in_focused = is_in_focused_hunk(line_idx, diff_line.change_type);
-            let (old_bg, old_gutter_bg, old_gutter_fg, new_bg, new_gutter_bg, new_gutter_fg) =
-                match diff_line.change_type {
-                    ChangeType::Equal => (
-                        Some(bg),               // old_bg: Set to theme background
-                        Some(bg),               // old_gutter_bg
-                        Some(t.ui.line_number), // old_gutter_fg
-                        Some(bg),               // new_bg: Set to theme background
-                        Some(bg),               // new_gutter_bg
-                        Some(t.ui.line_number), // new_gutter_
-                    ),
-                    ChangeType::Delete => (
-                        Some(t.diff.deleted_bg),
-                        Some(t.diff.deleted_gutter_bg),
-                        Some(t.diff.deleted_gutter_fg),
-                        None,
-                        None,
-                        None,
-                    ),
-                    ChangeType::Insert => (
-                        None,
-                        None,
-                        None,
-                        Some(t.diff.added_bg),
-                        Some(t.diff.added_gutter_bg),
-                        Some(t.diff.added_gutter_fg),
-                    ),
-                    ChangeType::Modified => (
-                        Some(t.diff.deleted_bg),
-                        Some(t.diff.deleted_gutter_bg),
-                        Some(t.diff.deleted_gutter_fg),
-                        Some(t.diff.added_bg),
-                        Some(t.diff.added_gutter_bg),
-                        Some(t.diff.added_gutter_fg),
-                    ),
-                };
+            let style = DiffLineStyle::for_change_type(diff_line.change_type, bg, t);
 
             let focus_indicator = if in_focused { "▎" } else { " " };
             let focus_style = Style::default().fg(t.ui.border_focused);
@@ -956,8 +1144,8 @@ pub fn render_diff(
                         old_spans.push(Span::styled(
                             prefix,
                             Style::default()
-                                .fg(old_gutter_fg.unwrap_or(t.ui.line_number))
-                                .bg(old_gutter_bg.unwrap_or(Color::Reset)),
+                                .fg(style.old_gutter_fg.unwrap_or(t.ui.line_number))
+                                .bg(style.old_gutter_bg.unwrap_or(Color::Reset)),
                         ));
                         let matches = search_state.get_matches_for_line(line_idx, MatchPanel::Old);
 
@@ -968,7 +1156,7 @@ pub fn render_diff(
                                 old_spans.extend(apply_word_emphasis_highlight(
                                     _text,
                                     &diff.filename,
-                                    old_bg,
+                                    style.old_bg,
                                     t.diff.deleted_word_bg,
                                     &emphasis_ranges,
                                     &matches,
@@ -980,7 +1168,7 @@ pub fn render_diff(
                                 old_spans.extend(apply_search_highlight(
                                     _text,
                                     &diff.filename,
-                                    old_bg,
+                                    style.old_bg,
                                     &matches,
                                     Some(&old_highlighter),
                                     Some(*num),
@@ -991,7 +1179,7 @@ pub fn render_diff(
                             old_spans.extend(apply_search_highlight(
                                 _text,
                                 &diff.filename,
-                                old_bg,
+                                style.old_bg,
                                 &matches,
                                 Some(&old_highlighter),
                                 Some(*num),
@@ -1027,8 +1215,8 @@ pub fn render_diff(
                         new_spans.push(Span::styled(
                             prefix,
                             Style::default()
-                                .fg(new_gutter_fg.unwrap_or(t.ui.line_number))
-                                .bg(new_gutter_bg.unwrap_or(Color::Reset)),
+                                .fg(style.new_gutter_fg.unwrap_or(t.ui.line_number))
+                                .bg(style.new_gutter_bg.unwrap_or(Color::Reset)),
                         ));
                         let matches = search_state.get_matches_for_line(line_idx, MatchPanel::New);
 
@@ -1039,7 +1227,7 @@ pub fn render_diff(
                                 new_spans.extend(apply_word_emphasis_highlight(
                                     _text,
                                     &diff.filename,
-                                    new_bg,
+                                    style.new_bg,
                                     t.diff.added_word_bg,
                                     &emphasis_ranges,
                                     &matches,
@@ -1051,7 +1239,7 @@ pub fn render_diff(
                                 new_spans.extend(apply_search_highlight(
                                     _text,
                                     &diff.filename,
-                                    new_bg,
+                                    style.new_bg,
                                     &matches,
                                     Some(&new_highlighter),
                                     Some(*num),
@@ -1062,7 +1250,7 @@ pub fn render_diff(
                             new_spans.extend(apply_search_highlight(
                                 _text,
                                 &diff.filename,
-                                new_bg,
+                                style.new_bg,
                                 &matches,
                                 Some(&new_highlighter),
                                 Some(*num),
@@ -1085,6 +1273,37 @@ pub fn render_diff(
                     }
                 }
                 new_lines.push(Line::from(new_spans));
+            }
+
+            // Check if we need to add annotation content rows after this line
+            if let Some(hunk_idx) = is_last_changed_line_of_hunk(line_idx, &visible_lines) {
+                if let Some(annotation) = annotations
+                    .iter()
+                    .find(|a| a.file_index == current_file && a.hunk_index == hunk_idx)
+                {
+                    // Add annotation content - track position for overlay rendering
+                    let content_lines: Vec<&str> = annotation.content.lines().collect();
+                    let num_lines = content_lines.len() + 2; // +2 for top and bottom borders
+
+                    // Use the rendered panel's line count for position
+                    let line_pos = if old_area.is_some() {
+                        old_lines.len()
+                    } else {
+                        new_lines.len()
+                    };
+
+                    // Add placeholder lines to both panels to make space
+                    for _ in 0..num_lines {
+                        if old_area.is_some() {
+                            old_lines.push(Line::from(vec![Span::raw("")]));
+                        }
+                        if new_area.is_some() {
+                            new_lines.push(Line::from(vec![Span::raw("")]));
+                        }
+                    }
+
+                    annotation_overlays.push((line_pos, annotation));
+                }
             }
         }
 
@@ -1120,6 +1339,18 @@ pub fn render_diff(
                 );
             frame.render_widget(new_para, area);
         }
+
+        // Render annotation overlays spanning both panels (or single panel when fullscreened)
+        let render_area = old_area.or(new_area).unwrap_or(main_area);
+        let content_start_y = render_area.y + 1;
+        let content_x = render_area.x + 1;
+        let content_width = if old_area.is_some() && new_area.is_some() {
+            old_area.unwrap().width + new_area.unwrap().width - 2 // -2 for shared border
+        } else {
+            render_area.width.saturating_sub(2)
+        };
+
+        render_annotation_overlays(frame, &annotation_overlays, content_x, content_start_y, content_width, main_area, bg, t);
     }
 
     render_footer(
@@ -1127,7 +1358,7 @@ pub fn render_diff(
         footer_area,
         FooterData {
             filename: &diff.filename,
-            branch,
+            commit_ref,
             pr_info,
             watching,
             current_file,

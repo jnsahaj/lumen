@@ -184,12 +184,22 @@ LUMEN_THEME=catppuccin-mocha lumen diff
 
 Priority: CLI flag > config file > `LUMEN_THEME` env var > OS auto-detect.
 
-Keybindings in the diff viewer:
+#### Annotations
+
+Add comments to hunks during code review:
+- `i`: Add/edit annotation on focused hunk
+- `I`: View all annotations (edit, delete, copy, or export)
+
+Annotations can be copied to clipboard or exported to a file for sharing.
+
+#### Keybindings
+
 - `j/k` or arrow keys: Navigate
 - `{/}`: Jump between hunks
 - `tab`: Toggle sidebar
 - `space`: Mark file as viewed
 - `e`: Open file in editor
+- `i/I`: Add annotation / view all annotations
 - `ctrl+h/l`: Previous/next commit (stacked mode)
 - `?`: Show all keybindings
 
