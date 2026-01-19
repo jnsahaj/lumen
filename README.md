@@ -5,10 +5,10 @@
 ![GitHub License](https://img.shields.io/github/license/jnsahaj/lumen)
 ![Crates.io Size](https://img.shields.io/crates/size/lumen)
 
-The missing code review tool in the era of AI coding agents. 
-![CleanShot 2025-12-30 at 02 47 04](https://github.com/user-attachments/assets/8305728f-3f69-4b1c-85b3-29bdb05ae559)
+The missing code review tool in the era of AI coding agents.
+[![Demo](https://github.com/user-attachments/assets/dc425871-3826-4368-88d8-931b9403f0ec)](https://github.com/user-attachments/assets/70d07324-8394-423c-bbc3-9460ed84877b)
 
-87c9cbb9eb)
+
 
 ## Table of Contents
 - [Features](#features-)
