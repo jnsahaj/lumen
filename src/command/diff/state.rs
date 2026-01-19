@@ -1,6 +1,11 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::command::diff::diff_algo::{compute_side_by_side, find_hunk_starts};
+
+/// Maximum number of diff lines to include inline when exporting annotations.
+/// Hunks with more lines than this will not include the diff content in the export
+/// to keep the output concise.
+const MAX_EXPORT_DIFF_LINES: usize = 5;
 use crate::command::diff::search::SearchState;
 use crate::command::diff::types::{
     build_file_tree, ChangeType, DiffFullscreen, DiffViewSettings, FileDiff, FocusedPanel,
@@ -15,13 +20,21 @@ pub enum PendingKey {
     G,
 }
 
-/// An annotation attached to a specific hunk in a file
+/// An annotation attached to a specific hunk in a file.
+///
+/// Annotations allow users to add notes to code changes during review.
+/// Each annotation is uniquely identified by its file index and hunk index.
 #[derive(Clone)]
 pub struct HunkAnnotation {
+    /// Index of the file in the file_diffs vector
     pub file_index: usize,
+    /// Index of the hunk within the file (0-based)
     pub hunk_index: usize,
+    /// The annotation text content (supports multi-line)
     pub content: String,
+    /// Line range in the new file (start_line, end_line) for display purposes
     pub line_range: (usize, usize),
+    /// The filename for display in export and UI
     pub filename: String,
 }
 
@@ -369,10 +382,10 @@ impl AppState {
 
                 output.push('\n');
 
-                // Add diff content if available and small (5 lines or fewer)
+                // Add diff content if available and small enough
                 if let Some((_, _, lines)) = diff_content {
                     let line_count = lines.lines().count();
-                    if line_count > 0 && line_count <= 5 {
+                    if line_count > 0 && line_count <= MAX_EXPORT_DIFF_LINES {
                         output.push_str("```diff\n");
                         output.push_str(&lines);
                         output.push_str("```\n");

@@ -20,7 +20,7 @@ use super::git::{
 use super::highlight;
 use super::render::{
     render_diff, render_empty_state, FilePickerItem, KeyBind, KeyBindSection, Modal,
-    ModalFileStatus, ModalResult,
+    ModalContent, ModalFileStatus, ModalResult,
 };
 use super::annotation::{AnnotationEditor, AnnotationEditorResult};
 use super::state::{adjust_scroll_for_hunk, adjust_scroll_to_line, AppState, HunkAnnotation, PendingKey};
@@ -281,26 +281,27 @@ fn run_app_internal(
                         && annotation_editor.is_some()
                         && active_modal.is_none() =>
                 {
-                    let editor = annotation_editor.as_mut().unwrap();
-                    match editor.handle_input(key) {
-                        AnnotationEditorResult::Continue => {}
-                        AnnotationEditorResult::Save(content) => {
-                            let annotation = HunkAnnotation {
-                                file_index: editor.file_index,
-                                hunk_index: editor.hunk_index,
-                                content,
-                                line_range: editor.line_range,
-                                filename: editor.filename.clone(),
-                            };
-                            state.set_annotation(annotation);
-                            annotation_editor = None;
-                        }
-                        AnnotationEditorResult::Delete => {
-                            state.remove_annotation(editor.file_index, editor.hunk_index);
-                            annotation_editor = None;
-                        }
-                        AnnotationEditorResult::Cancel => {
-                            annotation_editor = None;
+                    if let Some(editor) = annotation_editor.as_mut() {
+                        match editor.handle_input(key) {
+                            AnnotationEditorResult::Continue => {}
+                            AnnotationEditorResult::Save(content) => {
+                                let annotation = HunkAnnotation {
+                                    file_index: editor.file_index,
+                                    hunk_index: editor.hunk_index,
+                                    content,
+                                    line_range: editor.line_range,
+                                    filename: editor.filename.clone(),
+                                };
+                                state.set_annotation(annotation);
+                                annotation_editor = None;
+                            }
+                            AnnotationEditorResult::Delete => {
+                                state.remove_annotation(editor.file_index, editor.hunk_index);
+                                annotation_editor = None;
+                            }
+                            AnnotationEditorResult::Cancel => {
+                                annotation_editor = None;
+                            }
                         }
                     }
                 }
@@ -400,8 +401,28 @@ fn run_app_internal(
                                 ModalResult::AnnotationExport(filename) => {
                                     // Write annotations to file
                                     let formatted = state.format_annotations_for_export();
-                                    let _ = std::fs::write(&filename, &formatted);
-                                    active_modal = None;
+                                    match std::fs::write(&filename, &formatted) {
+                                        Ok(_) => {
+                                            active_modal = None;
+                                        }
+                                        Err(e) => {
+                                            // Set error message on the modal
+                                            if let Some(ref mut modal) = active_modal {
+                                                if let ModalContent::Annotations { error_message, export_input, .. } = &mut modal.content {
+                                                    *error_message = Some(format!("Failed to write: {}", e));
+                                                    *export_input = None; // Close input, keep modal open
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                ModalResult::AnnotationExportError(msg) => {
+                                    // Set error message on the modal (alternative path)
+                                    if let Some(ref mut modal) = active_modal {
+                                        if let ModalContent::Annotations { error_message, .. } = &mut modal.content {
+                                            *error_message = Some(msg);
+                                        }
+                                    }
                                 }
                                 ModalResult::Dismissed | ModalResult::Selected(_, _) => {
                                     active_modal = None;

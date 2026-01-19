@@ -61,6 +61,8 @@ pub enum ModalContent {
         annotations: Vec<HunkAnnotation>,
         selected: usize,
         export_input: Option<String>,
+        /// Error message to display (e.g., for failed export)
+        error_message: Option<String>,
     },
 }
 
@@ -79,6 +81,8 @@ pub enum ModalResult {
     AnnotationDelete { file_index: usize, hunk_index: usize },
     AnnotationCopyAll,
     AnnotationExport(String),
+    /// Export failed with an error message - keeps modal open to retry
+    AnnotationExportError(String),
 }
 
 impl Modal {
@@ -137,6 +141,7 @@ impl Modal {
                 annotations,
                 selected: 0,
                 export_input: None,
+                error_message: None,
             },
         }
     }
@@ -228,9 +233,10 @@ impl Modal {
                 items,
                 selected,
                 export_input,
+                error_message,
                 ..
             } => {
-                self.render_annotations(frame, modal_area, title, items, *selected, export_input.as_deref());
+                self.render_annotations(frame, modal_area, title, items, *selected, export_input.as_deref(), error_message.as_deref());
             }
         }
     }
@@ -444,6 +450,7 @@ impl Modal {
         items: &[String],
         selected: usize,
         export_input: Option<&str>,
+        error_message: Option<&str>,
     ) {
         let t = theme::get();
 
@@ -561,6 +568,19 @@ impl Modal {
                 Span::styled("_", Style::default().fg(t.ui.text_muted)),
             ]);
             frame.render_widget(Paragraph::new(input_line), input_inner);
+        }
+
+        // Display error message if present
+        if let Some(error) = error_message {
+            // Show error above footer
+            let error_line = Line::from(vec![
+                Span::styled("Error: ", Style::default().fg(t.ui.status_deleted).bold()),
+                Span::styled(error, Style::default().fg(t.ui.status_deleted)),
+            ]);
+            let error_para = Paragraph::new(error_line).alignment(ratatui::prelude::Alignment::Center);
+            // Render error in the list area's last line
+            let error_area = Rect::new(list_area.x, list_area.y + list_area.height.saturating_sub(1), list_area.width, 1);
+            frame.render_widget(error_para, error_area);
         }
 
         // Compact footer
@@ -705,6 +725,7 @@ impl Modal {
                 annotations,
                 selected,
                 export_input,
+                error_message,
                 ..
             } => {
                 // Export input mode
@@ -712,18 +733,32 @@ impl Modal {
                     match key.code {
                         KeyCode::Esc => {
                             *export_input = None;
+                            *error_message = None;
                             None
                         }
                         KeyCode::Enter => {
-                            let filename = input.clone();
-                            Some(ModalResult::AnnotationExport(filename))
+                            let filename = input.trim();
+                            // Basic path validation
+                            if filename.is_empty() {
+                                *error_message = Some("Path cannot be empty".to_string());
+                                return None;
+                            }
+                            if filename.contains("..") {
+                                *error_message = Some("Path cannot contain '..'".to_string());
+                                return None;
+                            }
+                            // Clear any previous error and proceed
+                            *error_message = None;
+                            Some(ModalResult::AnnotationExport(filename.to_string()))
                         }
                         KeyCode::Backspace => {
                             input.pop();
+                            *error_message = None; // Clear error on edit
                             None
                         }
                         KeyCode::Char(c) => {
                             input.push(c);
+                            *error_message = None; // Clear error on edit
                             None
                         }
                         _ => None,

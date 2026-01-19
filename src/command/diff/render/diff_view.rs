@@ -550,28 +550,32 @@ fn render_context_lines(
 
 use crate::vcs::StackedCommitInfo;
 
-/// Render annotation overlays for single-panel views (new file, deleted file)
+/// Render annotation overlays at specified positions.
+///
+/// This function renders annotation boxes that can span single or multiple panels.
+/// The `content_x`, `content_start_y`, `content_width`, and `max_area` parameters
+/// allow flexible positioning for both single-panel and side-by-side views.
 fn render_annotation_overlays(
     frame: &mut Frame,
     overlays: &[(usize, &HunkAnnotation)],
-    area: Rect,
+    content_x: u16,
+    content_start_y: u16,
+    content_width: u16,
+    max_area: Rect,
     bg: Color,
     t: &crate::command::diff::theme::Theme,
 ) {
-    let content_start_y = area.y + 1;
-    let content_x = area.x + 1;
-    let content_width = area.width.saturating_sub(2);
-
     for (line_pos, annotation) in overlays {
         let screen_y = content_start_y + *line_pos as u16;
         let content_lines: Vec<&str> = annotation.content.lines().collect();
-        let num_lines = content_lines.len() + 2;
+        let num_lines = content_lines.len() + 2; // +2 for top and bottom borders
 
-        if screen_y >= area.y + area.height {
+        // Check if annotation is visible
+        if screen_y >= max_area.y + max_area.height {
             continue;
         }
 
-        let available_height = (area.y + area.height).saturating_sub(screen_y) as usize;
+        let available_height = (max_area.y + max_area.height).saturating_sub(screen_y) as usize;
         if available_height == 0 {
             continue;
         }
@@ -579,18 +583,22 @@ fn render_annotation_overlays(
         let overlay_height = num_lines.min(available_height) as u16;
         let overlay_area = Rect::new(content_x, screen_y, content_width, overlay_height);
 
+        // Clear the area first
         frame.render_widget(ratatui::widgets::Clear, overlay_area);
 
+        // Build annotation lines
         let mut ann_lines: Vec<Line> = Vec::new();
         let note_style = Style::default().fg(t.ui.text_muted).italic();
         let border_style_ann = Style::default().fg(t.ui.border_unfocused);
         let border_width = content_width.saturating_sub(3) as usize;
 
+        // Add top border
         ann_lines.push(Line::from(vec![Span::styled(
             format!(" ┌{}┐", "─".repeat(border_width)),
             border_style_ann,
         )]));
 
+        // Add content lines
         for content_line in content_lines.iter().take(available_height.saturating_sub(2)) {
             let content_width_inner = border_width.saturating_sub(1);
             let padded_content = format!("{:<width$}", content_line, width = content_width_inner);
@@ -601,6 +609,7 @@ fn render_annotation_overlays(
             ]));
         }
 
+        // Add bottom border if there's room
         if ann_lines.len() < available_height {
             ann_lines.push(Line::from(vec![Span::styled(
                 format!(" └{}┘", "─".repeat(border_width)),
@@ -855,7 +864,10 @@ pub fn render_diff(
         frame.render_widget(new_para, main_area);
 
         // Render annotation overlays
-        render_annotation_overlays(frame, &annotation_overlays, main_area, bg, t);
+        let content_x = main_area.x + 1;
+        let content_start_y = main_area.y + 1;
+        let content_width = main_area.width.saturating_sub(2);
+        render_annotation_overlays(frame, &annotation_overlays, content_x, content_start_y, content_width, main_area, bg, t);
     } else if is_deleted_file {
         let visible_height = main_area.height.saturating_sub(2) as usize;
         let old_context = compute_context_lines(
@@ -946,7 +958,10 @@ pub fn render_diff(
         frame.render_widget(old_para, main_area);
 
         // Render annotation overlays
-        render_annotation_overlays(frame, &annotation_overlays, main_area, bg, t);
+        let content_x = main_area.x + 1;
+        let content_start_y = main_area.y + 1;
+        let content_width = main_area.width.saturating_sub(2);
+        render_annotation_overlays(frame, &annotation_overlays, content_x, content_start_y, content_width, main_area, bg, t);
     } else {
         let (old_area, new_area) = match diff_fullscreen {
             DiffFullscreen::OldOnly => (Some(main_area), None),
@@ -1322,60 +1337,7 @@ pub fn render_diff(
             render_area.width.saturating_sub(2)
         };
 
-        for (line_pos, annotation) in annotation_overlays {
-            let screen_y = content_start_y + line_pos as u16;
-            let content_lines: Vec<&str> = annotation.content.lines().collect();
-            let num_lines = content_lines.len() + 2; // +2 for top and bottom borders
-
-            // Check if annotation is visible
-            if screen_y >= main_area.y + main_area.height {
-                continue;
-            }
-
-            let available_height = (main_area.y + main_area.height).saturating_sub(screen_y) as usize;
-            if available_height == 0 {
-                continue;
-            }
-
-            let overlay_height = num_lines.min(available_height) as u16;
-            let overlay_area = Rect::new(content_x, screen_y, content_width, overlay_height);
-
-            // Clear the area first
-            frame.render_widget(ratatui::widgets::Clear, overlay_area);
-
-            // Build annotation lines
-            let mut ann_lines: Vec<Line> = Vec::new();
-            let note_style = Style::default().fg(t.ui.text_muted).italic();
-            let border_style_ann = Style::default().fg(t.ui.border_unfocused);
-            let border_width = content_width.saturating_sub(3) as usize;
-
-            // Add top border
-            ann_lines.push(Line::from(vec![
-                Span::styled(format!(" ┌{}┐", "─".repeat(border_width)), border_style_ann),
-            ]));
-
-            // Add content lines
-            for content_line in content_lines.iter().take(available_height.saturating_sub(2)) {
-                // Pad content to fill width, leaving room for borders
-                let content_width_inner = border_width.saturating_sub(1);
-                let padded_content = format!("{:<width$}", content_line, width = content_width_inner);
-                ann_lines.push(Line::from(vec![
-                    Span::styled(" │ ", border_style_ann),
-                    Span::styled(padded_content, note_style),
-                    Span::styled("│", border_style_ann),
-                ]));
-            }
-
-            // Add bottom border if there's room
-            if ann_lines.len() < available_height {
-                ann_lines.push(Line::from(vec![
-                    Span::styled(format!(" └{}┘", "─".repeat(border_width)), border_style_ann),
-                ]));
-            }
-
-            let ann_para = Paragraph::new(ann_lines).style(Style::default().bg(bg));
-            frame.render_widget(ann_para, overlay_area);
-        }
+        render_annotation_overlays(frame, &annotation_overlays, content_x, content_start_y, content_width, main_area, bg, t);
     }
 
     render_footer(
