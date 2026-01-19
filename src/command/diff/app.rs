@@ -248,6 +248,8 @@ fn run_app_internal(
                     diff,
                     &state.file_diffs,
                     &state.sidebar_items,
+                    &state.sidebar_visible,
+                    &state.collapsed_dirs,
                     state.current_file,
                     state.scroll,
                     state.h_scroll,
@@ -361,10 +363,11 @@ fn run_app_internal(
                         if let Some(result) = modal.handle_input(key, term_height) {
                             match result {
                                 ModalResult::FileSelected(file_index) => {
+                                    state.reveal_file(file_index);
                                     state.select_file(file_index);
-                                    if let Some(idx) = state.sidebar_items.iter().position(|item| {
-                                        matches!(item, SidebarItem::File { file_index: fi, .. } if *fi == state.current_file)
-                                    }) {
+                                    if let Some(idx) =
+                                        state.sidebar_visible_index_for_file(state.current_file)
+                                    {
                                         state.sidebar_selected = idx;
                                         let visible_height =
                                             terminal.size()?.height.saturating_sub(5) as usize;
@@ -495,18 +498,32 @@ fn run_app_internal(
                                 let clicked_row = (mouse.row.saturating_sub(header_height + 1))
                                     as usize
                                     + state.sidebar_scroll;
-                                if clicked_row < state.sidebar_items.len()
-                                    && matches!(
-                                        state.sidebar_items[clicked_row],
-                                        SidebarItem::File { .. }
-                                    )
-                                {
-                                    state.sidebar_selected = clicked_row;
-                                    state.focused_panel = FocusedPanel::DiffView;
-                                    if let SidebarItem::File { file_index, .. } =
-                                        &state.sidebar_items[state.sidebar_selected]
-                                    {
-                                        state.select_file(*file_index);
+                                if clicked_row < state.sidebar_visible_len() {
+                                    let item = state.sidebar_item_at_visible(clicked_row).cloned();
+                                    if let Some(item) = item {
+                                        state.sidebar_selected = clicked_row;
+                                        match item {
+                                            SidebarItem::File { file_index, .. } => {
+                                                state.focused_panel = FocusedPanel::DiffView;
+                                                state.select_file(file_index);
+                                            }
+                                            SidebarItem::Directory { path, .. } => {
+                                                state.focused_panel = FocusedPanel::Sidebar;
+                                                state.toggle_directory(&path);
+                                                let visible_height =
+                                                    term_size.height.saturating_sub(5) as usize;
+                                                if state.sidebar_selected < state.sidebar_scroll {
+                                                    state.sidebar_scroll = state.sidebar_selected;
+                                                } else if state.sidebar_selected
+                                                    >= state.sidebar_scroll + visible_height
+                                                {
+                                                    state.sidebar_scroll = state
+                                                        .sidebar_selected
+                                                        .saturating_sub(visible_height)
+                                                        + 1;
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             } else if mouse.column >= sidebar_width {
@@ -552,7 +569,7 @@ fn run_app_internal(
 
                             if in_sidebar {
                                 let max_sidebar_scroll =
-                                    state.sidebar_items.len().saturating_sub(1);
+                                    state.sidebar_visible_len().saturating_sub(1);
                                 if scroll_delta > 0 {
                                     state.sidebar_scroll = (state.sidebar_scroll
                                         + scroll_delta as usize)
@@ -595,14 +612,12 @@ fn run_app_internal(
                             state.focused_panel = FocusedPanel::Sidebar;
                             state.show_sidebar = true;
                             if !matches!(
-                                state.sidebar_items.get(state.sidebar_selected),
+                                state.sidebar_item_at_visible(state.sidebar_selected),
                                 Some(SidebarItem::File { .. })
                             ) {
-                                if let Some(idx) = state
-                                    .sidebar_items
-                                    .iter()
-                                    .position(|item| matches!(item, SidebarItem::File { .. }))
-                                {
+                                if let Some(idx) = state.sidebar_visible.iter().position(|idx| {
+                                    matches!(state.sidebar_items[*idx], SidebarItem::File { .. })
+                                }) {
                                     state.sidebar_selected = idx;
                                 }
                             }
@@ -619,12 +634,12 @@ fn run_app_internal(
                         KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                             if !state.file_diffs.is_empty() {
                                 let mut next = state.sidebar_selected + 1;
-                                while next < state.sidebar_items.len() {
-                                    if let SidebarItem::File { file_index, .. } =
-                                        &state.sidebar_items[next]
+                                while next < state.sidebar_visible_len() {
+                                    if let Some(SidebarItem::File { file_index, .. }) =
+                                        state.sidebar_item_at_visible(next).cloned()
                                     {
                                         state.sidebar_selected = next;
-                                        state.select_file(*file_index);
+                                        state.select_file(file_index);
                                         let visible_height =
                                             terminal.size()?.height.saturating_sub(5) as usize;
                                         ensure_sidebar_visible(&mut state, visible_height);
@@ -638,11 +653,11 @@ fn run_app_internal(
                             if !state.file_diffs.is_empty() && state.sidebar_selected > 0 {
                                 let mut prev = state.sidebar_selected - 1;
                                 loop {
-                                    if let SidebarItem::File { file_index, .. } =
-                                        &state.sidebar_items[prev]
+                                    if let Some(SidebarItem::File { file_index, .. }) =
+                                        state.sidebar_item_at_visible(prev).cloned()
                                     {
                                         state.sidebar_selected = prev;
-                                        state.select_file(*file_index);
+                                        state.select_file(file_index);
                                         ensure_sidebar_visible(&mut state, usize::MAX);
                                         break;
                                     }
@@ -753,14 +768,8 @@ fn run_app_internal(
                         }
                         KeyCode::Down | KeyCode::Char('j') => {
                             if state.focused_panel == FocusedPanel::Sidebar {
-                                let mut next = state.sidebar_selected + 1;
-                                while next < state.sidebar_items.len() {
-                                    if matches!(state.sidebar_items[next], SidebarItem::File { .. })
-                                    {
-                                        state.sidebar_selected = next;
-                                        break;
-                                    }
-                                    next += 1;
+                                if state.sidebar_selected + 1 < state.sidebar_visible_len() {
+                                    state.sidebar_selected += 1;
                                 }
                                 let visible_height =
                                     terminal.size()?.height.saturating_sub(5) as usize;
@@ -772,20 +781,8 @@ fn run_app_internal(
                         KeyCode::Up | KeyCode::Char('k') => {
                             if state.focused_panel == FocusedPanel::Sidebar {
                                 if state.sidebar_selected > 0 {
-                                    let mut prev = state.sidebar_selected - 1;
-                                    loop {
-                                        if matches!(
-                                            state.sidebar_items[prev],
-                                            SidebarItem::File { .. }
-                                        ) {
-                                            state.sidebar_selected = prev;
-                                            break;
-                                        }
-                                        if prev == 0 {
-                                            break;
-                                        }
-                                        prev -= 1;
-                                    }
+                                    state.sidebar_selected =
+                                        state.sidebar_selected.saturating_sub(1);
                                 }
                                 ensure_sidebar_visible(&mut state, usize::MAX);
                             } else {
@@ -808,85 +805,111 @@ fn run_app_internal(
                         }
                         KeyCode::Enter => {
                             if state.focused_panel == FocusedPanel::Sidebar
-                                && state.sidebar_selected < state.sidebar_items.len()
+                                && state.sidebar_selected < state.sidebar_visible_len()
                             {
-                                if let SidebarItem::File { file_index, .. } =
-                                    &state.sidebar_items[state.sidebar_selected]
+                                if let Some(item) = state
+                                    .sidebar_item_at_visible(state.sidebar_selected)
+                                    .cloned()
                                 {
-                                    state.select_file(*file_index);
-                                    state.focused_panel = FocusedPanel::DiffView;
+                                    match item {
+                                        SidebarItem::File { file_index, .. } => {
+                                            state.select_file(file_index);
+                                            state.focused_panel = FocusedPanel::DiffView;
+                                        }
+                                        SidebarItem::Directory { path, .. } => {
+                                            state.toggle_directory(&path);
+                                            let visible_height =
+                                                terminal.size()?.height.saturating_sub(5) as usize;
+                                            if state.sidebar_selected < state.sidebar_scroll {
+                                                state.sidebar_scroll = state.sidebar_selected;
+                                            } else if state.sidebar_selected
+                                                >= state.sidebar_scroll + visible_height
+                                            {
+                                                state.sidebar_scroll = state
+                                                    .sidebar_selected
+                                                    .saturating_sub(visible_height)
+                                                    + 1;
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
                         KeyCode::Char(' ') => {
                             if state.focused_panel == FocusedPanel::Sidebar
-                                && state.sidebar_selected < state.sidebar_items.len()
+                                && state.sidebar_selected < state.sidebar_visible_len()
                             {
-                                match &state.sidebar_items[state.sidebar_selected] {
-                                    SidebarItem::File { file_index, .. } => {
-                                        let file_idx = *file_index;
-                                        let filename = state.file_diffs[file_idx].filename.clone();
-                                        let was_viewed = state.viewed_files.contains(&file_idx);
+                                let selected = state
+                                    .sidebar_item_at_visible(state.sidebar_selected)
+                                    .cloned();
+                                if let Some(selected) = selected {
+                                    match selected {
+                                        SidebarItem::File { file_index, .. } => {
+                                            let file_idx = file_index;
+                                            let filename =
+                                                state.file_diffs[file_idx].filename.clone();
+                                            let was_viewed = state.viewed_files.contains(&file_idx);
 
-                                        // Optimistic update - update local state immediately
-                                        if was_viewed {
-                                            state.viewed_files.remove(&file_idx);
-                                        } else {
-                                            state.viewed_files.insert(file_idx);
-                                        }
-
-                                        // Fire off async API call if in PR mode
-                                        if let Some(ref pr) = pr_info {
+                                            // Optimistic update - update local state immediately
                                             if was_viewed {
-                                                unmark_file_as_viewed_async(pr, &filename);
+                                                state.viewed_files.remove(&file_idx);
                                             } else {
-                                                mark_file_as_viewed_async(pr, &filename);
+                                                state.viewed_files.insert(file_idx);
                                             }
-                                        }
-                                    }
-                                    SidebarItem::Directory { path, .. } => {
-                                        let dir_prefix = format!("{}/", path);
-                                        let child_indices: Vec<usize> = state
-                                            .sidebar_items
-                                            .iter()
-                                            .filter_map(|item| {
-                                                if let SidebarItem::File {
-                                                    path: file_path,
-                                                    file_index,
-                                                    ..
-                                                } = item
-                                                {
-                                                    if file_path.starts_with(&dir_prefix) {
-                                                        return Some(*file_index);
-                                                    }
-                                                }
-                                                None
-                                            })
-                                            .collect();
 
-                                        let all_viewed = child_indices
-                                            .iter()
-                                            .all(|i| state.viewed_files.contains(i));
-
-                                        // Optimistic update - update local state immediately
-                                        if all_viewed {
-                                            for idx in &child_indices {
-                                                state.viewed_files.remove(idx);
-                                            }
-                                        } else {
-                                            for idx in &child_indices {
-                                                state.viewed_files.insert(*idx);
-                                            }
-                                        }
-
-                                        // Fire off async API calls if in PR mode
-                                        if let Some(ref pr) = pr_info {
-                                            for &idx in &child_indices {
-                                                let filename = &state.file_diffs[idx].filename;
-                                                if all_viewed {
-                                                    unmark_file_as_viewed_async(pr, filename);
+                                            // Fire off async API call if in PR mode
+                                            if let Some(ref pr) = pr_info {
+                                                if was_viewed {
+                                                    unmark_file_as_viewed_async(pr, &filename);
                                                 } else {
-                                                    mark_file_as_viewed_async(pr, filename);
+                                                    mark_file_as_viewed_async(pr, &filename);
+                                                }
+                                            }
+                                        }
+                                        SidebarItem::Directory { path, .. } => {
+                                            let dir_prefix = format!("{}/", path);
+                                            let child_indices: Vec<usize> = state
+                                                .sidebar_items
+                                                .iter()
+                                                .filter_map(|item| {
+                                                    if let SidebarItem::File {
+                                                        path: file_path,
+                                                        file_index,
+                                                        ..
+                                                    } = item
+                                                    {
+                                                        if file_path.starts_with(&dir_prefix) {
+                                                            return Some(*file_index);
+                                                        }
+                                                    }
+                                                    None
+                                                })
+                                                .collect();
+
+                                            let all_viewed = child_indices
+                                                .iter()
+                                                .all(|i| state.viewed_files.contains(i));
+
+                                            // Optimistic update - update local state immediately
+                                            if all_viewed {
+                                                for idx in &child_indices {
+                                                    state.viewed_files.remove(idx);
+                                                }
+                                            } else {
+                                                for idx in &child_indices {
+                                                    state.viewed_files.insert(*idx);
+                                                }
+                                            }
+
+                                            // Fire off async API calls if in PR mode
+                                            if let Some(ref pr) = pr_info {
+                                                for &idx in &child_indices {
+                                                    let filename = &state.file_diffs[idx].filename;
+                                                    if all_viewed {
+                                                        unmark_file_as_viewed_async(pr, filename);
+                                                    } else {
+                                                        mark_file_as_viewed_async(pr, filename);
+                                                    }
                                                 }
                                             }
                                         }
@@ -904,29 +927,33 @@ fn run_app_internal(
                                     state.viewed_files.insert(current_file);
                                     // Move to next unviewed file
                                     let mut next_file: Option<(usize, usize)> = None;
-                                    for (idx, item) in state
-                                        .sidebar_items
+                                    for (visible_idx, item_idx) in state
+                                        .sidebar_visible
                                         .iter()
                                         .enumerate()
                                         .skip(state.sidebar_selected + 1)
                                     {
-                                        if let SidebarItem::File { file_index, .. } = item {
+                                        if let SidebarItem::File { file_index, .. } =
+                                            &state.sidebar_items[*item_idx]
+                                        {
                                             if !state.viewed_files.contains(file_index) {
-                                                next_file = Some((idx, *file_index));
+                                                next_file = Some((visible_idx, *file_index));
                                                 break;
                                             }
                                         }
                                     }
                                     if next_file.is_none() {
-                                        for (idx, item) in state
-                                            .sidebar_items
+                                        for (visible_idx, item_idx) in state
+                                            .sidebar_visible
                                             .iter()
                                             .enumerate()
                                             .take(state.sidebar_selected)
                                         {
-                                            if let SidebarItem::File { file_index, .. } = item {
+                                            if let SidebarItem::File { file_index, .. } =
+                                                &state.sidebar_items[*item_idx]
+                                            {
                                                 if !state.viewed_files.contains(file_index) {
-                                                    next_file = Some((idx, *file_index));
+                                                    next_file = Some((visible_idx, *file_index));
                                                     break;
                                                 }
                                             }
@@ -1273,7 +1300,7 @@ fn run_app_internal(
                                             },
                                             KeyBind {
                                                 key: "enter",
-                                                description: "Open file in diff view",
+                                                description: "Open file in diff view / toggle directory",
                                             },
                                             KeyBind {
                                                 key: "space",

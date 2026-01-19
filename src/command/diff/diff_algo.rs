@@ -150,7 +150,8 @@ pub fn compute_side_by_side(old: &str, new: &str, tab_width: usize) -> Vec<DiffL
                             let old_text = old_line.as_ref().map(|(_, t)| t.as_str()).unwrap_or("");
                             let new_text = new_line.as_ref().map(|(_, t)| t.as_str()).unwrap_or("");
                             // compute_word_diff returns None if lines are too different
-                            if let Some((old_segs, new_segs)) = compute_word_diff(old_text, new_text)
+                            if let Some((old_segs, new_segs)) =
+                                compute_word_diff(old_text, new_text)
                             {
                                 (Some(old_segs), Some(new_segs))
                             } else {

@@ -21,6 +21,54 @@ pub enum PendingKey {
     G,
 }
 
+fn sidebar_item_path(item: &SidebarItem) -> &str {
+    match item {
+        SidebarItem::Directory { path, .. } => path,
+        SidebarItem::File { path, .. } => path,
+    }
+}
+
+fn is_child_path(path: &str, parent: &str) -> bool {
+    if parent.is_empty() {
+        return false;
+    }
+    path.starts_with(&format!("{}/", parent))
+}
+
+fn build_sidebar_visible_indices(
+    items: &[SidebarItem],
+    collapsed_dirs: &HashSet<String>,
+) -> Vec<usize> {
+    let mut visible = Vec::new();
+    let mut collapsed_stack: Vec<String> = Vec::new();
+
+    for (idx, item) in items.iter().enumerate() {
+        let path = sidebar_item_path(item);
+        while let Some(last) = collapsed_stack.last() {
+            if is_child_path(path, last) {
+                break;
+            }
+            collapsed_stack.pop();
+        }
+
+        if let Some(last) = collapsed_stack.last() {
+            if is_child_path(path, last) {
+                continue;
+            }
+        }
+
+        visible.push(idx);
+
+        if let SidebarItem::Directory { path, .. } = item {
+            if collapsed_dirs.contains(path) {
+                collapsed_stack.push(path.clone());
+            }
+        }
+    }
+
+    visible
+}
+
 /// An annotation attached to a specific hunk in a file.
 ///
 /// Annotations allow users to add notes to code changes during review.
@@ -65,6 +113,8 @@ impl HunkAnnotation {
 pub struct AppState {
     pub file_diffs: Vec<FileDiff>,
     pub sidebar_items: Vec<SidebarItem>,
+    pub sidebar_visible: Vec<usize>,
+    pub collapsed_dirs: HashSet<String>,
     pub current_file: usize,
     pub sidebar_selected: usize,
     pub sidebar_scroll: usize,
@@ -97,18 +147,17 @@ pub struct AppState {
 impl AppState {
     pub fn new(file_diffs: Vec<FileDiff>) -> Self {
         let sidebar_items = build_file_tree(&file_diffs);
-        let sidebar_selected = sidebar_items
+        let collapsed_dirs = HashSet::new();
+        let sidebar_visible = build_sidebar_visible_indices(&sidebar_items, &collapsed_dirs);
+        let sidebar_selected = sidebar_visible
             .iter()
-            .position(|item| matches!(item, SidebarItem::File { .. }))
+            .position(|idx| matches!(sidebar_items[*idx], SidebarItem::File { .. }))
             .unwrap_or(0);
-        let current_file = sidebar_items
+        let current_file = sidebar_visible
             .get(sidebar_selected)
-            .and_then(|item| {
-                if let SidebarItem::File { file_index, .. } = item {
-                    Some(*file_index)
-                } else {
-                    None
-                }
+            .and_then(|idx| match &sidebar_items[*idx] {
+                SidebarItem::File { file_index, .. } => Some(*file_index),
+                _ => None,
             })
             .unwrap_or(0);
         let settings = DiffViewSettings::default();
@@ -130,6 +179,8 @@ impl AppState {
         Self {
             file_diffs,
             sidebar_items,
+            sidebar_visible,
+            collapsed_dirs,
             current_file,
             sidebar_selected,
             sidebar_scroll: 0,
@@ -158,6 +209,117 @@ impl AppState {
     /// Set the VCS backend name
     pub fn set_vcs_name(&mut self, name: &'static str) {
         self.vcs_name = name;
+    }
+
+    pub fn sidebar_visible_len(&self) -> usize {
+        self.sidebar_visible.len()
+    }
+
+    pub fn sidebar_item_at_visible(&self, visible_index: usize) -> Option<&SidebarItem> {
+        self.sidebar_visible
+            .get(visible_index)
+            .and_then(|idx| self.sidebar_items.get(*idx))
+    }
+
+    pub fn sidebar_visible_index_for_file(&self, file_index: usize) -> Option<usize> {
+        self.sidebar_visible.iter().position(|idx| {
+            matches!(self.sidebar_items[*idx], SidebarItem::File { file_index: fi, .. } if fi == file_index)
+        })
+    }
+
+    pub fn sidebar_visible_index_for_dir(&self, dir_path: &str) -> Option<usize> {
+        self.sidebar_visible.iter().position(|idx| {
+            matches!(&self.sidebar_items[*idx], SidebarItem::Directory { path, .. } if path == dir_path)
+        })
+    }
+
+    pub fn rebuild_sidebar_visible(&mut self) {
+        let existing_dirs: HashSet<String> = self
+            .sidebar_items
+            .iter()
+            .filter_map(|item| match item {
+                SidebarItem::Directory { path, .. } => Some(path.clone()),
+                _ => None,
+            })
+            .collect();
+        self.collapsed_dirs
+            .retain(|path| existing_dirs.contains(path));
+        self.sidebar_visible =
+            build_sidebar_visible_indices(&self.sidebar_items, &self.collapsed_dirs);
+
+        if self.sidebar_visible.is_empty() {
+            self.sidebar_selected = 0;
+            self.sidebar_scroll = 0;
+            return;
+        }
+
+        if let Some(idx) = self.sidebar_visible_index_for_file(self.current_file) {
+            self.sidebar_selected = idx;
+        } else if self.sidebar_selected >= self.sidebar_visible.len() {
+            self.sidebar_selected = self.sidebar_visible.len() - 1;
+        }
+
+        if self.sidebar_scroll >= self.sidebar_visible.len() {
+            self.sidebar_scroll = self.sidebar_visible.len() - 1;
+        }
+    }
+
+    pub fn toggle_directory(&mut self, dir_path: &str) {
+        let selected_item = self.sidebar_item_at_visible(self.sidebar_selected).cloned();
+        let collapsing = !self.collapsed_dirs.contains(dir_path);
+
+        if collapsing {
+            self.collapsed_dirs.insert(dir_path.to_string());
+        } else {
+            self.collapsed_dirs.remove(dir_path);
+        }
+
+        self.rebuild_sidebar_visible();
+
+        if collapsing {
+            if let Some(item) = &selected_item {
+                let path = sidebar_item_path(item);
+                if is_child_path(path, dir_path) {
+                    if let Some(idx) = self.sidebar_visible_index_for_dir(dir_path) {
+                        self.sidebar_selected = idx;
+                        return;
+                    }
+                }
+            }
+        }
+
+        if let Some(item) = selected_item {
+            match item {
+                SidebarItem::Directory { path, .. } => {
+                    if let Some(idx) = self.sidebar_visible_index_for_dir(&path) {
+                        self.sidebar_selected = idx;
+                    }
+                }
+                SidebarItem::File { file_index, .. } => {
+                    if let Some(idx) = self.sidebar_visible_index_for_file(file_index) {
+                        self.sidebar_selected = idx;
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn reveal_file(&mut self, file_index: usize) {
+        if file_index >= self.file_diffs.len() {
+            return;
+        }
+        let path = self.file_diffs[file_index].filename.clone();
+        let parts: Vec<&str> = path.split('/').collect();
+        if parts.len() > 1 {
+            for i in 0..parts.len() - 1 {
+                let dir_path = parts[..=i].join("/");
+                self.collapsed_dirs.remove(&dir_path);
+            }
+        }
+        self.rebuild_sidebar_visible();
+        if let Some(idx) = self.sidebar_visible_index_for_file(file_index) {
+            self.sidebar_selected = idx;
+        }
     }
 
     /// Set the diff reference string (e.g., "HEAD~2..HEAD")
@@ -300,18 +462,7 @@ impl AppState {
             self.current_file = self.file_diffs.len() - 1;
         }
 
-        // Update sidebar selection to match current file
-        if let Some(idx) = self.sidebar_items.iter().position(|item| {
-            matches!(item, SidebarItem::File { file_index, .. } if *file_index == self.current_file)
-        }) {
-            self.sidebar_selected = idx;
-        } else {
-            self.sidebar_selected = self
-                .sidebar_items
-                .iter()
-                .position(|item| matches!(item, SidebarItem::File { .. }))
-                .unwrap_or(0);
-        }
+        self.rebuild_sidebar_visible();
 
         // Preserve scroll position instead of resetting
         if !self.file_diffs.is_empty() {
