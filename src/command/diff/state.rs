@@ -460,7 +460,7 @@ impl AppState {
                 }
 
                 // Add the annotation
-                output.push_str(&format!("**Note:** {}\n", a.content));
+                output.push_str(&format!("comment: {}\n", a.content));
                 output
             })
             .collect::<Vec<_>>()
