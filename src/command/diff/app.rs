@@ -33,6 +33,56 @@ use super::{
 use crate::commit_reference::CommitReference;
 use crate::vcs::{StackedCommitInfo, VcsBackend};
 
+/// Navigate to a different commit in stacked mode.
+/// Returns true if navigation was successful.
+fn navigate_stacked_commit(
+    state: &mut AppState,
+    new_index: usize,
+    options: &DiffOptions,
+    backend: &dyn VcsBackend,
+) -> bool {
+    if new_index >= state.stacked_commits.len() {
+        return false;
+    }
+    state.save_stacked_viewed_files();
+    state.current_commit_index = new_index;
+    if let Some(commit) = state.stacked_commits.get(new_index) {
+        let file_diffs = load_single_commit_diffs(&commit.commit_id, &options.file, backend);
+        state.reload(file_diffs, None);
+        state.load_stacked_viewed_files();
+        true
+    } else {
+        false
+    }
+}
+
+/// Adjust sidebar scroll to ensure the selected item is visible.
+fn ensure_sidebar_visible(state: &mut AppState, visible_height: usize) {
+    if state.sidebar_selected >= state.sidebar_scroll + visible_height {
+        state.sidebar_scroll = state.sidebar_selected.saturating_sub(visible_height) + 1;
+    } else if state.sidebar_selected < state.sidebar_scroll {
+        state.sidebar_scroll = state.sidebar_selected;
+    }
+}
+
+/// Format an annotation for display in the annotations list.
+fn format_annotation_preview(annotation: &super::state::HunkAnnotation) -> String {
+    let preview = annotation.content.lines().next().unwrap_or("");
+    let preview = if preview.len() > 40 {
+        format!("{}...", &preview[..40])
+    } else {
+        preview.to_string()
+    };
+    format!(
+        "{}:{}-{} | {} | {}",
+        annotation.filename,
+        annotation.line_range.0,
+        annotation.line_range.1,
+        preview,
+        annotation.format_time()
+    )
+}
+
 pub fn run_app_with_pr(
     options: DiffOptions,
     pr_info: PrInfo,
@@ -105,12 +155,14 @@ fn run_app_internal(
     state.set_vcs_name(backend.name());
 
     // Set diff reference for annotation export context
-    let diff_ref_str = match (&pr_info, &options.reference) {
-        (Some(pr), _) => Some(format!("PR #{} ({}...{})", pr.number, pr.base_ref, pr.head_ref)),
-        (None, Some(CommitReference::Single(s))) => Some(s.clone()),
-        (None, Some(CommitReference::Range { from, to })) => Some(format!("{}..{}", from, to)),
-        (None, Some(CommitReference::TripleDots { from, to })) => Some(format!("{}...{}", from, to)),
-        (None, None) => None,
+    let diff_ref_str = if let Some(pr) = &pr_info {
+        Some(format!("PR #{} ({}...{})", pr.number, pr.base_ref, pr.head_ref))
+    } else {
+        options.reference.as_ref().map(|r| match r {
+            CommitReference::Single(s) => s.clone(),
+            CommitReference::Range { from, to } => format!("{}..{}", from, to),
+            CommitReference::TripleDots { from, to } => format!("{}...{}", from, to),
+        })
     };
     state.set_diff_reference(diff_ref_str);
 
@@ -311,16 +363,7 @@ fn run_app_internal(
                                         state.sidebar_selected = idx;
                                         let visible_height =
                                             terminal.size()?.height.saturating_sub(5) as usize;
-                                        if state.sidebar_selected
-                                            >= state.sidebar_scroll + visible_height
-                                        {
-                                            state.sidebar_scroll = state
-                                                .sidebar_selected
-                                                .saturating_sub(visible_height)
-                                                + 1;
-                                        } else if state.sidebar_selected < state.sidebar_scroll {
-                                            state.sidebar_scroll = state.sidebar_selected;
-                                        }
+                                        ensure_sidebar_visible(&mut state, visible_height);
                                     }
                                     active_modal = None;
                                 }
@@ -366,20 +409,11 @@ fn run_app_internal(
                                     state.remove_annotation(file_index, hunk_index);
                                     // Refresh the modal if there are still annotations
                                     if !state.annotations.is_empty() {
-                                        // Sort by creation time ascending
                                         let mut sorted_annotations = state.annotations.clone();
                                         sorted_annotations.sort_by_key(|a| a.created_at);
                                         let items: Vec<String> = sorted_annotations
                                             .iter()
-                                            .map(|a| {
-                                                let preview = a.content.lines().next().unwrap_or("");
-                                                let preview = if preview.len() > 40 {
-                                                    format!("{}...", &preview[..40])
-                                                } else {
-                                                    preview.to_string()
-                                                };
-                                                format!("{}:{}-{} | {} | {}", a.filename, a.line_range.0, a.line_range.1, preview, a.format_time())
-                                            })
+                                            .map(format_annotation_preview)
                                             .collect();
                                         active_modal = Some(Modal::annotations("Annotations", items, sorted_annotations));
                                     } else {
@@ -435,44 +469,18 @@ fn run_app_internal(
                         MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
                             // Check for stacked mode header arrow clicks
                             if state.stacked_mode && mouse.row < header_height {
-                                // Left arrow click (first 4 columns to cover " ‹ ")
+                                // Left arrow click (first 4 columns to cover " < ")
                                 if mouse.column < 4 && state.current_commit_index > 0 {
-                                    // Save viewed files for current commit before switching
-                                    state.save_stacked_viewed_files();
-                                    state.current_commit_index -= 1;
-                                    if let Some(commit) =
-                                        state.stacked_commits.get(state.current_commit_index)
-                                    {
-                                        let file_diffs = load_single_commit_diffs(
-                                            &commit.commit_id,
-                                            &options.file,
-                                            backend,
-                                        );
-                                        state.reload(file_diffs, None);
-                                        // Load viewed files for new commit
-                                        state.load_stacked_viewed_files();
-                                    }
+                                    let new_index = state.current_commit_index - 1;
+                                    navigate_stacked_commit(&mut state, new_index, &options, backend);
                                 }
-                                // Right arrow click (last 4 columns to cover " › ")
+                                // Right arrow click (last 4 columns to cover " > ")
                                 else if mouse.column >= term_size.width.saturating_sub(4)
                                     && state.current_commit_index
                                         < state.stacked_commits.len().saturating_sub(1)
                                 {
-                                    // Save viewed files for current commit before switching
-                                    state.save_stacked_viewed_files();
-                                    state.current_commit_index += 1;
-                                    if let Some(commit) =
-                                        state.stacked_commits.get(state.current_commit_index)
-                                    {
-                                        let file_diffs = load_single_commit_diffs(
-                                            &commit.commit_id,
-                                            &options.file,
-                                            backend,
-                                        );
-                                        state.reload(file_diffs, None);
-                                        // Load viewed files for new commit
-                                        state.load_stacked_viewed_files();
-                                    }
+                                    let new_index = state.current_commit_index + 1;
+                                    navigate_stacked_commit(&mut state, new_index, &options, backend);
                                 }
                             } else if state.show_sidebar
                                 && mouse.column < sidebar_width
@@ -614,16 +622,7 @@ fn run_app_internal(
                                         state.select_file(*file_index);
                                         let visible_height =
                                             terminal.size()?.height.saturating_sub(5) as usize;
-                                        if state.sidebar_selected
-                                            >= state.sidebar_scroll + visible_height
-                                        {
-                                            state.sidebar_scroll = state
-                                                .sidebar_selected
-                                                .saturating_sub(visible_height)
-                                                + 1;
-                                        } else if state.sidebar_selected < state.sidebar_scroll {
-                                            state.sidebar_scroll = state.sidebar_selected;
-                                        }
+                                        ensure_sidebar_visible(&mut state, visible_height);
                                         break;
                                     }
                                     next += 1;
@@ -639,9 +638,7 @@ fn run_app_internal(
                                     {
                                         state.sidebar_selected = prev;
                                         state.select_file(*file_index);
-                                        if state.sidebar_selected < state.sidebar_scroll {
-                                            state.sidebar_scroll = state.sidebar_selected;
-                                        }
+                                        ensure_sidebar_visible(&mut state, usize::MAX);
                                         break;
                                     }
                                     if prev == 0 {
@@ -656,41 +653,15 @@ fn run_app_internal(
                             if state.stacked_mode
                                 && state.current_commit_index < state.stacked_commits.len() - 1
                             {
-                                // Save viewed files for current commit before switching
-                                state.save_stacked_viewed_files();
-                                state.current_commit_index += 1;
-                                if let Some(commit) =
-                                    state.stacked_commits.get(state.current_commit_index)
-                                {
-                                    let file_diffs = load_single_commit_diffs(
-                                        &commit.commit_id,
-                                        &options.file,
-                                        backend,
-                                    );
-                                    state.reload(file_diffs, None);
-                                    // Load viewed files for new commit
-                                    state.load_stacked_viewed_files();
-                                }
+                                let new_index = state.current_commit_index + 1;
+                                navigate_stacked_commit(&mut state, new_index, &options, backend);
                             }
                         }
                         // Stacked mode: navigate to previous commit
                         KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                             if state.stacked_mode && state.current_commit_index > 0 {
-                                // Save viewed files for current commit before switching
-                                state.save_stacked_viewed_files();
-                                state.current_commit_index -= 1;
-                                if let Some(commit) =
-                                    state.stacked_commits.get(state.current_commit_index)
-                                {
-                                    let file_diffs = load_single_commit_diffs(
-                                        &commit.commit_id,
-                                        &options.file,
-                                        backend,
-                                    );
-                                    state.reload(file_diffs, None);
-                                    // Load viewed files for new commit
-                                    state.load_stacked_viewed_files();
-                                }
+                                let new_index = state.current_commit_index - 1;
+                                navigate_stacked_commit(&mut state, new_index, &options, backend);
                             }
                         }
                         KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -788,10 +759,7 @@ fn run_app_internal(
                                 }
                                 let visible_height =
                                     terminal.size()?.height.saturating_sub(5) as usize;
-                                if state.sidebar_selected >= state.sidebar_scroll + visible_height {
-                                    state.sidebar_scroll =
-                                        state.sidebar_selected.saturating_sub(visible_height) + 1;
-                                }
+                                ensure_sidebar_visible(&mut state, visible_height);
                             } else {
                                 state.scroll = (state.scroll + 1).min(max_scroll as u16);
                             }
@@ -814,9 +782,7 @@ fn run_app_internal(
                                         prev -= 1;
                                     }
                                 }
-                                if state.sidebar_selected < state.sidebar_scroll {
-                                    state.sidebar_scroll = state.sidebar_selected;
-                                }
+                                ensure_sidebar_visible(&mut state, usize::MAX);
                             } else {
                                 state.scroll = state.scroll.saturating_sub(1);
                             }
@@ -966,16 +932,7 @@ fn run_app_internal(
                                         state.select_file(file_idx);
                                         let visible_height =
                                             terminal.size()?.height.saturating_sub(5) as usize;
-                                        if state.sidebar_selected
-                                            >= state.sidebar_scroll + visible_height
-                                        {
-                                            state.sidebar_scroll = state
-                                                .sidebar_selected
-                                                .saturating_sub(visible_height)
-                                                + 1;
-                                        } else if state.sidebar_selected < state.sidebar_scroll {
-                                            state.sidebar_scroll = state.sidebar_selected;
-                                        }
+                                        ensure_sidebar_visible(&mut state, visible_height);
                                     }
                                 }
 
@@ -1121,20 +1078,11 @@ fn run_app_internal(
                         KeyCode::Char('I') => {
                             // Open annotations menu
                             if !state.annotations.is_empty() {
-                                // Sort by creation time ascending
                                 let mut sorted_annotations = state.annotations.clone();
                                 sorted_annotations.sort_by_key(|a| a.created_at);
                                 let items: Vec<String> = sorted_annotations
                                     .iter()
-                                    .map(|a| {
-                                        let preview = a.content.lines().next().unwrap_or("");
-                                        let preview = if preview.len() > 40 {
-                                            format!("{}...", &preview[..40])
-                                        } else {
-                                            preview.to_string()
-                                        };
-                                        format!("{}:{}-{} | {} | {}", a.filename, a.line_range.0, a.line_range.1, preview, a.format_time())
-                                    })
+                                    .map(format_annotation_preview)
                                     .collect();
                                 active_modal = Some(Modal::annotations("Annotations", items, sorted_annotations));
                             }

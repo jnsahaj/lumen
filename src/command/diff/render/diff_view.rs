@@ -83,32 +83,16 @@ fn render_stacked_header(
     };
 
     // Build center spans: [vcs] [1/6] [id] message
+    let badge_style = Style::default().bg(t.ui.footer_branch_bg);
+    let spacer_style = Style::default().bg(bg);
     let center_spans = vec![
-        Span::styled(
-            vcs_indicator.clone(),
-            Style::default()
-                .fg(t.ui.text_muted)
-                .bg(t.ui.footer_branch_bg),
-        ),
-        Span::styled(" ", Style::default().bg(bg)),
-        Span::styled(
-            nav_indicator.clone(),
-            Style::default()
-                .fg(t.ui.highlight)
-                .bg(t.ui.footer_branch_bg),
-        ),
-        Span::styled(" ", Style::default().bg(bg)),
-        Span::styled(
-            id_label.clone(),
-            Style::default()
-                .fg(t.ui.footer_branch_fg)
-                .bg(t.ui.footer_branch_bg),
-        ),
-        Span::styled("  ", Style::default().bg(bg)),
-        Span::styled(
-            truncated_msg.clone(),
-            Style::default().fg(t.ui.text_secondary).bg(bg),
-        ),
+        Span::styled(&vcs_indicator, badge_style.fg(t.ui.text_muted)),
+        Span::styled(" ", spacer_style),
+        Span::styled(&nav_indicator, badge_style.fg(t.ui.highlight)),
+        Span::styled(" ", spacer_style),
+        Span::styled(&id_label, badge_style.fg(t.ui.footer_branch_fg)),
+        Span::styled("  ", spacer_style),
+        Span::styled(&truncated_msg, Style::default().fg(t.ui.text_secondary).bg(bg)),
     ];
 
     // Calculate widths for centering
@@ -484,7 +468,6 @@ pub fn compute_line_stats(side_by_side: &[DiffLine]) -> LineStats {
             ChangeType::Insert => added += 1,
             ChangeType::Delete => removed += 1,
             ChangeType::Modified => {
-                // A modified line counts as both a removal and an addition
                 added += 1;
                 removed += 1;
             }
@@ -492,6 +475,55 @@ pub fn compute_line_stats(side_by_side: &[DiffLine]) -> LineStats {
         }
     }
     LineStats { added, removed }
+}
+
+/// Style configuration for rendering a diff line's gutter and background.
+struct DiffLineStyle {
+    old_bg: Option<Color>,
+    old_gutter_bg: Option<Color>,
+    old_gutter_fg: Option<Color>,
+    new_bg: Option<Color>,
+    new_gutter_bg: Option<Color>,
+    new_gutter_fg: Option<Color>,
+}
+
+impl DiffLineStyle {
+    fn for_change_type(change_type: ChangeType, bg: Color, t: &crate::command::diff::theme::Theme) -> Self {
+        match change_type {
+            ChangeType::Equal => Self {
+                old_bg: Some(bg),
+                old_gutter_bg: Some(bg),
+                old_gutter_fg: Some(t.ui.line_number),
+                new_bg: Some(bg),
+                new_gutter_bg: Some(bg),
+                new_gutter_fg: Some(t.ui.line_number),
+            },
+            ChangeType::Delete => Self {
+                old_bg: Some(t.diff.deleted_bg),
+                old_gutter_bg: Some(t.diff.deleted_gutter_bg),
+                old_gutter_fg: Some(t.diff.deleted_gutter_fg),
+                new_bg: None,
+                new_gutter_bg: None,
+                new_gutter_fg: None,
+            },
+            ChangeType::Insert => Self {
+                old_bg: None,
+                old_gutter_bg: None,
+                old_gutter_fg: None,
+                new_bg: Some(t.diff.added_bg),
+                new_gutter_bg: Some(t.diff.added_gutter_bg),
+                new_gutter_fg: Some(t.diff.added_gutter_fg),
+            },
+            ChangeType::Modified => Self {
+                old_bg: Some(t.diff.deleted_bg),
+                old_gutter_bg: Some(t.diff.deleted_gutter_bg),
+                old_gutter_fg: Some(t.diff.deleted_gutter_fg),
+                new_bg: Some(t.diff.added_bg),
+                new_gutter_bg: Some(t.diff.added_gutter_bg),
+                new_gutter_fg: Some(t.diff.added_gutter_fg),
+            },
+        }
+    }
 }
 
 pub fn render_empty_state(frame: &mut Frame, watching: bool) {
@@ -1094,41 +1126,7 @@ pub fn render_diff(
         for (i, diff_line) in visible_lines.iter().enumerate() {
             let line_idx = scroll_usize + i;
             let in_focused = is_in_focused_hunk(line_idx, diff_line.change_type);
-            let (old_bg, old_gutter_bg, old_gutter_fg, new_bg, new_gutter_bg, new_gutter_fg) =
-                match diff_line.change_type {
-                    ChangeType::Equal => (
-                        Some(bg),               // old_bg: Set to theme background
-                        Some(bg),               // old_gutter_bg
-                        Some(t.ui.line_number), // old_gutter_fg
-                        Some(bg),               // new_bg: Set to theme background
-                        Some(bg),               // new_gutter_bg
-                        Some(t.ui.line_number), // new_gutter_
-                    ),
-                    ChangeType::Delete => (
-                        Some(t.diff.deleted_bg),
-                        Some(t.diff.deleted_gutter_bg),
-                        Some(t.diff.deleted_gutter_fg),
-                        None,
-                        None,
-                        None,
-                    ),
-                    ChangeType::Insert => (
-                        None,
-                        None,
-                        None,
-                        Some(t.diff.added_bg),
-                        Some(t.diff.added_gutter_bg),
-                        Some(t.diff.added_gutter_fg),
-                    ),
-                    ChangeType::Modified => (
-                        Some(t.diff.deleted_bg),
-                        Some(t.diff.deleted_gutter_bg),
-                        Some(t.diff.deleted_gutter_fg),
-                        Some(t.diff.added_bg),
-                        Some(t.diff.added_gutter_bg),
-                        Some(t.diff.added_gutter_fg),
-                    ),
-                };
+            let style = DiffLineStyle::for_change_type(diff_line.change_type, bg, t);
 
             let focus_indicator = if in_focused { "▎" } else { " " };
             let focus_style = Style::default().fg(t.ui.border_focused);
@@ -1142,8 +1140,8 @@ pub fn render_diff(
                         old_spans.push(Span::styled(
                             prefix,
                             Style::default()
-                                .fg(old_gutter_fg.unwrap_or(t.ui.line_number))
-                                .bg(old_gutter_bg.unwrap_or(Color::Reset)),
+                                .fg(style.old_gutter_fg.unwrap_or(t.ui.line_number))
+                                .bg(style.old_gutter_bg.unwrap_or(Color::Reset)),
                         ));
                         let matches = search_state.get_matches_for_line(line_idx, MatchPanel::Old);
 
@@ -1154,7 +1152,7 @@ pub fn render_diff(
                                 old_spans.extend(apply_word_emphasis_highlight(
                                     _text,
                                     &diff.filename,
-                                    old_bg,
+                                    style.old_bg,
                                     t.diff.deleted_word_bg,
                                     &emphasis_ranges,
                                     &matches,
@@ -1166,7 +1164,7 @@ pub fn render_diff(
                                 old_spans.extend(apply_search_highlight(
                                     _text,
                                     &diff.filename,
-                                    old_bg,
+                                    style.old_bg,
                                     &matches,
                                     Some(&old_highlighter),
                                     Some(*num),
@@ -1177,7 +1175,7 @@ pub fn render_diff(
                             old_spans.extend(apply_search_highlight(
                                 _text,
                                 &diff.filename,
-                                old_bg,
+                                style.old_bg,
                                 &matches,
                                 Some(&old_highlighter),
                                 Some(*num),
@@ -1213,8 +1211,8 @@ pub fn render_diff(
                         new_spans.push(Span::styled(
                             prefix,
                             Style::default()
-                                .fg(new_gutter_fg.unwrap_or(t.ui.line_number))
-                                .bg(new_gutter_bg.unwrap_or(Color::Reset)),
+                                .fg(style.new_gutter_fg.unwrap_or(t.ui.line_number))
+                                .bg(style.new_gutter_bg.unwrap_or(Color::Reset)),
                         ));
                         let matches = search_state.get_matches_for_line(line_idx, MatchPanel::New);
 
@@ -1225,7 +1223,7 @@ pub fn render_diff(
                                 new_spans.extend(apply_word_emphasis_highlight(
                                     _text,
                                     &diff.filename,
-                                    new_bg,
+                                    style.new_bg,
                                     t.diff.added_word_bg,
                                     &emphasis_ranges,
                                     &matches,
@@ -1237,7 +1235,7 @@ pub fn render_diff(
                                 new_spans.extend(apply_search_highlight(
                                     _text,
                                     &diff.filename,
-                                    new_bg,
+                                    style.new_bg,
                                     &matches,
                                     Some(&new_highlighter),
                                     Some(*num),
@@ -1248,7 +1246,7 @@ pub fn render_diff(
                             new_spans.extend(apply_search_highlight(
                                 _text,
                                 &diff.filename,
-                                new_bg,
+                                style.new_bg,
                                 &matches,
                                 Some(&new_highlighter),
                                 Some(*num),
