@@ -1054,7 +1054,7 @@ pub fn render_diff(
         };
 
 
-        // Check if this line is the last changed line of a hunk (before Equal or end of visible area)
+        // Check if this line is the last changed line of a hunk (before Equal or end of hunk)
         let is_last_changed_line_of_hunk = |line_idx: usize, lines: &[&DiffLine]| -> Option<usize> {
             let current_idx_in_slice = line_idx.saturating_sub(scroll_usize);
             if current_idx_in_slice >= lines.len() {
@@ -1068,8 +1068,14 @@ pub fn render_diff(
             // Check next line
             let next_idx = current_idx_in_slice + 1;
             let is_last = if next_idx >= lines.len() {
-                // End of visible lines - check if we're at the end of file or hunk
-                true
+                // End of visible lines - only consider it "last" if the hunk actually ends here
+                if let Some(hunk_idx) = get_hunk_for_line(line_idx) {
+                    let hunk_end = hunks.get(hunk_idx + 1).copied().unwrap_or(side_by_side.len());
+                    // Check if next absolute line is at or past hunk end, or at end of file
+                    line_idx + 1 >= hunk_end || line_idx + 1 >= side_by_side.len()
+                } else {
+                    false
+                }
             } else {
                 matches!(lines[next_idx].change_type, ChangeType::Equal)
             };

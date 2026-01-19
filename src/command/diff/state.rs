@@ -221,6 +221,9 @@ impl AppState {
         self.file_diffs = file_diffs;
         self.sidebar_items = build_file_tree(&self.file_diffs);
 
+        // Clear annotations as they reference old file/hunk indices
+        self.annotations.clear();
+
         // Convert viewed filenames back to indices in the new file_diffs
         self.viewed_files = self
             .file_diffs
@@ -351,7 +354,16 @@ impl AppState {
                             let base_ref = self
                                 .diff_reference
                                 .as_ref()
-                                .and_then(|r| r.split("..").next())
+                                .and_then(|r| {
+                                    // Check for three-dot range first, then two-dot, then single ref
+                                    if let Some((base, _)) = r.split_once("...") {
+                                        Some(base)
+                                    } else if let Some((base, _)) = r.split_once("..") {
+                                        Some(base)
+                                    } else {
+                                        Some(r.as_str())
+                                    }
+                                })
                                 .unwrap_or("base");
                             if old_start == old_end {
                                 output.push_str(&format!(" (deleted from {}:L{})", base_ref, old_start));
