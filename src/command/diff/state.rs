@@ -221,8 +221,39 @@ impl AppState {
         self.file_diffs = file_diffs;
         self.sidebar_items = build_file_tree(&self.file_diffs);
 
-        // Clear annotations as they reference old file/hunk indices
-        self.annotations.clear();
+        // Update annotations: remap file indices and remove stale ones
+        // Build a map of filename -> (new_file_index, hunk_count)
+        let file_info: HashMap<&str, (usize, usize)> = self
+            .file_diffs
+            .iter()
+            .enumerate()
+            .map(|(idx, diff)| {
+                let side_by_side = compute_side_by_side(
+                    &diff.old_content,
+                    &diff.new_content,
+                    self.settings.tab_width,
+                );
+                let hunk_count = find_hunk_starts(&side_by_side).len();
+                (diff.filename.as_str(), (idx, hunk_count))
+            })
+            .collect();
+
+        // Filter and update annotations
+        self.annotations.retain_mut(|ann| {
+            if let Some(&(new_file_index, hunk_count)) = file_info.get(ann.filename.as_str()) {
+                // File still exists - check if hunk index is valid
+                if ann.hunk_index < hunk_count {
+                    ann.file_index = new_file_index;
+                    true
+                } else {
+                    // Hunk no longer exists
+                    false
+                }
+            } else {
+                // File no longer exists
+                false
+            }
+        });
 
         // Convert viewed filenames back to indices in the new file_diffs
         self.viewed_files = self
