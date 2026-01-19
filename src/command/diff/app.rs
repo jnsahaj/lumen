@@ -1299,7 +1299,7 @@ fn run_app_internal(
                                             },
                                             KeyBind {
                                                 key: "enter",
-                                                description: "Open file in diff view",
+                                                description: "Open file in diff view / toggle directory",
                                             },
                                             KeyBind {
                                                 key: "space",
