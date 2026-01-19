@@ -265,10 +265,7 @@ impl AppState {
     }
 
     pub fn toggle_directory(&mut self, dir_path: &str) {
-        let selected_path = self
-            .sidebar_item_at_visible(self.sidebar_selected)
-            .map(sidebar_item_path)
-            .map(str::to_string);
+        let selected_item = self.sidebar_item_at_visible(self.sidebar_selected).cloned();
         let collapsing = !self.collapsed_dirs.contains(dir_path);
 
         if collapsing {
@@ -280,9 +277,26 @@ impl AppState {
         self.rebuild_sidebar_visible();
 
         if collapsing {
-            if let Some(path) = selected_path {
-                if is_child_path(&path, dir_path) {
+            if let Some(item) = &selected_item {
+                let path = sidebar_item_path(item);
+                if is_child_path(path, dir_path) {
                     if let Some(idx) = self.sidebar_visible_index_for_dir(dir_path) {
+                        self.sidebar_selected = idx;
+                        return;
+                    }
+                }
+            }
+        }
+
+        if let Some(item) = selected_item {
+            match item {
+                SidebarItem::Directory { path, .. } => {
+                    if let Some(idx) = self.sidebar_visible_index_for_dir(&path) {
+                        self.sidebar_selected = idx;
+                    }
+                }
+                SidebarItem::File { file_index, .. } => {
+                    if let Some(idx) = self.sidebar_visible_index_for_file(file_index) {
                         self.sidebar_selected = idx;
                     }
                 }
