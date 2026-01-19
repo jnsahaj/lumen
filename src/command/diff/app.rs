@@ -295,6 +295,10 @@ fn run_app_internal(
                             state.set_annotation(annotation);
                             annotation_editor = None;
                         }
+                        AnnotationEditorResult::Delete => {
+                            state.remove_annotation(editor.file_index, editor.hunk_index);
+                            annotation_editor = None;
+                        }
                         AnnotationEditorResult::Cancel => {
                             annotation_editor = None;
                         }

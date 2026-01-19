@@ -16,6 +16,8 @@ pub enum AnnotationEditorResult {
     Save(String),
     /// Cancel editing
     Cancel,
+    /// Delete the annotation (when editing an existing annotation and content is emptied)
+    Delete,
 }
 
 /// A modal editor for creating/editing hunk annotations
@@ -79,7 +81,11 @@ impl<'a> AnnotationEditor<'a> {
             KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 let content = self.textarea.lines().join("\n");
                 if content.trim().is_empty() {
-                    AnnotationEditorResult::Cancel
+                    if self.is_edit {
+                        AnnotationEditorResult::Delete
+                    } else {
+                        AnnotationEditorResult::Cancel
+                    }
                 } else {
                     AnnotationEditorResult::Save(content)
                 }
@@ -95,7 +101,11 @@ impl<'a> AnnotationEditor<'a> {
                     // Plain Enter = save
                     let content = self.textarea.lines().join("\n");
                     if content.trim().is_empty() {
-                        AnnotationEditorResult::Cancel
+                        if self.is_edit {
+                            AnnotationEditorResult::Delete
+                        } else {
+                            AnnotationEditorResult::Cancel
+                        }
                     } else {
                         AnnotationEditorResult::Save(content)
                     }
@@ -110,6 +120,12 @@ impl<'a> AnnotationEditor<'a> {
 
             // Cmd+Backspace (macOS): delete from cursor to beginning of line
             KeyCode::Backspace if key.modifiers.contains(KeyModifiers::SUPER) => {
+                self.textarea.delete_line_by_head();
+                AnnotationEditorResult::Continue
+            }
+
+            // Ctrl+U: delete from cursor to beginning of line (Unix standard, works in all terminals)
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.textarea.delete_line_by_head();
                 AnnotationEditorResult::Continue
             }
