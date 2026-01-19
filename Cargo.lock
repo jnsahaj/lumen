@@ -2789,7 +2789,7 @@ dependencies = [
 
 [[package]]
 name = "lumen"
-version = "2.17.2"
+version = "2.17.3"
 dependencies = [
  "arboard",
  "chrono",
