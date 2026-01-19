@@ -1,7 +1,7 @@
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, Clear, List, ListItem, Paragraph},
+    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
 };
 
 use crate::command::diff::state::HunkAnnotation;
@@ -47,6 +47,8 @@ pub enum ModalContent {
     KeyBindings {
         title: String,
         sections: Vec<KeyBindSection>,
+        scroll: u16,
+        content_height: u16,
     },
     FilePicker {
         title: String,
@@ -106,10 +108,16 @@ impl Modal {
     }
 
     pub fn keybindings(title: impl Into<String>, sections: Vec<KeyBindSection>) -> Self {
+        let content_height: u16 = sections
+            .iter()
+            .map(|s| s.bindings.len() as u16 + 2) // +2 for section title and spacing
+            .sum();
         Self {
             content: ModalContent::KeyBindings {
                 title: title.into(),
                 sections,
+                scroll: 0,
+                content_height,
             },
         }
     }
@@ -206,8 +214,8 @@ impl Modal {
             } => {
                 self.render_select(frame, modal_area, title, items, *selected);
             }
-            ModalContent::KeyBindings { title, sections } => {
-                self.render_keybindings(frame, modal_area, title, sections);
+            ModalContent::KeyBindings { title, sections, scroll, content_height } => {
+                self.render_keybindings(frame, modal_area, title, sections, *scroll, *content_height);
             }
             ModalContent::FilePicker {
                 title,
@@ -302,6 +310,8 @@ impl Modal {
         area: Rect,
         title: &str,
         sections: &[KeyBindSection],
+        scroll: u16,
+        content_height: u16,
     ) {
         let t = theme::get();
         let block = Block::default()
@@ -343,8 +353,26 @@ impl Modal {
             }
         }
 
-        let para = Paragraph::new(lines);
-        frame.render_widget(para, inner);
+        // Reserve space for scrollbar on the right
+        let content_area = Rect::new(inner.x, inner.y, inner.width.saturating_sub(1), inner.height);
+
+        let para = Paragraph::new(lines).scroll((scroll, 0));
+        frame.render_widget(para, content_area);
+
+        // Render scrollbar if content exceeds visible area
+        let visible_height = inner.height;
+        if content_height > visible_height {
+            let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(None)
+                .end_symbol(None)
+                .track_symbol(Some("│"))
+                .thumb_symbol("█");
+
+            let mut scrollbar_state = ScrollbarState::new(content_height.saturating_sub(visible_height) as usize)
+                .position(scroll as usize);
+
+            frame.render_stateful_widget(scrollbar, inner, &mut scrollbar_state);
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -640,9 +668,32 @@ impl Modal {
         frame.render_widget(footer, footer_area);
     }
 
+    /// Handle mouse scroll for the modal.
+    /// Returns true if the scroll was handled.
+    pub fn handle_mouse(&mut self, mouse: MouseEvent, terminal_height: u16) -> bool {
+        if let ModalContent::KeyBindings { scroll, content_height, .. } = &mut self.content {
+            let visible_height = calculate_keybindings_visible_height(terminal_height, *content_height);
+            let max_scroll = content_height.saturating_sub(visible_height);
+
+            match mouse.kind {
+                MouseEventKind::ScrollDown => {
+                    *scroll = (*scroll + 3).min(max_scroll);
+                    true
+                }
+                MouseEventKind::ScrollUp => {
+                    *scroll = scroll.saturating_sub(3);
+                    true
+                }
+                _ => false,
+            }
+        } else {
+            false
+        }
+    }
+
     /// Handle keyboard input for the modal.
     /// Returns Some(ModalResult) if the modal should close.
-    pub fn handle_input(&mut self, key: KeyEvent) -> Option<ModalResult> {
+    pub fn handle_input(&mut self, key: KeyEvent, terminal_height: u16) -> Option<ModalResult> {
         // FilePicker and Annotations handle their own dismiss logic
         if !matches!(
             self.content,
@@ -685,11 +736,42 @@ impl Modal {
                 }
                 _ => None,
             },
-            ModalContent::KeyBindings { .. } => {
-                if key.code == KeyCode::Enter {
-                    return Some(ModalResult::Dismissed);
+            ModalContent::KeyBindings { scroll, content_height, .. } => {
+                let visible_height = calculate_keybindings_visible_height(terminal_height, *content_height);
+                let max_scroll = content_height.saturating_sub(visible_height);
+
+                match key.code {
+                    KeyCode::Enter => Some(ModalResult::Dismissed),
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        *scroll = (*scroll + 1).min(max_scroll);
+                        None
+                    }
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        *scroll = scroll.saturating_sub(1);
+                        None
+                    }
+                    KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        // Half-page down
+                        *scroll = (*scroll + visible_height / 2).min(max_scroll);
+                        None
+                    }
+                    KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        // Half-page up
+                        *scroll = scroll.saturating_sub(visible_height / 2);
+                        None
+                    }
+                    KeyCode::Char('g') => {
+                        // Go to top
+                        *scroll = 0;
+                        None
+                    }
+                    KeyCode::Char('G') => {
+                        // Go to bottom
+                        *scroll = max_scroll;
+                        None
+                    }
+                    _ => None,
                 }
-                None
             }
             ModalContent::FilePicker {
                 items,
@@ -874,4 +956,12 @@ fn fuzzy_match(text: &str, pattern: &str) -> bool {
         }
     }
     pattern_chars.peek().is_none()
+}
+
+/// Calculate visible height for keybindings modal based on terminal size.
+fn calculate_keybindings_visible_height(terminal_height: u16, content_height: u16) -> u16 {
+    // Modal height calculation from render: (total_lines + 4).min(height * 80 / 100).max(5)
+    let modal_height = (content_height + 4).min(terminal_height * 80 / 100).max(5);
+    // Subtract 2 for top/bottom borders
+    modal_height.saturating_sub(2)
 }

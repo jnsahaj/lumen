@@ -300,7 +300,8 @@ fn run_app_internal(
                 }
                 Event::Key(key) if key.kind == KeyEventKind::Press && active_modal.is_some() => {
                     if let Some(ref mut modal) = active_modal {
-                        if let Some(result) = modal.handle_input(key) {
+                        let term_height = terminal.size()?.height;
+                        if let Some(result) = modal.handle_input(key, term_height) {
                             match result {
                                 ModalResult::FileSelected(file_index) => {
                                     state.select_file(file_index);
@@ -416,6 +417,12 @@ fn run_app_internal(
                                 }
                             }
                         }
+                    }
+                }
+                Event::Mouse(mouse) if active_modal.is_some() => {
+                    if let Some(ref mut modal) = active_modal {
+                        let term_height = terminal.size()?.height;
+                        modal.handle_mouse(mouse, term_height);
                     }
                 }
                 Event::Mouse(mouse) if active_modal.is_none() => {
