@@ -555,7 +555,6 @@ fn render_annotation_overlays(
     frame: &mut Frame,
     overlays: &[(usize, &HunkAnnotation)],
     area: Rect,
-    context_count: usize,
     bg: Color,
     t: &crate::command::diff::theme::Theme,
 ) {
@@ -564,7 +563,7 @@ fn render_annotation_overlays(
     let content_width = area.width.saturating_sub(2);
 
     for (line_pos, annotation) in overlays {
-        let screen_y = content_start_y + *line_pos as u16 + context_count as u16;
+        let screen_y = content_start_y + *line_pos as u16;
         let content_lines: Vec<&str> = annotation.content.lines().collect();
         let num_lines = content_lines.len() + 2;
 
@@ -776,8 +775,21 @@ pub fn render_diff(
             settings.tab_width,
         );
         let context_count = new_context.len();
-        let content_height = visible_height.saturating_sub(context_count);
         let scroll_usize = scroll as usize;
+
+        // Check if there's an annotation for this file (hunk 0 for new files)
+        let annotation = annotations
+            .iter()
+            .find(|a| a.file_index == current_file && a.hunk_index == 0);
+
+        // Calculate how much space we need for annotation (shown at top)
+        let annotation_height = annotation
+            .map(|a| a.content.lines().count() + 2)
+            .unwrap_or(0);
+
+        // Reserve space for annotation at top
+        let base_content_height = visible_height.saturating_sub(context_count);
+        let content_height = base_content_height.saturating_sub(annotation_height);
 
         let visible_lines: Vec<&DiffLine> = side_by_side
             .iter()
@@ -797,6 +809,17 @@ pub fn render_diff(
                 &new_highlighter,
                 settings.tab_width,
             );
+        }
+
+        // For new files, show annotation at top (after context lines)
+        if let Some(annotation) = annotation {
+            let content_lines: Vec<&str> = annotation.content.lines().collect();
+            let num_lines = content_lines.len() + 2;
+            let annotation_start = new_lines.len();
+            for _ in 0..num_lines {
+                new_lines.push(Line::from(vec![Span::raw("")]));
+            }
+            annotation_overlays.push((annotation_start, annotation));
         }
 
         for (i, diff_line) in visible_lines.iter().enumerate() {
@@ -823,19 +846,6 @@ pub fn render_diff(
             }
         }
 
-        // For new files, there's only one hunk (index 0) - show annotation at bottom
-        if let Some(annotation) = annotations
-            .iter()
-            .find(|a| a.file_index == current_file && a.hunk_index == 0)
-        {
-            let content_lines: Vec<&str> = annotation.content.lines().collect();
-            let num_lines = content_lines.len() + 2;
-            for _ in 0..num_lines {
-                new_lines.push(Line::from(vec![Span::raw("")]));
-            }
-            annotation_overlays.push((new_lines.len() - num_lines, annotation));
-        }
-
         let new_para = Paragraph::new(new_lines).scroll((0, h_scroll)).block(
             Block::default()
                 .title(Line::styled(" [2] New File ", title_style))
@@ -845,14 +855,7 @@ pub fn render_diff(
         frame.render_widget(new_para, main_area);
 
         // Render annotation overlays
-        render_annotation_overlays(
-            frame,
-            &annotation_overlays,
-            main_area,
-            context_count,
-            bg,
-            t,
-        );
+        render_annotation_overlays(frame, &annotation_overlays, main_area, bg, t);
     } else if is_deleted_file {
         let visible_height = main_area.height.saturating_sub(2) as usize;
         let old_context = compute_context_lines(
@@ -863,8 +866,21 @@ pub fn render_diff(
             settings.tab_width,
         );
         let context_count = old_context.len();
-        let content_height = visible_height.saturating_sub(context_count);
         let scroll_usize = scroll as usize;
+
+        // Check if there's an annotation for this file (hunk 0 for deleted files)
+        let annotation = annotations
+            .iter()
+            .find(|a| a.file_index == current_file && a.hunk_index == 0);
+
+        // Calculate how much space we need for annotation (shown at top)
+        let annotation_height = annotation
+            .map(|a| a.content.lines().count() + 2)
+            .unwrap_or(0);
+
+        // Reserve space for annotation at top
+        let base_content_height = visible_height.saturating_sub(context_count);
+        let content_height = base_content_height.saturating_sub(annotation_height);
 
         let visible_lines: Vec<&DiffLine> = side_by_side
             .iter()
@@ -884,6 +900,17 @@ pub fn render_diff(
                 &old_highlighter,
                 settings.tab_width,
             );
+        }
+
+        // For deleted files, show annotation at top (after context lines)
+        if let Some(annotation) = annotation {
+            let content_lines: Vec<&str> = annotation.content.lines().collect();
+            let num_lines = content_lines.len() + 2;
+            let annotation_start = old_lines.len();
+            for _ in 0..num_lines {
+                old_lines.push(Line::from(vec![Span::raw("")]));
+            }
+            annotation_overlays.push((annotation_start, annotation));
         }
 
         for (i, diff_line) in visible_lines.iter().enumerate() {
@@ -910,19 +937,6 @@ pub fn render_diff(
             }
         }
 
-        // For deleted files, there's only one hunk (index 0) - show annotation at bottom
-        if let Some(annotation) = annotations
-            .iter()
-            .find(|a| a.file_index == current_file && a.hunk_index == 0)
-        {
-            let content_lines: Vec<&str> = annotation.content.lines().collect();
-            let num_lines = content_lines.len() + 2;
-            for _ in 0..num_lines {
-                old_lines.push(Line::from(vec![Span::raw("")]));
-            }
-            annotation_overlays.push((old_lines.len() - num_lines, annotation));
-        }
-
         let old_para = Paragraph::new(old_lines).scroll((0, h_scroll)).block(
             Block::default()
                 .title(Line::styled(" [2] Deleted File ", title_style))
@@ -932,14 +946,7 @@ pub fn render_diff(
         frame.render_widget(old_para, main_area);
 
         // Render annotation overlays
-        render_annotation_overlays(
-            frame,
-            &annotation_overlays,
-            main_area,
-            context_count,
-            bg,
-            t,
-        );
+        render_annotation_overlays(frame, &annotation_overlays, main_area, bg, t);
     } else {
         let (old_area, new_area) = match diff_fullscreen {
             DiffFullscreen::OldOnly => (Some(main_area), None),
@@ -1316,7 +1323,7 @@ pub fn render_diff(
         };
 
         for (line_pos, annotation) in annotation_overlays {
-            let screen_y = content_start_y + line_pos as u16 + context_count as u16;
+            let screen_y = content_start_y + line_pos as u16;
             let content_lines: Vec<&str> = annotation.content.lines().collect();
             let num_lines = content_lines.len() + 2; // +2 for top and bottom borders
 
