@@ -83,6 +83,11 @@ impl<'a> AnnotationEditor<'a> {
             // Escape: cancel
             KeyCode::Esc => AnnotationEditorResult::Cancel,
 
+            // Ctrl+C: cancel
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                AnnotationEditorResult::Cancel
+            }
+
             // Ctrl+S: save
             KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 let content = self.textarea.lines().join("\n");
