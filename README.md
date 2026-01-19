@@ -33,7 +33,7 @@ A command-line tool that uses AI to streamline your git workflow - generate comm
 - **Git History Insights**: Understand what changed in any commit, branch, or your current work
 - **Interactive Search**: Find and explore commits using fuzzy search
 - **Change Analysis**: Ask questions about specific changes and their impact
-- **Multiple AI Providers**: Supports OpenAI, Claude, Groq, Ollama, and more
+- **Multiple AI Providers**: Supports OpenAI, Claude, Groq, Poe, Ollama, and more
 - **Flexible**: Works with any git workflow and supports multiple AI providers
 - **Rich Output**: Markdown support for readable explanations and diffs (requires: mdcat)
 
@@ -298,6 +298,7 @@ export LUMEN_AI_MODEL="gpt-5-mini"
 | [OpenCode Zen](https://opencode.ai/docs/zen) `opencode-zen` | Yes | [see list](https://opencode.ai/docs/zen#models) (default: `claude-sonnet-4-5`) |
 | [Ollama](https://github.com/ollama/ollama) `ollama` | No (local) | [see list](https://ollama.com/library) (default: `llama3.2`) |
 | [OpenRouter](https://openrouter.ai/) `openrouter` | Yes | [see list](https://openrouter.ai/models) (default: `anthropic/claude-sonnet-4.5`) |
+| [Poe](https://creator.poe.com/docs/external-applications/openai-compatible-api) `poe` | Yes | [see list](https://poe.com/api/models) (default: `claude-sonnet-4.5`) |
 | [Vercel AI Gateway](https://vercel.com/docs/ai-gateway) `vercel` | Yes | [see list](https://vercel.com/docs/ai-gateway/supported-models) (default: `anthropic/claude-sonnet-4.5`) |
 
 ## Advanced Configuration 🔅
