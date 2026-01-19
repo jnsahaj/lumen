@@ -81,8 +81,6 @@ pub enum ModalResult {
     AnnotationDelete { file_index: usize, hunk_index: usize },
     AnnotationCopyAll,
     AnnotationExport(String),
-    /// Export failed with an error message - keeps modal open to retry
-    AnnotationExportError(String),
 }
 
 impl Modal {

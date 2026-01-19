@@ -284,7 +284,7 @@ fn run_app_internal(
                     if let Some(editor) = annotation_editor.as_mut() {
                         match editor.handle_input(key) {
                             AnnotationEditorResult::Continue => {}
-                            AnnotationEditorResult::Save(_) => {
+                            AnnotationEditorResult::Save => {
                                 state.set_annotation(editor.to_annotation());
                                 annotation_editor = None;
                             }
@@ -408,14 +408,6 @@ fn run_app_internal(
                                                     *export_input = None; // Close input, keep modal open
                                                 }
                                             }
-                                        }
-                                    }
-                                }
-                                ModalResult::AnnotationExportError(msg) => {
-                                    // Set error message on the modal (alternative path)
-                                    if let Some(ref mut modal) = active_modal {
-                                        if let ModalContent::Annotations { error_message, .. } = &mut modal.content {
-                                            *error_message = Some(msg);
                                         }
                                     }
                                 }

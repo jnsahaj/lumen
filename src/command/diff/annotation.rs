@@ -14,8 +14,8 @@ use super::theme;
 pub enum AnnotationEditorResult {
     /// Continue editing
     Continue,
-    /// Save the annotation with the given content
-    Save(String),
+    /// Save the annotation
+    Save,
     /// Cancel editing
     Cancel,
     /// Delete the annotation (when editing an existing annotation and content is emptied)
@@ -98,7 +98,7 @@ impl<'a> AnnotationEditor<'a> {
                         AnnotationEditorResult::Cancel
                     }
                 } else {
-                    AnnotationEditorResult::Save(content)
+                    AnnotationEditorResult::Save
                 }
             }
 
@@ -118,7 +118,7 @@ impl<'a> AnnotationEditor<'a> {
                             AnnotationEditorResult::Cancel
                         }
                     } else {
-                        AnnotationEditorResult::Save(content)
+                        AnnotationEditorResult::Save
                     }
                 }
             }
