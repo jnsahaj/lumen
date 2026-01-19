@@ -236,7 +236,11 @@ fn run_app_internal(
             state
                 .search_state
                 .update_matches(&side_by_side, state.diff_fullscreen);
-            let branch = get_current_branch(backend);
+            let branch_fallback = get_current_branch(backend);
+            let commit_ref = state
+                .diff_reference
+                .as_deref()
+                .unwrap_or(&branch_fallback);
             terminal.draw(|frame| {
                 render_diff(
                     frame,
@@ -257,7 +261,7 @@ fn run_app_internal(
                     hunk_count,
                     state.diff_fullscreen,
                     &state.search_state,
-                    &branch,
+                    commit_ref,
                     pr_info.as_ref(),
                     state.focused_hunk,
                     &hunks,

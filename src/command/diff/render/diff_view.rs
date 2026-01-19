@@ -679,7 +679,7 @@ pub fn render_diff(
     hunk_count: usize,
     diff_fullscreen: DiffFullscreen,
     search_state: &SearchState,
-    branch: &str,
+    commit_ref: &str,
     pr_info: Option<&PrInfo>,
     focused_hunk: Option<usize>,
     hunks: &[usize],
@@ -776,7 +776,7 @@ pub fn render_diff(
             footer_area,
             FooterData {
                 filename: &diff.filename,
-                branch,
+                commit_ref,
                 pr_info,
                 watching,
                 current_file,
@@ -1354,7 +1354,7 @@ pub fn render_diff(
         footer_area,
         FooterData {
             filename: &diff.filename,
-            branch,
+            commit_ref,
             pr_info,
             watching,
             current_file,
