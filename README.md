@@ -5,8 +5,10 @@
 ![GitHub License](https://img.shields.io/github/license/jnsahaj/lumen)
 ![Crates.io Size](https://img.shields.io/crates/size/lumen)
 
-A command-line tool that uses AI to streamline your git workflow - generate commit messages, view diff and explain changes.
-![CleanShot 2025-12-30 at 02 47 04](https://github.com/user-attachments/assets/21e9d32a-de8a-40b2-b79b-3e87c9cbb9eb)
+The missing code review tool in the era of AI coding agents. 
+![CleanShot 2025-12-30 at 02 47 04](https://github.com/user-attachments/assets/8305728f-3f69-4b1c-85b3-29bdb05ae559)
+
+87c9cbb9eb)
 
 ## Table of Contents
 - [Features](#features-)
@@ -28,11 +30,9 @@ A command-line tool that uses AI to streamline your git workflow - generate comm
 
 ## Features 🔅
 
-- **Beautiful & Ergonomic Diff Viewer**: Review your code with minimal effort
+- **Beautiful & Ergonomic Diff Viewer**: Review your code with syntax highlighting & leave comments
 - **Smart Commit Messages**: Generate conventional commit messages for your staged changes
-- **Git History Insights**: Understand what changed in any commit, branch, or your current work
 - **Interactive Search**: Find and explore commits using fuzzy search
-- **Change Analysis**: Ask questions about specific changes and their impact
 - **Multiple AI Providers**: Supports OpenAI, Claude, Groq, Ollama, and more
 - **Flexible**: Works with any git workflow and supports multiple AI providers
 - **Rich Output**: Markdown support for readable explanations and diffs (requires: mdcat)
