@@ -29,6 +29,9 @@ pub enum ProviderError {
 
     #[error(transparent)]
     AIPromptError(#[from] AIPromptError),
+
+    #[error("Background task failed: {0}")]
+    TaskError(#[from] tokio::task::JoinError),
 }
 
 enum ProviderBackend {
@@ -171,7 +174,7 @@ impl LumenProvider {
                         .map_err(ProviderError::FmError)
                 })
                 .await
-                .expect("failed to perform request to apple-intelligence")?;
+                .map_err(ProviderError::TaskError)??;
 
                 Ok(response)
             }
