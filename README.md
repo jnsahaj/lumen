@@ -45,6 +45,9 @@ Before you begin, ensure you have:
 2. [fzf](https://github.com/junegunn/fzf) (optional) - Required for `lumen explain --list` command
 3. [mdcat](https://github.com/swsnr/mdcat) (optional) - Required for pretty output formatting
 
+#### Platform Requirements
+- **macOS**: macOS Sequoia 15.1 or later on Mac with M1 chip or later is required for Apple Intelligence features. If you're on an older version of macOS, the core lumen functionality works fine—only Apple Intelligence-specific features are unavailable.
+
 ### Installation
 
 #### Using Homebrew (MacOS and Linux)

@@ -50,6 +50,8 @@ pub enum ProviderType {
     Gemini,
     Xai,
     Vercel,
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    AppleIntelligence,
 }
 
 impl FromStr for ProviderType {
@@ -67,6 +69,8 @@ impl FromStr for ProviderType {
             "gemini" => Ok(ProviderType::Gemini),
             "xai" => Ok(ProviderType::Xai),
             "vercel" => Ok(ProviderType::Vercel),
+            #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+            "apple-intelligence" => Ok(ProviderType::AppleIntelligence),
             _ => Err(format!("Unknown provider: {}", s)),
         }
     }

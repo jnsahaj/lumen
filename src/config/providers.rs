@@ -17,6 +17,14 @@ pub struct ProviderInfo {
 /// All supported providers - single source of truth.
 /// Add new providers here to make them available everywhere.
 pub const ALL_PROVIDERS: &[ProviderInfo] = &[
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    ProviderInfo {
+        id: "apple-intelligence",
+        provider_type: ProviderType::AppleIntelligence,
+        display_name: "Apple Intelligence",
+        default_model: "",
+        env_key: "",
+    },
     ProviderInfo {
         id: "openai",
         provider_type: ProviderType::Openai,
