@@ -1,4 +1,4 @@
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 use fm_bindings::LanguageModelSession;
 use genai::adapter::AdapterKind;
 use genai::chat::{ChatMessage, ChatRequest};
@@ -17,7 +17,7 @@ pub enum ProviderError {
     #[error("AI request failed: {0}")]
     GenAIError(#[from] genai::Error),
 
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     #[error("AI request failed: {0}")]
     FmError(#[from] fm_bindings::Error),
 
@@ -40,7 +40,7 @@ enum ProviderBackend {
         model: String,
     },
 
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     AppleIntelligence,
 }
 
@@ -63,7 +63,7 @@ impl LumenProvider {
         model: Option<String>,
     ) -> Result<Self, LumenError> {
         let (backend, provider_name) = match provider_type {
-            #[cfg(target_os = "macos")]
+            #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
             ProviderType::AppleIntelligence => {
                 let defaults = ProviderInfo::for_provider(provider_type);
 
@@ -161,7 +161,7 @@ impl LumenProvider {
 
     async fn complete(&self, prompt: AIPrompt) -> Result<String, ProviderError> {
         match &self.backend {
-            #[cfg(target_os = "macos")]
+            #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
             ProviderBackend::AppleIntelligence => {
                 let response = tokio::task::spawn_blocking(move || {
                     let system_prompt = prompt.system_prompt + "\ndo not use markdown syntax";
@@ -212,7 +212,7 @@ impl LumenProvider {
     fn get_model(&self) -> String {
         match &self.backend {
             ProviderBackend::GenAI { model, .. } => model.clone(),
-            #[cfg(target_os = "macos")]
+            #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
             ProviderBackend::AppleIntelligence => "Apple Intelligence".to_string(),
         }
     }
