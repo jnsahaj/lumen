@@ -51,10 +51,9 @@ impl FromStr for ThemePreset {
 
 impl ThemeMode {
     pub fn detect() -> Self {
-        match dark_light::detect() {
-            dark_light::Mode::Dark => ThemeMode::Dark,
-            dark_light::Mode::Light => ThemeMode::Light,
-            dark_light::Mode::Default => ThemeMode::Dark,
+        match terminal_light::luma() {
+            Ok(luma) if luma > 0.85 => ThemeMode::Light,
+            _ => ThemeMode::Dark,
         }
     }
 }
