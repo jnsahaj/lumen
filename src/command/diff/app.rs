@@ -589,6 +589,60 @@ fn run_app_internal(
                                 }
                             }
                         }
+                        MouseEventKind::ScrollLeft | MouseEventKind::ScrollRight => {
+                            // Coalesce consecutive horizontal scroll events
+                            let mut h_scroll_delta: i32 = match mouse.kind {
+                                MouseEventKind::ScrollRight => 4,
+                                MouseEventKind::ScrollLeft => -4,
+                                _ => 0,
+                            };
+
+                            // Coalesce horizontal scroll events
+                            while event::poll(Duration::from_millis(0))? {
+                                let next_event = event::read()?;
+                                match &next_event {
+                                    Event::Mouse(m) => match m.kind {
+                                        MouseEventKind::ScrollRight => h_scroll_delta += 4,
+                                        MouseEventKind::ScrollLeft => h_scroll_delta -= 4,
+                                        _ => {
+                                            pending_events.push_back(next_event);
+                                            break;
+                                        }
+                                    },
+                                    _ => {
+                                        pending_events.push_back(next_event);
+                                        break;
+                                    }
+                                }
+                            }
+
+                            // Apply the accumulated horizontal scroll delta
+                            let in_sidebar = state.show_sidebar
+                                && mouse.column < sidebar_width
+                                && mouse.row < term_size.height.saturating_sub(footer_height);
+                            let in_diff = mouse.column >= sidebar_width
+                                && mouse.row < term_size.height.saturating_sub(footer_height);
+
+                            if in_sidebar {
+                                if h_scroll_delta > 0 {
+                                    state.sidebar_h_scroll = state
+                                        .sidebar_h_scroll
+                                        .saturating_add(h_scroll_delta as u16);
+                                } else {
+                                    state.sidebar_h_scroll = state
+                                        .sidebar_h_scroll
+                                        .saturating_sub((-h_scroll_delta) as u16);
+                                }
+                            } else if in_diff {
+                                if h_scroll_delta > 0 {
+                                    state.h_scroll =
+                                        state.h_scroll.saturating_add(h_scroll_delta as u16);
+                                } else {
+                                    state.h_scroll =
+                                        state.h_scroll.saturating_sub((-h_scroll_delta) as u16);
+                                }
+                            }
+                        }
                         _ => {}
                     }
                 }
