@@ -6,38 +6,38 @@ use ratatui::{
 };
 
 use crate::command::diff::theme;
-use crate::command::diff::types::{FileStatus, SidebarItem};
+use crate::command::diff::types::{FilePanelItem, FileStatus};
 
 #[allow(clippy::too_many_arguments)]
-pub fn render_sidebar(
+pub fn render_file_panel(
     frame: &mut Frame,
     area: Rect,
-    sidebar_items: &[SidebarItem],
-    sidebar_visible: &[usize],
+    file_panel_items: &[FilePanelItem],
+    file_panel_visible: &[usize],
     collapsed_dirs: &HashSet<String>,
     current_file: usize,
-    sidebar_selected: usize,
-    sidebar_scroll: usize,
-    sidebar_h_scroll: u16,
+    file_panel_selected: usize,
+    file_panel_scroll: usize,
+    file_panel_h_scroll: u16,
     viewed_files: &HashSet<usize>,
     is_focused: bool,
 ) {
     let t = theme::get();
     let bg = t.ui.bg;
     let visible_height = area.height.saturating_sub(2) as usize;
-    let lines: Vec<Line> = sidebar_visible
+    let lines: Vec<Line> = file_panel_visible
         .iter()
         .enumerate()
         .map(|(i, item_idx)| {
-            let item = &sidebar_items[*item_idx];
+            let item = &file_panel_items[*item_idx];
             let (prefix, status_symbol, status_color, name, is_current_file, is_viewed) = match item
             {
-                SidebarItem::Directory {
+                FilePanelItem::Directory {
                     name, path, depth, ..
                 } => {
                     let indent = "  ".repeat(*depth);
-                    let all_children_viewed = sidebar_items.iter().all(|child| {
-                        if let SidebarItem::File {
+                    let all_children_viewed = file_panel_items.iter().all(|child| {
+                        if let FilePanelItem::File {
                             path: file_path,
                             file_index,
                             ..
@@ -49,8 +49,8 @@ pub fn render_sidebar(
                         }
                         true
                     });
-                    let has_children = sidebar_items.iter().any(|child| {
-                        if let SidebarItem::File {
+                    let has_children = file_panel_items.iter().any(|child| {
+                        if let FilePanelItem::File {
                             path: file_path, ..
                         } = child
                         {
@@ -82,7 +82,7 @@ pub fn render_sidebar(
                         all_children_viewed && has_children,
                     )
                 }
-                SidebarItem::File {
+                FilePanelItem::File {
                     name,
                     file_index,
                     depth,
@@ -109,7 +109,7 @@ pub fn render_sidebar(
                 }
             };
 
-            let is_selected = i == sidebar_selected;
+            let is_selected = i == file_panel_selected;
             let base_style = if is_selected {
                 Style::default().fg(t.ui.selection_fg).bg(if is_focused {
                     t.ui.selection_bg
@@ -149,13 +149,13 @@ pub fn render_sidebar(
 
     let visible_lines: Vec<Line> = lines
         .into_iter()
-        .skip(sidebar_scroll)
+        .skip(file_panel_scroll)
         .take(visible_height)
         .collect();
 
     let para = Paragraph::new(visible_lines)
         .style(Style::default().bg(bg))
-        .scroll((0, sidebar_h_scroll))
+        .scroll((0, file_panel_h_scroll))
         .block(
             Block::default()
                 .title(Line::styled(" [1] Files ", title_style))

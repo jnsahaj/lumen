@@ -1,3 +1,4 @@
+use crate::command::diff::types::FilePanelPosition;
 use crate::config::cli::ProviderType;
 use crate::error::LumenError;
 use dirs::home_dir;
@@ -29,6 +30,9 @@ pub struct LumenConfig {
 
     #[serde(default)]
     pub theme: Option<String>,
+
+    #[serde(default)]
+    pub file_panel_position: FilePanelPosition,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -119,6 +123,12 @@ impl LumenConfig {
         let provider = cli.provider.as_ref().cloned().unwrap_or(config.provider);
         let api_key = cli.api_key.clone().or(config.api_key);
         let model = cli.model.clone().or(config.model);
+        let file_panel_position =
+            if let crate::config::cli::Commands::Diff { file_panel_pos, .. } = &cli.command {
+                file_panel_pos.unwrap_or(config.file_panel_position)
+            } else {
+                config.file_panel_position
+            };
 
         Ok(LumenConfig {
             provider,
@@ -126,6 +136,7 @@ impl LumenConfig {
             api_key,
             draft: config.draft,
             theme: config.theme,
+            file_panel_position,
         })
     }
 
@@ -151,6 +162,7 @@ impl Default for LumenConfig {
             api_key: default_api_key(),
             draft: default_draft_config(),
             theme: None,
+            file_panel_position: FilePanelPosition::default(),
         }
     }
 }

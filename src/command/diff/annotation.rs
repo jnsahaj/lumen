@@ -67,7 +67,8 @@ impl<'a> AnnotationEditor<'a> {
 
         let t = theme::get();
         self.textarea.set_cursor_line_style(Style::default());
-        self.textarea.set_cursor_style(Style::default().bg(t.ui.text_primary).fg(t.ui.bg));
+        self.textarea
+            .set_cursor_style(Style::default().bg(t.ui.text_primary).fg(t.ui.bg));
         self.textarea.set_block(Block::default());
 
         // Move cursor to end
@@ -105,7 +106,10 @@ impl<'a> AnnotationEditor<'a> {
             // Enter handling: with modifiers = newline, without = save
             KeyCode::Enter => {
                 // Shift+Enter, Alt+Enter, or Ctrl+Enter = newline
-                if key.modifiers.intersects(KeyModifiers::SHIFT | KeyModifiers::ALT | KeyModifiers::CONTROL) {
+                if key
+                    .modifiers
+                    .intersects(KeyModifiers::SHIFT | KeyModifiers::ALT | KeyModifiers::CONTROL)
+                {
                     self.textarea.insert_char('\n');
                     AnnotationEditorResult::Continue
                 } else {
@@ -165,18 +169,12 @@ impl<'a> AnnotationEditor<'a> {
         frame.render_widget(Clear, modal_area);
 
         // Extract just the filename without path for cleaner display
-        let short_filename = self
-            .filename
-            .rsplit('/')
-            .next()
-            .unwrap_or(&self.filename);
+        let short_filename = self.filename.rsplit('/').next().unwrap_or(&self.filename);
 
         // Compact title
         let title = format!(
             " {} · L{}-{} ",
-            short_filename,
-            self.line_range.0,
-            self.line_range.1
+            short_filename, self.line_range.0, self.line_range.1
         );
 
         let block = Block::default()

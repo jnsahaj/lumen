@@ -9,8 +9,8 @@ use crate::command::diff::diff_algo::{compute_side_by_side, find_hunk_starts};
 const MAX_EXPORT_DIFF_LINES: usize = 5;
 use crate::command::diff::search::SearchState;
 use crate::command::diff::types::{
-    build_file_tree, ChangeType, DiffFullscreen, DiffViewSettings, FileDiff, FocusedPanel,
-    SidebarItem,
+    build_file_tree, ChangeType, DiffFullscreen, DiffViewSettings, FileDiff, FilePanelItem,
+    FocusedPanel,
 };
 use crate::vcs::StackedCommitInfo;
 
@@ -21,10 +21,10 @@ pub enum PendingKey {
     G,
 }
 
-fn sidebar_item_path(item: &SidebarItem) -> &str {
+fn file_panel_item_path(item: &FilePanelItem) -> &str {
     match item {
-        SidebarItem::Directory { path, .. } => path,
-        SidebarItem::File { path, .. } => path,
+        FilePanelItem::Directory { path, .. } => path,
+        FilePanelItem::File { path, .. } => path,
     }
 }
 
@@ -35,15 +35,15 @@ fn is_child_path(path: &str, parent: &str) -> bool {
     path.starts_with(&format!("{}/", parent))
 }
 
-fn build_sidebar_visible_indices(
-    items: &[SidebarItem],
+fn build_file_panel_visible_indices(
+    items: &[FilePanelItem],
     collapsed_dirs: &HashSet<String>,
 ) -> Vec<usize> {
     let mut visible = Vec::new();
     let mut collapsed_stack: Vec<String> = Vec::new();
 
     for (idx, item) in items.iter().enumerate() {
-        let path = sidebar_item_path(item);
+        let path = file_panel_item_path(item);
         while let Some(last) = collapsed_stack.last() {
             if is_child_path(path, last) {
                 break;
@@ -59,7 +59,7 @@ fn build_sidebar_visible_indices(
 
         visible.push(idx);
 
-        if let SidebarItem::Directory { path, .. } = item {
+        if let FilePanelItem::Directory { path, .. } = item {
             if collapsed_dirs.contains(path) {
                 collapsed_stack.push(path.clone());
             }
@@ -102,7 +102,10 @@ impl HunkAnnotation {
     #[cfg(not(feature = "jj"))]
     pub fn format_time(&self) -> String {
         use std::time::UNIX_EPOCH;
-        let duration = self.created_at.duration_since(UNIX_EPOCH).unwrap_or_default();
+        let duration = self
+            .created_at
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default();
         let secs = duration.as_secs();
         let hours = (secs / 3600) % 24;
         let minutes = (secs / 60) % 60;
@@ -112,18 +115,18 @@ impl HunkAnnotation {
 
 pub struct AppState {
     pub file_diffs: Vec<FileDiff>,
-    pub sidebar_items: Vec<SidebarItem>,
-    pub sidebar_visible: Vec<usize>,
+    pub file_panel_items: Vec<FilePanelItem>,
+    pub file_panel_visible: Vec<usize>,
     pub collapsed_dirs: HashSet<String>,
     pub current_file: usize,
-    pub sidebar_selected: usize,
-    pub sidebar_scroll: usize,
-    pub sidebar_h_scroll: u16,
+    pub file_panel_selected: usize,
+    pub file_panel_scroll: usize,
+    pub file_panel_h_scroll: u16,
     pub scroll: u16,
     pub h_scroll: u16,
     pub focused_panel: FocusedPanel,
     pub viewed_files: HashSet<usize>,
-    pub show_sidebar: bool,
+    pub show_file_panel: bool,
     pub settings: DiffViewSettings,
     pub diff_fullscreen: DiffFullscreen,
     pub search_state: SearchState,
@@ -145,22 +148,22 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(file_diffs: Vec<FileDiff>) -> Self {
-        let sidebar_items = build_file_tree(&file_diffs);
+    pub fn new(file_diffs: Vec<FileDiff>, settings: DiffViewSettings) -> Self {
+        let file_panel_items = build_file_tree(&file_diffs);
         let collapsed_dirs = HashSet::new();
-        let sidebar_visible = build_sidebar_visible_indices(&sidebar_items, &collapsed_dirs);
-        let sidebar_selected = sidebar_visible
+        let file_panel_visible =
+            build_file_panel_visible_indices(&file_panel_items, &collapsed_dirs);
+        let file_panel_selected = file_panel_visible
             .iter()
-            .position(|idx| matches!(sidebar_items[*idx], SidebarItem::File { .. }))
+            .position(|idx| matches!(file_panel_items[*idx], FilePanelItem::File { .. }))
             .unwrap_or(0);
-        let current_file = sidebar_visible
-            .get(sidebar_selected)
-            .and_then(|idx| match &sidebar_items[*idx] {
-                SidebarItem::File { file_index, .. } => Some(*file_index),
+        let current_file = file_panel_visible
+            .get(file_panel_selected)
+            .and_then(|idx| match &file_panel_items[*idx] {
+                FilePanelItem::File { file_index, .. } => Some(*file_index),
                 _ => None,
             })
             .unwrap_or(0);
-        let settings = DiffViewSettings::default();
         let (scroll, focused_hunk) = if !file_diffs.is_empty() && current_file < file_diffs.len() {
             let diff = &file_diffs[current_file];
             let side_by_side =
@@ -178,18 +181,18 @@ impl AppState {
 
         Self {
             file_diffs,
-            sidebar_items,
-            sidebar_visible,
+            file_panel_items,
+            file_panel_visible,
             collapsed_dirs,
             current_file,
-            sidebar_selected,
-            sidebar_scroll: 0,
-            sidebar_h_scroll: 0,
+            file_panel_selected,
+            file_panel_scroll: 0,
+            file_panel_h_scroll: 0,
             scroll,
             h_scroll: 0,
             focused_panel: FocusedPanel::default(),
             viewed_files: HashSet::new(),
-            show_sidebar: true,
+            show_file_panel: true,
             settings,
             diff_fullscreen: DiffFullscreen::default(),
             search_state: SearchState::default(),
@@ -211,61 +214,63 @@ impl AppState {
         self.vcs_name = name;
     }
 
-    pub fn sidebar_visible_len(&self) -> usize {
-        self.sidebar_visible.len()
+    pub fn file_panel_visible_len(&self) -> usize {
+        self.file_panel_visible.len()
     }
 
-    pub fn sidebar_item_at_visible(&self, visible_index: usize) -> Option<&SidebarItem> {
-        self.sidebar_visible
+    pub fn file_panel_item_at_visible(&self, visible_index: usize) -> Option<&FilePanelItem> {
+        self.file_panel_visible
             .get(visible_index)
-            .and_then(|idx| self.sidebar_items.get(*idx))
+            .and_then(|idx| self.file_panel_items.get(*idx))
     }
 
-    pub fn sidebar_visible_index_for_file(&self, file_index: usize) -> Option<usize> {
-        self.sidebar_visible.iter().position(|idx| {
-            matches!(self.sidebar_items[*idx], SidebarItem::File { file_index: fi, .. } if fi == file_index)
+    pub fn file_panel_visible_index_for_file(&self, file_index: usize) -> Option<usize> {
+        self.file_panel_visible.iter().position(|idx| {
+            matches!(self.file_panel_items[*idx], FilePanelItem::File { file_index: fi, .. } if fi == file_index)
         })
     }
 
-    pub fn sidebar_visible_index_for_dir(&self, dir_path: &str) -> Option<usize> {
-        self.sidebar_visible.iter().position(|idx| {
-            matches!(&self.sidebar_items[*idx], SidebarItem::Directory { path, .. } if path == dir_path)
+    pub fn file_panel_visible_index_for_dir(&self, dir_path: &str) -> Option<usize> {
+        self.file_panel_visible.iter().position(|idx| {
+            matches!(&self.file_panel_items[*idx], FilePanelItem::Directory { path, .. } if path == dir_path)
         })
     }
 
-    pub fn rebuild_sidebar_visible(&mut self) {
+    pub fn rebuild_file_panel_visible(&mut self) {
         let existing_dirs: HashSet<String> = self
-            .sidebar_items
+            .file_panel_items
             .iter()
             .filter_map(|item| match item {
-                SidebarItem::Directory { path, .. } => Some(path.clone()),
+                FilePanelItem::Directory { path, .. } => Some(path.clone()),
                 _ => None,
             })
             .collect();
         self.collapsed_dirs
             .retain(|path| existing_dirs.contains(path));
-        self.sidebar_visible =
-            build_sidebar_visible_indices(&self.sidebar_items, &self.collapsed_dirs);
+        self.file_panel_visible =
+            build_file_panel_visible_indices(&self.file_panel_items, &self.collapsed_dirs);
 
-        if self.sidebar_visible.is_empty() {
-            self.sidebar_selected = 0;
-            self.sidebar_scroll = 0;
+        if self.file_panel_visible.is_empty() {
+            self.file_panel_selected = 0;
+            self.file_panel_scroll = 0;
             return;
         }
 
-        if let Some(idx) = self.sidebar_visible_index_for_file(self.current_file) {
-            self.sidebar_selected = idx;
-        } else if self.sidebar_selected >= self.sidebar_visible.len() {
-            self.sidebar_selected = self.sidebar_visible.len() - 1;
+        if let Some(idx) = self.file_panel_visible_index_for_file(self.current_file) {
+            self.file_panel_selected = idx;
+        } else if self.file_panel_selected >= self.file_panel_visible.len() {
+            self.file_panel_selected = self.file_panel_visible.len() - 1;
         }
 
-        if self.sidebar_scroll >= self.sidebar_visible.len() {
-            self.sidebar_scroll = self.sidebar_visible.len() - 1;
+        if self.file_panel_scroll >= self.file_panel_visible.len() {
+            self.file_panel_scroll = self.file_panel_visible.len() - 1;
         }
     }
 
     pub fn toggle_directory(&mut self, dir_path: &str) {
-        let selected_item = self.sidebar_item_at_visible(self.sidebar_selected).cloned();
+        let selected_item = self
+            .file_panel_item_at_visible(self.file_panel_selected)
+            .cloned();
         let collapsing = !self.collapsed_dirs.contains(dir_path);
 
         if collapsing {
@@ -274,14 +279,14 @@ impl AppState {
             self.collapsed_dirs.remove(dir_path);
         }
 
-        self.rebuild_sidebar_visible();
+        self.rebuild_file_panel_visible();
 
         if collapsing {
             if let Some(item) = &selected_item {
-                let path = sidebar_item_path(item);
+                let path = file_panel_item_path(item);
                 if is_child_path(path, dir_path) {
-                    if let Some(idx) = self.sidebar_visible_index_for_dir(dir_path) {
-                        self.sidebar_selected = idx;
+                    if let Some(idx) = self.file_panel_visible_index_for_dir(dir_path) {
+                        self.file_panel_selected = idx;
                         return;
                     }
                 }
@@ -290,14 +295,14 @@ impl AppState {
 
         if let Some(item) = selected_item {
             match item {
-                SidebarItem::Directory { path, .. } => {
-                    if let Some(idx) = self.sidebar_visible_index_for_dir(&path) {
-                        self.sidebar_selected = idx;
+                FilePanelItem::Directory { path, .. } => {
+                    if let Some(idx) = self.file_panel_visible_index_for_dir(&path) {
+                        self.file_panel_selected = idx;
                     }
                 }
-                SidebarItem::File { file_index, .. } => {
-                    if let Some(idx) = self.sidebar_visible_index_for_file(file_index) {
-                        self.sidebar_selected = idx;
+                FilePanelItem::File { file_index, .. } => {
+                    if let Some(idx) = self.file_panel_visible_index_for_file(file_index) {
+                        self.file_panel_selected = idx;
                     }
                 }
             }
@@ -316,9 +321,9 @@ impl AppState {
                 self.collapsed_dirs.remove(&dir_path);
             }
         }
-        self.rebuild_sidebar_visible();
-        if let Some(idx) = self.sidebar_visible_index_for_file(file_index) {
-            self.sidebar_selected = idx;
+        self.rebuild_file_panel_visible();
+        if let Some(idx) = self.file_panel_visible_index_for_file(file_index) {
+            self.file_panel_selected = idx;
         }
     }
 
@@ -405,7 +410,7 @@ impl AppState {
         }
 
         self.file_diffs = file_diffs;
-        self.sidebar_items = build_file_tree(&self.file_diffs);
+        self.file_panel_items = build_file_tree(&self.file_diffs);
 
         // Update annotations: remap file indices and remove stale ones
         // Build a map of filename -> (new_file_index, hunk_count)
@@ -462,7 +467,7 @@ impl AppState {
             self.current_file = self.file_diffs.len() - 1;
         }
 
-        self.rebuild_sidebar_visible();
+        self.rebuild_file_panel_visible();
 
         // Preserve scroll position instead of resetting
         if !self.file_diffs.is_empty() {
@@ -508,11 +513,9 @@ impl AppState {
 
     /// Add or update an annotation
     pub fn set_annotation(&mut self, annotation: HunkAnnotation) {
-        if let Some(existing) = self
-            .annotations
-            .iter_mut()
-            .find(|a| a.file_index == annotation.file_index && a.hunk_index == annotation.hunk_index)
-        {
+        if let Some(existing) = self.annotations.iter_mut().find(|a| {
+            a.file_index == annotation.file_index && a.hunk_index == annotation.hunk_index
+        }) {
             *existing = annotation;
         } else {
             self.annotations.push(annotation);
@@ -572,7 +575,10 @@ impl AppState {
                                 })
                                 .unwrap_or("base");
                             if old_start == old_end {
-                                output.push_str(&format!(" (deleted from {}:L{})", base_ref, old_start));
+                                output.push_str(&format!(
+                                    " (deleted from {}:L{})",
+                                    base_ref, old_start
+                                ));
                             } else {
                                 output.push_str(&format!(
                                     " (deleted from {}:L{}-{})",
@@ -629,12 +635,18 @@ impl AppState {
         hunk_index: usize,
     ) -> Option<(Option<(usize, usize)>, Option<(usize, usize)>, String)> {
         let diff = self.file_diffs.get(file_index)?;
-        let side_by_side =
-            compute_side_by_side(&diff.old_content, &diff.new_content, self.settings.tab_width);
+        let side_by_side = compute_side_by_side(
+            &diff.old_content,
+            &diff.new_content,
+            self.settings.tab_width,
+        );
         let hunks = find_hunk_starts(&side_by_side);
 
         let hunk_start = *hunks.get(hunk_index)?;
-        let next_hunk_start = hunks.get(hunk_index + 1).copied().unwrap_or(side_by_side.len());
+        let next_hunk_start = hunks
+            .get(hunk_index + 1)
+            .copied()
+            .unwrap_or(side_by_side.len());
 
         let mut diff_lines = String::new();
         let mut old_start: Option<usize> = None;

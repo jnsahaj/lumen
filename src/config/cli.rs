@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use std::str::FromStr;
 
+use crate::command::diff::types::FilePanelPosition;
 use crate::commit_reference::CommitReference;
 
 /// VCS backend override option
@@ -131,6 +132,10 @@ pub enum Commands {
         /// Show commits stacked (commit-by-commit navigation with ctrl+l/h)
         #[arg(long)]
         stacked: bool,
+
+        /// File panel position (left, bottom)
+        #[arg(value_enum, long = "file-panel-pos")]
+        file_panel_pos: Option<FilePanelPosition>,
     },
     /// Interactively configure Lumen (provider, API key)
     Configure,

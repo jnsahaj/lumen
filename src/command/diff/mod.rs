@@ -9,7 +9,7 @@ mod search;
 mod state;
 mod sticky_lines;
 pub mod theme;
-mod types;
+pub mod types;
 mod watcher;
 
 use std::collections::HashSet;
@@ -27,6 +27,7 @@ pub struct DiffOptions {
     pub watch: bool,
     pub theme: Option<String>,
     pub stacked: bool,
+    pub file_panel_pos: Option<types::FilePanelPosition>,
 }
 
 #[derive(Clone)]

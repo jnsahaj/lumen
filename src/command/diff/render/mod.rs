@@ -1,7 +1,7 @@
 mod diff_view;
+mod file_panel;
 mod footer;
 pub mod modal;
-mod sidebar;
 
 pub use diff_view::{render_diff, render_empty_state};
 pub use footer::truncate_path;

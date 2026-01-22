@@ -12,13 +12,13 @@ use crate::command::diff::search::{MatchPanel, SearchState};
 use crate::command::diff::state::HunkAnnotation;
 use crate::command::diff::theme;
 use crate::command::diff::types::{
-    ChangeType, DiffFullscreen, DiffLine, DiffViewSettings, FileDiff, FocusedPanel, InlineSegment,
-    SidebarItem,
+    ChangeType, DiffFullscreen, DiffLine, DiffViewSettings, FileDiff, FilePanelItem,
+    FilePanelPosition, FocusedPanel, InlineSegment,
 };
 use crate::command::diff::PrInfo;
 
+use super::file_panel::render_file_panel;
 use super::footer::{render_footer, FooterData};
-use super::sidebar::render_sidebar;
 
 /// Render the header bar for stacked diff mode showing commit info with navigation arrows
 fn render_stacked_header(
@@ -92,7 +92,10 @@ fn render_stacked_header(
         Span::styled(" ", spacer_style),
         Span::styled(&id_label, badge_style.fg(t.ui.footer_branch_fg)),
         Span::styled("  ", spacer_style),
-        Span::styled(&truncated_msg, Style::default().fg(t.ui.text_secondary).bg(bg)),
+        Span::styled(
+            &truncated_msg,
+            Style::default().fg(t.ui.text_secondary).bg(bg),
+        ),
     ];
 
     // Calculate widths for centering
@@ -488,7 +491,11 @@ struct DiffLineStyle {
 }
 
 impl DiffLineStyle {
-    fn for_change_type(change_type: ChangeType, bg: Color, t: &crate::command::diff::theme::Theme) -> Self {
+    fn for_change_type(
+        change_type: ChangeType,
+        bg: Color,
+        t: &crate::command::diff::theme::Theme,
+    ) -> Self {
         match change_type {
             ChangeType::Equal => Self {
                 old_bg: Some(bg),
@@ -631,7 +638,10 @@ fn render_annotation_overlays(
         )]));
 
         // Add content lines
-        for content_line in content_lines.iter().take(available_height.saturating_sub(2)) {
+        for content_line in content_lines
+            .iter()
+            .take(available_height.saturating_sub(2))
+        {
             let content_width_inner = border_width.saturating_sub(1);
             let padded_content = format!("{:<width$}", content_line, width = content_width_inner);
             ann_lines.push(Line::from(vec![
@@ -664,18 +674,18 @@ pub fn render_diff(
     frame: &mut Frame,
     diff: &FileDiff,
     _file_diffs: &[FileDiff],
-    sidebar_items: &[SidebarItem],
-    sidebar_visible: &[usize],
+    file_panel_items: &[FilePanelItem],
+    file_panel_visible: &[usize],
     collapsed_dirs: &HashSet<String>,
     current_file: usize,
     scroll: u16,
     h_scroll: u16,
     watching: bool,
-    show_sidebar: bool,
+    show_file_panel: bool,
     focused_panel: FocusedPanel,
-    sidebar_selected: usize,
-    sidebar_scroll: usize,
-    sidebar_h_scroll: u16,
+    file_panel_selected: usize,
+    file_panel_scroll: usize,
+    file_panel_h_scroll: u16,
     viewed_files: &HashSet<usize>,
     settings: &DiffViewSettings,
     hunk_count: usize,
@@ -726,28 +736,55 @@ pub fn render_diff(
         (chunks[0], chunks[1])
     };
 
-    let main_area = if show_sidebar {
-        let sidebar_width = (area.width / 4).clamp(20, 35);
-        let main_chunks = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Length(sidebar_width), Constraint::Min(0)])
-            .split(content_area);
+    let main_area = if show_file_panel {
+        match settings.file_panel_position {
+            FilePanelPosition::Left => {
+                let panel_width = (area.width / 4).clamp(20, 35);
+                let main_chunks = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([Constraint::Length(panel_width), Constraint::Min(0)])
+                    .split(content_area);
 
-        render_sidebar(
-            frame,
-            main_chunks[0],
-            sidebar_items,
-            sidebar_visible,
-            collapsed_dirs,
-            current_file,
-            sidebar_selected,
-            sidebar_scroll,
-            sidebar_h_scroll,
-            viewed_files,
-            focused_panel == FocusedPanel::Sidebar,
-        );
+                render_file_panel(
+                    frame,
+                    main_chunks[0],
+                    file_panel_items,
+                    file_panel_visible,
+                    collapsed_dirs,
+                    current_file,
+                    file_panel_selected,
+                    file_panel_scroll,
+                    file_panel_h_scroll,
+                    viewed_files,
+                    focused_panel == FocusedPanel::FilePanel,
+                );
 
-        main_chunks[1]
+                main_chunks[1]
+            }
+            FilePanelPosition::Bottom => {
+                let panel_height = (content_area.height / 3).clamp(5, 12);
+                let main_chunks = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([Constraint::Min(0), Constraint::Length(panel_height)])
+                    .split(content_area);
+
+                render_file_panel(
+                    frame,
+                    main_chunks[1],
+                    file_panel_items,
+                    file_panel_visible,
+                    collapsed_dirs,
+                    current_file,
+                    file_panel_selected,
+                    file_panel_scroll,
+                    file_panel_h_scroll,
+                    viewed_files,
+                    focused_panel == FocusedPanel::FilePanel,
+                );
+
+                main_chunks[0]
+            }
+        }
     } else {
         content_area
     };
@@ -908,7 +945,16 @@ pub fn render_diff(
         let content_x = main_area.x + 1;
         let content_start_y = main_area.y + 1;
         let content_width = main_area.width.saturating_sub(2);
-        render_annotation_overlays(frame, &annotation_overlays, content_x, content_start_y, content_width, main_area, bg, t);
+        render_annotation_overlays(
+            frame,
+            &annotation_overlays,
+            content_x,
+            content_start_y,
+            content_width,
+            main_area,
+            bg,
+            t,
+        );
     } else if is_deleted_file {
         let visible_height = main_area.height.saturating_sub(2) as usize;
         let old_context = compute_context_lines(
@@ -1002,7 +1048,16 @@ pub fn render_diff(
         let content_x = main_area.x + 1;
         let content_start_y = main_area.y + 1;
         let content_width = main_area.width.saturating_sub(2);
-        render_annotation_overlays(frame, &annotation_overlays, content_x, content_start_y, content_width, main_area, bg, t);
+        render_annotation_overlays(
+            frame,
+            &annotation_overlays,
+            content_x,
+            content_start_y,
+            content_width,
+            main_area,
+            bg,
+            t,
+        );
     } else {
         let (old_area, new_area) = match diff_fullscreen {
             DiffFullscreen::OldOnly => (Some(main_area), None),
@@ -1094,38 +1149,41 @@ pub fn render_diff(
             None
         };
 
-
         // Check if this line is the last changed line of a hunk (before Equal or end of hunk)
-        let is_last_changed_line_of_hunk = |line_idx: usize, lines: &[&DiffLine]| -> Option<usize> {
-            let current_idx_in_slice = line_idx.saturating_sub(scroll_usize);
-            if current_idx_in_slice >= lines.len() {
-                return None;
-            }
-            let current_line = lines[current_idx_in_slice];
-            // Current line must be a change
-            if matches!(current_line.change_type, ChangeType::Equal) {
-                return None;
-            }
-            // Check next line
-            let next_idx = current_idx_in_slice + 1;
-            let is_last = if next_idx >= lines.len() {
-                // End of visible lines - only consider it "last" if the hunk actually ends here
-                if let Some(hunk_idx) = get_hunk_for_line(line_idx) {
-                    let hunk_end = hunks.get(hunk_idx + 1).copied().unwrap_or(side_by_side.len());
-                    // Check if next absolute line is at or past hunk end, or at end of file
-                    line_idx + 1 >= hunk_end || line_idx + 1 >= side_by_side.len()
-                } else {
-                    false
+        let is_last_changed_line_of_hunk =
+            |line_idx: usize, lines: &[&DiffLine]| -> Option<usize> {
+                let current_idx_in_slice = line_idx.saturating_sub(scroll_usize);
+                if current_idx_in_slice >= lines.len() {
+                    return None;
                 }
-            } else {
-                matches!(lines[next_idx].change_type, ChangeType::Equal)
+                let current_line = lines[current_idx_in_slice];
+                // Current line must be a change
+                if matches!(current_line.change_type, ChangeType::Equal) {
+                    return None;
+                }
+                // Check next line
+                let next_idx = current_idx_in_slice + 1;
+                let is_last = if next_idx >= lines.len() {
+                    // End of visible lines - only consider it "last" if the hunk actually ends here
+                    if let Some(hunk_idx) = get_hunk_for_line(line_idx) {
+                        let hunk_end = hunks
+                            .get(hunk_idx + 1)
+                            .copied()
+                            .unwrap_or(side_by_side.len());
+                        // Check if next absolute line is at or past hunk end, or at end of file
+                        line_idx + 1 >= hunk_end || line_idx + 1 >= side_by_side.len()
+                    } else {
+                        false
+                    }
+                } else {
+                    matches!(lines[next_idx].change_type, ChangeType::Equal)
+                };
+                if is_last {
+                    get_hunk_for_line(line_idx)
+                } else {
+                    None
+                }
             };
-            if is_last {
-                get_hunk_for_line(line_idx)
-            } else {
-                None
-            }
-        };
 
         for (i, diff_line) in visible_lines.iter().enumerate() {
             let line_idx = scroll_usize + i;
@@ -1350,7 +1408,16 @@ pub fn render_diff(
             render_area.width.saturating_sub(2)
         };
 
-        render_annotation_overlays(frame, &annotation_overlays, content_x, content_start_y, content_width, main_area, bg, t);
+        render_annotation_overlays(
+            frame,
+            &annotation_overlays,
+            content_x,
+            content_start_y,
+            content_width,
+            main_area,
+            bg,
+            t,
+        );
     }
 
     render_footer(

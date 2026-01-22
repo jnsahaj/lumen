@@ -51,12 +51,21 @@ pub fn is_binary_content(content: &str) -> bool {
     content.bytes().take(8192).any(|b| b == 0)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Default, serde::Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "lowercase")]
+pub enum FilePanelPosition {
+    #[default]
+    Left,
+    Bottom,
+}
+
 /// Settings for the diff view UI. Designed to be easily extended
 /// with additional configuration options in the future.
 #[derive(Clone)]
 pub struct DiffViewSettings {
     pub context: ContextConfig,
     pub tab_width: usize,
+    pub file_panel_position: FilePanelPosition,
 }
 
 impl Default for DiffViewSettings {
@@ -64,6 +73,7 @@ impl Default for DiffViewSettings {
         Self {
             context: ContextConfig::default(),
             tab_width: 4,
+            file_panel_position: FilePanelPosition::default(),
         }
     }
 }
@@ -97,7 +107,7 @@ pub enum ChangeType {
 
 #[derive(Clone, Copy, PartialEq, Default)]
 pub enum FocusedPanel {
-    Sidebar,
+    FilePanel,
     #[default]
     DiffView,
 }
@@ -111,7 +121,7 @@ pub enum DiffFullscreen {
 }
 
 #[derive(Clone)]
-pub enum SidebarItem {
+pub enum FilePanelItem {
     Directory {
         name: String,
         path: String,
@@ -126,7 +136,7 @@ pub enum SidebarItem {
     },
 }
 
-pub fn build_file_tree(file_diffs: &[FileDiff]) -> Vec<SidebarItem> {
+pub fn build_file_tree(file_diffs: &[FileDiff]) -> Vec<FilePanelItem> {
     use std::collections::{BTreeMap, BTreeSet};
 
     if file_diffs.is_empty() {
@@ -204,7 +214,7 @@ pub fn build_file_tree(file_diffs: &[FileDiff]) -> Vec<SidebarItem> {
 
     let file_paths_set: BTreeSet<String> = file_paths.iter().map(|(p, _, _)| p.clone()).collect();
 
-    let mut items: Vec<SidebarItem> = Vec::new();
+    let mut items: Vec<FilePanelItem> = Vec::new();
     let mut added_dirs: BTreeSet<String> = BTreeSet::new();
     // Maps any directory path to its collapsed version
     let mut path_to_collapsed: BTreeMap<String, String> = BTreeMap::new();
@@ -269,7 +279,7 @@ pub fn build_file_tree(file_diffs: &[FileDiff]) -> Vec<SidebarItem> {
                     }
                 };
 
-                items.push(SidebarItem::Directory {
+                items.push(FilePanelItem::Directory {
                     name: display_name,
                     path: collapsed_path.clone(),
                     depth,
@@ -301,7 +311,7 @@ pub fn build_file_tree(file_diffs: &[FileDiff]) -> Vec<SidebarItem> {
             0
         };
 
-        items.push(SidebarItem::File {
+        items.push(FilePanelItem::File {
             name: file_name,
             path: path.clone(),
             file_index: *file_idx,
