@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::path::PathBuf;
 
 use git2::{Commit, DiffFormat, DiffOptions, Repository, StatusOptions, Time, Tree};
 
@@ -781,6 +782,13 @@ impl VcsBackend for GitBackend {
         // Reverse to get oldest first
         commits.reverse();
         Ok(commits)
+    }
+
+    fn get_workspace_root(&self) -> PathBuf {
+        self.repo
+            .workdir()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
     }
 
     fn name(&self) -> &'static str {
