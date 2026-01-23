@@ -973,6 +973,10 @@ impl VcsBackend for JjBackend {
     fn name(&self) -> &'static str {
         "jj"
     }
+
+    fn repo_root(&self) -> Option<&Path> {
+        Some(&self.workspace_path)
+    }
 }
 
 #[cfg(test)]

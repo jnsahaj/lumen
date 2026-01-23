@@ -131,4 +131,7 @@ pub trait VcsBackend {
 
     /// Get the name of this VCS backend ("git" or "jj").
     fn name(&self) -> &'static str;
+
+    /// Get the root path of the repository (working directory).
+    fn repo_root(&self) -> Option<&Path>;
 }

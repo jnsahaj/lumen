@@ -786,6 +786,10 @@ impl VcsBackend for GitBackend {
     fn name(&self) -> &'static str {
         "git"
     }
+
+    fn repo_root(&self) -> Option<&Path> {
+        self.repo.workdir()
+    }
 }
 
 #[cfg(test)]

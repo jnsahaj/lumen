@@ -103,7 +103,13 @@ pub fn get_new_content(filename: &str, refs: &DiffRefs, backend: &dyn VcsBackend
             .unwrap_or_default(),
         DiffRefs::WorkingTree => {
             // Read from working tree (actual filesystem)
-            fs::read_to_string(filename).unwrap_or_default()
+            // Resolve path relative to repository root, not current working directory
+            if let Some(repo_root) = backend.repo_root() {
+                let full_path = repo_root.join(filename);
+                fs::read_to_string(&full_path).unwrap_or_default()
+            } else {
+                fs::read_to_string(filename).unwrap_or_default()
+            }
         }
     }
 }
@@ -472,6 +478,35 @@ mod tests {
         assert_eq!(diffs_b.len(), 1);
         assert_eq!(diffs_b[0].filename, "b.txt");
         assert_eq!(diffs_b[0].new_content, "commit B\n");
+
+        let _ = std::env::set_current_dir(&original);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_get_new_content_from_subdirectory() {
+        let _lock = crate::vcs::test_utils::cwd_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = make_temp_dir("git-diff-subdir");
+        let original = std::env::current_dir().expect("get cwd");
+
+        git(&dir, &["init"]);
+        git(&dir, &["config", "user.email", "test@example.com"]);
+        git(&dir, &["config", "user.name", "Test User"]);
+
+        fs::create_dir(dir.join("src")).expect("create src dir");
+        fs::write(dir.join("src/file.txt"), "original content\n").expect("write file");
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-m", "first"]);
+
+        fs::write(dir.join("src/file.txt"), "modified content\n").expect("modify file");
+
+        // Run diff from subdirectory
+        std::env::set_current_dir(dir.join("src")).expect("change to src dir");
+        let backend = GitBackend::from_cwd().expect("should open repo");
+        let content = get_new_content("src/file.txt", &DiffRefs::WorkingTree, &backend);
+        assert_eq!(content, "modified content\n");
 
         let _ = std::env::set_current_dir(&original);
         let _ = fs::remove_dir_all(&dir);
