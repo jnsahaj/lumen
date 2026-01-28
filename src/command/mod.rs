@@ -10,6 +10,7 @@ use crate::git_entity::GitEntity;
 use crate::provider::LumenProvider;
 use crate::vcs::VcsBackend;
 
+pub mod completion;
 pub mod configure;
 pub mod diff;
 pub mod draft;
