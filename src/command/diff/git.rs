@@ -102,8 +102,12 @@ pub fn get_new_content(filename: &str, refs: &DiffRefs, backend: &dyn VcsBackend
             .get_file_content_at_ref(to, Path::new(filename))
             .unwrap_or_default(),
         DiffRefs::WorkingTree => {
-            // Read from working tree (actual filesystem)
-            fs::read_to_string(filename).unwrap_or_default()
+            // Resolve path relative to repository root
+            let full_path = backend
+                .get_repository_root()
+                .map(|root| root.join(filename))
+                .unwrap_or_else(|_| filename.into());
+            fs::read_to_string(full_path).unwrap_or_default()
         }
     }
 }
@@ -472,6 +476,57 @@ mod tests {
         assert_eq!(diffs_b.len(), 1);
         assert_eq!(diffs_b[0].filename, "b.txt");
         assert_eq!(diffs_b[0].new_content, "commit B\n");
+
+        let _ = std::env::set_current_dir(&original);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_load_file_diffs_from_subdirectory() {
+        use crate::vcs::test_utils::cwd_lock;
+
+        let _lock = cwd_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let dir = make_temp_dir("git-subdir-diff");
+        let original = std::env::current_dir().expect("get cwd");
+
+        git(&dir, &["init"]);
+        git(&dir, &["config", "user.email", "test@example.com"]);
+        git(&dir, &["config", "user.name", "Test User"]);
+
+        // Create nested structure
+        fs::create_dir_all(dir.join("src")).expect("create subdir");
+        fs::write(dir.join("src/file.txt"), "initial\n").expect("write file");
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-m", "init"]);
+
+        // Modify file (unstaged change)
+        fs::write(dir.join("src/file.txt"), "modified\n").expect("modify file");
+
+        // Change to subdirectory (simulating running lumen from subdir)
+        std::env::set_current_dir(dir.join("src")).expect("set cwd to subdir");
+
+        let backend = GitBackend::new(Path::new("."))
+            .expect("should open repo from subdir");
+
+        let options = super::DiffOptions {
+            reference: None,
+            pr: None,
+            file: None,
+            watch: false,
+            theme: None,
+            stacked: false,
+        };
+
+        let diffs = load_file_diffs(&options, &backend);
+
+        assert_eq!(diffs.len(), 1, "should have 1 changed file");
+        assert_eq!(diffs[0].filename, "src/file.txt");
+        assert_eq!(
+            diffs[0].status,
+            FileStatus::Modified,
+            "file should be modified, not deleted"
+        );
+        assert_eq!(diffs[0].new_content, "modified\n", "should read new content");
 
         let _ = std::env::set_current_dir(&original);
         let _ = fs::remove_dir_all(&dir);

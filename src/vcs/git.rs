@@ -783,6 +783,13 @@ impl VcsBackend for GitBackend {
         Ok(commits)
     }
 
+    fn get_repository_root(&self) -> Result<std::path::PathBuf, VcsError> {
+        self.repo
+            .workdir()
+            .map(|p| p.to_path_buf())
+            .ok_or_else(|| VcsError::Other("bare repository has no working directory".to_string()))
+    }
+
     fn name(&self) -> &'static str {
         "git"
     }
@@ -1649,6 +1656,41 @@ mod tests {
                 "empty commit should be excluded"
             );
         }
+
+        let _ = std::env::set_current_dir(&original);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_get_repository_root_from_subdirectory() {
+        use crate::vcs::test_utils::{cwd_lock, git, make_temp_dir};
+        use std::fs;
+
+        let _lock = cwd_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let dir = make_temp_dir("git-repo-root");
+        let original = std::env::current_dir().expect("get cwd");
+
+        git(&dir, &["init"]);
+        git(&dir, &["config", "user.email", "test@example.com"]);
+        git(&dir, &["config", "user.name", "Test User"]);
+
+        fs::create_dir_all(dir.join("deep/nested")).expect("create subdirs");
+        fs::write(dir.join("README.md"), "hello\n").expect("write readme");
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-m", "init"]);
+
+        // Change to nested subdirectory
+        std::env::set_current_dir(dir.join("deep/nested")).expect("set cwd");
+
+        let backend = GitBackend::new(Path::new(".")).expect("should discover repo");
+        let root = backend.get_repository_root().expect("should get repo root");
+
+        // Root should be the original repo dir, not the subdirectory
+        assert_eq!(
+            root.canonicalize().unwrap(),
+            dir.canonicalize().unwrap(),
+            "repo root should match original dir"
+        );
 
         let _ = std::env::set_current_dir(&original);
         let _ = fs::remove_dir_all(&dir);
