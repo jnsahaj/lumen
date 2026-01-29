@@ -1337,6 +1337,8 @@ fn run_app_internal(
                                 let editor =
                                     std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
                                 let filename = &state.file_diffs[state.current_file].filename;
+                                // Use absolute path to avoid issues when running from subdirectory
+                                let full_path = backend.get_workspace_root().join(filename);
 
                                 let line_arg = if let Some(hunk_idx) = state.focused_hunk {
                                     let diff = &state.file_diffs[state.current_file];
@@ -1363,10 +1365,10 @@ fn run_app_internal(
                                 let status = if let Some(line) = line_arg {
                                     std::process::Command::new(&editor)
                                         .arg(format!("+{}", line))
-                                        .arg(filename)
+                                        .arg(&full_path)
                                         .status()
                                 } else {
-                                    std::process::Command::new(&editor).arg(filename).status()
+                                    std::process::Command::new(&editor).arg(&full_path).status()
                                 };
                                 let _ = status;
 
