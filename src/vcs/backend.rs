@@ -129,6 +129,9 @@ pub trait VcsBackend {
         to: &str,
     ) -> Result<Vec<StackedCommitInfo>, VcsError>;
 
+    /// Get the root path of the repository working directory.
+    fn get_repository_root(&self) -> Result<std::path::PathBuf, VcsError>;
+
     /// Get the name of this VCS backend ("git" or "jj").
     fn name(&self) -> &'static str;
 }
