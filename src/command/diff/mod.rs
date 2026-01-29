@@ -27,6 +27,7 @@ pub struct DiffOptions {
     pub watch: bool,
     pub theme: Option<String>,
     pub stacked: bool,
+    pub focus: Option<String>,
 }
 
 #[derive(Clone)]

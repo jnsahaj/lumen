@@ -131,6 +131,10 @@ pub enum Commands {
         /// Show commits stacked (commit-by-commit navigation with ctrl+l/h)
         #[arg(long)]
         stacked: bool,
+
+        /// Initially focus on this file path
+        #[arg(long)]
+        focus: Option<String>,
     },
     /// Interactively configure Lumen (provider, API key)
     Configure,

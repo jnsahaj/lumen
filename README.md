@@ -140,6 +140,9 @@ lumen diff --watch
 
 # Stacked mode - review commits one by one
 lumen diff main..feature --stacked
+
+# Jump to a specific file on open
+lumen diff --focus src/main.rs
 ```
 
 #### Stacked Diff Mode
