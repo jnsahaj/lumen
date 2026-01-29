@@ -3,6 +3,9 @@ use tree_sitter_highlight::HighlightConfiguration;
 
 use super::queries::*;
 
+// Elixir uses the bundled highlight queries from tree-sitter-elixir
+const ELIXIR_HIGHLIGHTS: &str = tree_sitter_elixir::HIGHLIGHTS_QUERY;
+
 pub const HIGHLIGHT_NAMES: &[&str] = &[
     "attribute",
     "comment",
@@ -192,6 +195,22 @@ pub static CONFIGS: Lazy<Vec<(&'static str, LanguageConfig)>> = Lazy::new(|| {
         "ruby",
         RUBY_HIGHLIGHTS,
         "rb",
+        &mut configs,
+    );
+
+    load_config(
+        tree_sitter_elixir::LANGUAGE.into(),
+        "elixir",
+        ELIXIR_HIGHLIGHTS,
+        "ex",
+        &mut configs,
+    );
+
+    load_config(
+        tree_sitter_elixir::LANGUAGE.into(),
+        "elixir",
+        ELIXIR_HIGHLIGHTS,
+        "exs",
         &mut configs,
     );
 
