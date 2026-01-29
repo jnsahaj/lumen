@@ -102,7 +102,120 @@ pub enum FocusedPanel {
     DiffView,
 }
 
-#[derive(Clone, Copy, PartialEq, Default)]
+/// Which panel in the diff view has selection focus (old vs new)
+#[derive(Clone, Copy, PartialEq, Default, Debug)]
+pub enum DiffPanelFocus {
+    #[default]
+    None,
+    Old,
+    New,
+}
+
+/// Position within the diff content
+#[derive(Clone, Copy, PartialEq, Default, Debug)]
+pub struct CursorPosition {
+    /// Line index in side_by_side diff (0-indexed)
+    pub line: usize,
+    /// Column offset in content (0-indexed, after expanding tabs)
+    pub column: usize,
+}
+
+/// How the selection was initiated
+#[derive(Clone, Copy, PartialEq, Default, Debug)]
+pub enum SelectionMode {
+    #[default]
+    None,
+    /// Click-drag in content area
+    Character,
+    /// Click-drag on line numbers
+    Line,
+}
+
+/// Represents a text selection in one of the diff panels
+#[derive(Clone, PartialEq, Default, Debug)]
+pub struct Selection {
+    /// Which panel the selection is in
+    pub panel: DiffPanelFocus,
+    /// Where selection started (anchor point)
+    pub anchor: CursorPosition,
+    /// Current end of selection (moves during drag)
+    pub head: CursorPosition,
+    /// How the selection was initiated
+    pub mode: SelectionMode,
+}
+
+#[allow(dead_code)]
+impl Selection {
+    /// Returns the selection range normalized so start <= end
+    pub fn normalized_range(&self) -> (CursorPosition, CursorPosition) {
+        if self.anchor.line < self.head.line
+            || (self.anchor.line == self.head.line && self.anchor.column <= self.head.column)
+        {
+            (self.anchor, self.head)
+        } else {
+            (self.head, self.anchor)
+        }
+    }
+
+    /// Check if selection contains a given position
+    pub fn contains(&self, line: usize, column: usize) -> bool {
+        if !self.is_active() {
+            return false;
+        }
+        let (start, end) = self.normalized_range();
+
+        match self.mode {
+            SelectionMode::None => false,
+            SelectionMode::Line => {
+                // Line mode: entire lines are selected
+                line >= start.line && line <= end.line
+            }
+            SelectionMode::Character => {
+                // Character mode: check column bounds
+                if line < start.line || line > end.line {
+                    return false;
+                }
+                if start.line == end.line {
+                    // Single line selection
+                    column >= start.column && column < end.column
+                } else if line == start.line {
+                    // First line of multi-line selection
+                    column >= start.column
+                } else if line == end.line {
+                    // Last line of multi-line selection
+                    column < end.column
+                } else {
+                    // Middle lines are fully selected
+                    true
+                }
+            }
+        }
+    }
+
+    /// Check if selection is active (has content selected)
+    pub fn is_active(&self) -> bool {
+        self.mode != SelectionMode::None && self.panel != DiffPanelFocus::None
+    }
+
+    /// Check if a whole line is selected (for line mode or fully-encompassed lines)
+    pub fn is_line_fully_selected(&self, line: usize) -> bool {
+        if !self.is_active() {
+            return false;
+        }
+        let (start, end) = self.normalized_range();
+
+        match self.mode {
+            SelectionMode::Line => line >= start.line && line <= end.line,
+            SelectionMode::Character => {
+                // In character mode, middle lines of multi-line selection are fully selected
+                line > start.line && line < end.line
+            }
+            SelectionMode::None => false,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Default, Debug)]
 pub enum DiffFullscreen {
     #[default]
     None,

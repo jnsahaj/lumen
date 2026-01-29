@@ -1,6 +1,7 @@
 mod annotation;
 mod app;
 mod context;
+mod coordinates;
 mod diff_algo;
 pub mod git;
 pub mod highlight;
@@ -16,6 +17,8 @@ use std::collections::HashSet;
 use std::io;
 use std::process::{self, Command};
 use std::thread;
+
+use spinoff::{spinners, Color, Spinner};
 
 use crate::commit_reference::CommitReference;
 use crate::vcs::VcsBackend;
@@ -313,12 +316,23 @@ fn unmark_file_as_viewed_sync(node_id: &str, file_path: &str) -> Result<(), Stri
 pub fn run_diff_ui(options: DiffOptions, backend: &dyn VcsBackend) -> io::Result<()> {
     // Handle PR mode
     if let Some(ref pr_input) = options.pr {
+        let spinner_msg = match parse_pr_input(pr_input) {
+            Some((Some(owner), Some(repo), number)) => {
+                format!("Fetching PR {}/{}#{}", owner, repo, number)
+            }
+            Some((_, _, number)) => {
+                format!("Fetching PR #{}", number)
+            }
+            None => "Fetching PR".to_string(),
+        };
+        let mut spinner = Spinner::new(spinners::Dots, spinner_msg, Color::Cyan);
         match fetch_pr_info(pr_input) {
             Ok(pr_info) => {
+                spinner.success("Fetched PR metadata");
                 return app::run_app_with_pr(options, pr_info, backend);
             }
             Err(e) => {
-                eprintln!("\x1b[91merror:\x1b[0m {}", e);
+                spinner.fail(&e);
                 process::exit(1);
             }
         }
@@ -327,12 +341,24 @@ pub fn run_diff_ui(options: DiffOptions, backend: &dyn VcsBackend) -> io::Result
     // Also check if the reference looks like a PR (number or URL)
     if let Some(CommitReference::Single(ref input)) = options.reference {
         if input.contains("/pull/") || input.parse::<u64>().is_ok() {
+            let spinner_msg = match parse_pr_input(input) {
+                Some((Some(owner), Some(repo), number)) => {
+                    format!("Fetching PR {}/{}#{}", owner, repo, number)
+                }
+                Some((_, _, number)) => {
+                    format!("Fetching PR #{}", number)
+                }
+                None => "Fetching PR".to_string(),
+            };
+            let mut spinner = Spinner::new(spinners::Dots, spinner_msg, Color::Cyan);
             match fetch_pr_info(input) {
                 Ok(pr_info) => {
+                    spinner.success("Fetched PR metadata");
                     return app::run_app_with_pr(options, pr_info, backend);
                 }
-                Err(_) => {
-                    // Fall through to normal diff handling if it's not a valid PR
+                Err(e) => {
+                    spinner.fail(&e);
+                    process::exit(1);
                 }
             }
         }

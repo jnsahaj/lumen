@@ -9,8 +9,8 @@ use crate::command::diff::diff_algo::{compute_side_by_side, find_hunk_starts};
 const MAX_EXPORT_DIFF_LINES: usize = 5;
 use crate::command::diff::search::SearchState;
 use crate::command::diff::types::{
-    build_file_tree, ChangeType, DiffFullscreen, DiffViewSettings, FileDiff, FocusedPanel,
-    SidebarItem,
+    build_file_tree, ChangeType, CursorPosition, DiffFullscreen, DiffLine, DiffPanelFocus,
+    DiffViewSettings, FileDiff, FocusedPanel, Selection, SelectionMode, SidebarItem,
 };
 use crate::vcs::StackedCommitInfo;
 
@@ -142,6 +142,18 @@ pub struct AppState {
     pub vcs_name: &'static str,
     /// The commit reference used to open the diff (e.g., "HEAD~2..HEAD", "main..feature")
     pub diff_reference: Option<String>,
+    // Selection state
+    /// Which panel has selection focus
+    pub diff_panel_focus: DiffPanelFocus,
+    /// Current text selection
+    pub selection: Selection,
+    /// Whether a mouse drag is in progress
+    pub is_dragging: bool,
+    // Cached diff computation
+    /// Cached side_by_side diff for current file (invalidated on file change)
+    cached_side_by_side: Option<(usize, Vec<DiffLine>)>,
+    /// Cached hunk starts for current file
+    cached_hunks: Option<(usize, Vec<usize>)>,
 }
 
 impl AppState {
@@ -211,6 +223,11 @@ impl AppState {
             stacked_viewed_files: HashMap::new(),
             vcs_name: "git", // Default, will be set by caller
             diff_reference: None,
+            diff_panel_focus: DiffPanelFocus::default(),
+            selection: Selection::default(),
+            is_dragging: false,
+            cached_side_by_side: None,
+            cached_hunks: None,
         }
     }
 
@@ -221,6 +238,77 @@ impl AppState {
             }
         }
         (0, 0)
+    }
+
+    /// Get cached side_by_side diff for current file, computing if necessary
+    pub fn get_side_by_side(&mut self) -> &[DiffLine] {
+        if self.file_diffs.is_empty() {
+            return &[];
+        }
+
+        let current = self.current_file;
+        let needs_recompute = match &self.cached_side_by_side {
+            Some((cached_file, _)) => *cached_file != current,
+            None => true,
+        };
+
+        if needs_recompute {
+            let diff = &self.file_diffs[current];
+            let side_by_side = compute_side_by_side(
+                &diff.old_content,
+                &diff.new_content,
+                self.settings.tab_width,
+            );
+            let hunks = find_hunk_starts(&side_by_side);
+            self.cached_side_by_side = Some((current, side_by_side));
+            self.cached_hunks = Some((current, hunks));
+        }
+
+        &self.cached_side_by_side.as_ref().unwrap().1
+    }
+
+    /// Get cached hunk starts for current file
+    pub fn get_hunks(&mut self) -> &[usize] {
+        // Ensure side_by_side is computed (which also computes hunks)
+        let _ = self.get_side_by_side();
+        &self.cached_hunks.as_ref().unwrap().1
+    }
+
+    /// Invalidate the cache (call when file changes)
+    pub fn invalidate_cache(&mut self) {
+        self.cached_side_by_side = None;
+        self.cached_hunks = None;
+    }
+
+    /// Clear all selection state
+    pub fn clear_selection(&mut self) {
+        self.diff_panel_focus = DiffPanelFocus::None;
+        self.selection = Selection::default();
+        self.is_dragging = false;
+    }
+
+    /// Start a new selection
+    pub fn start_selection(&mut self, panel: DiffPanelFocus, pos: CursorPosition, mode: SelectionMode) {
+        self.diff_panel_focus = panel;
+        self.selection = Selection {
+            panel,
+            anchor: pos,
+            head: pos,
+            mode,
+        };
+        self.is_dragging = true;
+    }
+
+    /// Extend the current selection to a new position
+    pub fn extend_selection(&mut self, pos: CursorPosition) {
+        if self.is_dragging {
+            self.selection.head = pos;
+        }
+    }
+
+    /// End the drag operation but keep the selection
+    pub fn end_drag(&mut self) {
+        self.is_dragging = false;
     }
 
     /// Set the VCS backend name
@@ -496,18 +584,17 @@ impl AppState {
         }
 
         self.needs_reload = false;
+        self.invalidate_cache(); // Clear cache after reload
     }
 
     pub fn select_file(&mut self, file_index: usize) {
         self.current_file = file_index;
         self.diff_fullscreen = DiffFullscreen::None;
-        let diff = &self.file_diffs[self.current_file];
-        let side_by_side = compute_side_by_side(
-            &diff.old_content,
-            &diff.new_content,
-            self.settings.tab_width,
-        );
-        let hunks = find_hunk_starts(&side_by_side);
+        self.clear_selection(); // Clear selection when changing files
+        self.invalidate_cache(); // Clear cache for new file
+
+        // Use cached computation
+        let hunks = self.get_hunks().to_vec();
         self.scroll = hunks
             .first()
             .map(|&h| (h as u16).saturating_sub(5))

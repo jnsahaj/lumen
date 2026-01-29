@@ -6,14 +6,13 @@ use ratatui::{
 };
 
 use crate::command::diff::context::{compute_context_lines, ContextLine};
-use crate::command::diff::diff_algo::compute_side_by_side;
 use crate::command::diff::highlight::{highlight_line_spans, FileHighlighter};
 use crate::command::diff::search::{MatchPanel, SearchState};
 use crate::command::diff::state::HunkAnnotation;
 use crate::command::diff::theme;
 use crate::command::diff::types::{
-    ChangeType, DiffFullscreen, DiffLine, DiffViewSettings, FileDiff, FocusedPanel, InlineSegment,
-    SidebarItem,
+    ChangeType, DiffFullscreen, DiffLine, DiffPanelFocus, DiffViewSettings, FileDiff, FocusedPanel,
+    InlineSegment, Selection, SelectionMode, SidebarItem,
 };
 use crate::command::diff::PrInfo;
 
@@ -460,6 +459,139 @@ fn apply_word_emphasis_highlight<'a>(
     result
 }
 
+/// Selection tint color - a subtle blue that blends with any diff background
+const SELECTION_TINT: Color = Color::Rgb(80, 120, 180);
+const SELECTION_ALPHA: f32 = 0.4;
+
+/// Blend a base background color with a selection tint.
+#[inline]
+fn blend_with_selection(base: Color) -> Color {
+    match base {
+        Color::Rgb(br, bg, bb) => {
+            let Color::Rgb(sr, sg, sb) = SELECTION_TINT else { return base };
+            let r = ((br as f32) * (1.0 - SELECTION_ALPHA) + (sr as f32) * SELECTION_ALPHA) as u8;
+            let g = ((bg as f32) * (1.0 - SELECTION_ALPHA) + (sg as f32) * SELECTION_ALPHA) as u8;
+            let b = ((bb as f32) * (1.0 - SELECTION_ALPHA) + (sb as f32) * SELECTION_ALPHA) as u8;
+            Color::Rgb(r, g, b)
+        }
+        _ => SELECTION_TINT,
+    }
+}
+
+/// Check if a line position is within the selection range for a given panel.
+/// Returns the column range that's selected on this line, or None if not selected.
+#[inline]
+fn get_selection_range_for_line(
+    line_idx: usize,
+    panel: DiffPanelFocus,
+    selection: &Selection,
+) -> Option<(usize, usize)> {
+    if !selection.is_active() || selection.panel != panel {
+        return None;
+    }
+
+    let (start, end) = selection.normalized_range();
+
+    if line_idx < start.line || line_idx > end.line {
+        return None;
+    }
+
+    match selection.mode {
+        SelectionMode::Line => {
+            // Line mode: entire line is selected
+            Some((0, usize::MAX))
+        }
+        SelectionMode::Character => {
+            if start.line == end.line {
+                // Single line selection
+                Some((start.column, end.column))
+            } else if line_idx == start.line {
+                // First line of multi-line selection
+                Some((start.column, usize::MAX))
+            } else if line_idx == end.line {
+                // Last line of multi-line selection
+                Some((0, end.column))
+            } else {
+                // Middle line - entire line selected
+                Some((0, usize::MAX))
+            }
+        }
+        SelectionMode::None => None,
+    }
+}
+
+/// Apply selection highlighting to spans. Only processes spans if selection is active.
+/// For efficiency, spans fully outside the selection range are passed through unchanged.
+#[inline]
+fn apply_selection_to_spans<'a>(
+    spans: Vec<Span<'a>>,
+    selection_range: Option<(usize, usize)>,
+    default_bg: Color,
+) -> Vec<Span<'a>> {
+    let Some((sel_start, sel_end)) = selection_range else {
+        return spans;
+    };
+
+    // Line mode or full line selected - apply to all spans (fast path)
+    if sel_start == 0 && sel_end == usize::MAX {
+        return spans
+            .into_iter()
+            .map(|span| {
+                let bg = span.style.bg.unwrap_or(default_bg);
+                Span::styled(span.content, span.style.bg(blend_with_selection(bg)))
+            })
+            .collect();
+    }
+
+    // Character mode - need to apply selection per-character
+    let mut result = Vec::with_capacity(spans.len() * 2);
+    let mut col = 0usize;
+
+    for span in spans {
+        let text = span.content.to_string();
+        let span_len = text.chars().count();
+        let span_end = col + span_len;
+
+        // Fast path: span fully before or after selection
+        if span_end <= sel_start || col >= sel_end {
+            result.push(Span::styled(text, span.style));
+            col = span_end;
+            continue;
+        }
+
+        // Span intersects with selection - need to split
+        let bg = span.style.bg.unwrap_or(default_bg);
+        let selected_bg = blend_with_selection(bg);
+        let chars: Vec<char> = text.chars().collect();
+
+        // Part before selection
+        if col < sel_start {
+            let before_len = sel_start - col;
+            let before: String = chars[..before_len].iter().collect();
+            result.push(Span::styled(before, span.style));
+        }
+
+        // Selected part
+        let sel_start_in_span = sel_start.saturating_sub(col);
+        let sel_end_in_span = (sel_end - col).min(span_len);
+        if sel_start_in_span < sel_end_in_span {
+            let selected: String = chars[sel_start_in_span..sel_end_in_span].iter().collect();
+            result.push(Span::styled(selected, span.style.bg(selected_bg)));
+        }
+
+        // Part after selection
+        if sel_end < span_end {
+            let after_start = sel_end - col;
+            let after: String = chars[after_start..].iter().collect();
+            result.push(Span::styled(after, span.style));
+        }
+
+        col = span_end;
+    }
+
+    result
+}
+
 pub fn compute_line_stats(side_by_side: &[DiffLine]) -> LineStats {
     let mut added = 0;
     let mut removed = 0;
@@ -689,8 +821,10 @@ pub fn render_diff(
     stacked_commit: Option<&StackedCommitInfo>,
     stacked_index: usize,
     stacked_total: usize,
+    side_by_side: &[DiffLine],
     vcs_name: &str,
     annotations: &[HunkAnnotation],
+    selection: &Selection,
 ) {
     let area = frame.area();
     let t = theme::get();
@@ -796,9 +930,8 @@ pub fn render_diff(
         return;
     }
 
-    let side_by_side =
-        compute_side_by_side(&diff.old_content, &diff.new_content, settings.tab_width);
-    let line_stats = compute_line_stats(&side_by_side);
+    // side_by_side is now passed as a parameter (pre-computed and cached)
+    let line_stats = compute_line_stats(side_by_side);
 
     // Pre-compute highlights for the entire file to properly handle multi-line constructs
     // like JSDoc comments that span multiple lines
@@ -1132,6 +1265,10 @@ pub fn render_diff(
             let in_focused = is_in_focused_hunk(line_idx, diff_line.change_type);
             let style = DiffLineStyle::for_change_type(diff_line.change_type, bg, t);
 
+            // Check selection ranges for this line (O(1) check)
+            let old_selection_range = get_selection_range_for_line(line_idx, DiffPanelFocus::Old, selection);
+            let new_selection_range = get_selection_range_for_line(line_idx, DiffPanelFocus::New, selection);
+
             let focus_indicator = if in_focused { "▎" } else { " " };
             let focus_style = Style::default().fg(t.ui.border_focused);
 
@@ -1150,10 +1287,10 @@ pub fn render_diff(
                         let matches = search_state.get_matches_for_line(line_idx, MatchPanel::Old);
 
                         // Use word-level rendering for modified lines if segments are available
-                        if matches!(diff_line.change_type, ChangeType::Modified) {
+                        let content_spans = if matches!(diff_line.change_type, ChangeType::Modified) {
                             if let Some(ref segments) = diff_line.old_segments {
                                 let emphasis_ranges = segments_to_emphasis_ranges(segments);
-                                old_spans.extend(apply_word_emphasis_highlight(
+                                apply_word_emphasis_highlight(
                                     _text,
                                     &diff.filename,
                                     style.old_bg,
@@ -1163,9 +1300,9 @@ pub fn render_diff(
                                     Some(&old_highlighter),
                                     Some(*num),
                                     settings.tab_width,
-                                ));
+                                )
                             } else {
-                                old_spans.extend(apply_search_highlight(
+                                apply_search_highlight(
                                     _text,
                                     &diff.filename,
                                     style.old_bg,
@@ -1173,10 +1310,10 @@ pub fn render_diff(
                                     Some(&old_highlighter),
                                     Some(*num),
                                     settings.tab_width,
-                                ));
+                                )
                             }
                         } else {
-                            old_spans.extend(apply_search_highlight(
+                            apply_search_highlight(
                                 _text,
                                 &diff.filename,
                                 style.old_bg,
@@ -1184,8 +1321,15 @@ pub fn render_diff(
                                 Some(&old_highlighter),
                                 Some(*num),
                                 settings.tab_width,
-                            ));
-                        }
+                            )
+                        };
+                        // Apply selection highlighting
+                        let content_spans = apply_selection_to_spans(
+                            content_spans,
+                            old_selection_range,
+                            style.old_bg.unwrap_or(bg),
+                        );
+                        old_spans.extend(content_spans);
                     }
                     None => {
                         let panel_width = old_area.map(|a| a.width as usize).unwrap_or(80);
@@ -1221,10 +1365,10 @@ pub fn render_diff(
                         let matches = search_state.get_matches_for_line(line_idx, MatchPanel::New);
 
                         // Use word-level rendering for modified lines if segments are available
-                        if matches!(diff_line.change_type, ChangeType::Modified) {
+                        let content_spans = if matches!(diff_line.change_type, ChangeType::Modified) {
                             if let Some(ref segments) = diff_line.new_segments {
                                 let emphasis_ranges = segments_to_emphasis_ranges(segments);
-                                new_spans.extend(apply_word_emphasis_highlight(
+                                apply_word_emphasis_highlight(
                                     _text,
                                     &diff.filename,
                                     style.new_bg,
@@ -1234,9 +1378,9 @@ pub fn render_diff(
                                     Some(&new_highlighter),
                                     Some(*num),
                                     settings.tab_width,
-                                ));
+                                )
                             } else {
-                                new_spans.extend(apply_search_highlight(
+                                apply_search_highlight(
                                     _text,
                                     &diff.filename,
                                     style.new_bg,
@@ -1244,10 +1388,10 @@ pub fn render_diff(
                                     Some(&new_highlighter),
                                     Some(*num),
                                     settings.tab_width,
-                                ));
+                                )
                             }
                         } else {
-                            new_spans.extend(apply_search_highlight(
+                            apply_search_highlight(
                                 _text,
                                 &diff.filename,
                                 style.new_bg,
@@ -1255,8 +1399,15 @@ pub fn render_diff(
                                 Some(&new_highlighter),
                                 Some(*num),
                                 settings.tab_width,
-                            ));
-                        }
+                            )
+                        };
+                        // Apply selection highlighting
+                        let content_spans = apply_selection_to_spans(
+                            content_spans,
+                            new_selection_range,
+                            style.new_bg.unwrap_or(bg),
+                        );
+                        new_spans.extend(content_spans);
                     }
                     None => {
                         let panel_width = new_area.map(|a| a.width as usize).unwrap_or(80);
