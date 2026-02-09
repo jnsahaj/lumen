@@ -217,6 +217,16 @@ impl<'a> AnnotationEditor<'a> {
         frame.render_widget(footer, chunks[1]);
     }
 
+    /// Insert pasted text into the editor
+    pub fn insert_text(&mut self, text: &str) {
+        if text.contains('\r') {
+            let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+            self.textarea.insert_str(normalized);
+        } else {
+            self.textarea.insert_str(text);
+        }
+    }
+
     /// Create a HunkAnnotation from the current editor state
     pub fn to_annotation(&self) -> HunkAnnotation {
         HunkAnnotation {

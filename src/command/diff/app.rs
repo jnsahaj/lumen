@@ -5,8 +5,8 @@ use std::time::Duration;
 
 use crossterm::{
     event::{
-        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
-        MouseEventKind,
+        self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste,
+        EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind,
     },
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     ExecutableCommand,
@@ -194,6 +194,7 @@ fn run_app_internal(
     enable_raw_mode()?;
     io::stdout().execute(EnterAlternateScreen)?;
     io::stdout().execute(EnableMouseCapture)?;
+    io::stdout().execute(EnableBracketedPaste)?;
 
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
 
@@ -383,6 +384,11 @@ fn run_app_internal(
                                 annotation_editor = None;
                             }
                         }
+                    }
+                }
+                Event::Paste(text) if annotation_editor.is_some() && active_modal.is_none() => {
+                    if let Some(editor) = annotation_editor.as_mut() {
+                        editor.insert_text(&text);
                     }
                 }
                 Event::Key(key) if key.kind == KeyEventKind::Press && active_modal.is_some() => {
@@ -1330,6 +1336,7 @@ fn run_app_internal(
                         }
                         KeyCode::Char('e') => {
                             if !state.file_diffs.is_empty() {
+                                io::stdout().execute(DisableBracketedPaste)?;
                                 io::stdout().execute(DisableMouseCapture)?;
                                 io::stdout().execute(LeaveAlternateScreen)?;
                                 disable_raw_mode()?;
@@ -1373,6 +1380,7 @@ fn run_app_internal(
                                 enable_raw_mode()?;
                                 io::stdout().execute(EnterAlternateScreen)?;
                                 io::stdout().execute(EnableMouseCapture)?;
+                                io::stdout().execute(EnableBracketedPaste)?;
                                 terminal.clear()?;
                             }
                         }
@@ -1592,6 +1600,7 @@ fn run_app_internal(
         }
     }
 
+    io::stdout().execute(DisableBracketedPaste)?;
     io::stdout().execute(DisableMouseCapture)?;
     disable_raw_mode()?;
     io::stdout().execute(LeaveAlternateScreen)?;
