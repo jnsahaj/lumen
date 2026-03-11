@@ -303,6 +303,69 @@ mod tests {
     use std::fs;
 
     #[test]
+    fn test_load_file_diffs_working_tree_untracked_in_new_dir() {
+        let _lock = crate::vcs::test_utils::cwd_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = make_temp_dir("git-diff-wt-untracked-dir");
+        let original = std::env::current_dir().expect("get cwd");
+
+        git(&dir, &["init"]);
+        git(&dir, &["config", "user.email", "test@example.com"]);
+        git(&dir, &["config", "user.name", "Test User"]);
+
+        // Initial commit
+        fs::write(dir.join("existing.txt"), "existing content\n").expect("write existing");
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-m", "initial"]);
+
+        // Create untracked files in a NEW directory
+        fs::create_dir_all(dir.join("new_dir")).expect("create new dir");
+        fs::write(dir.join("new_dir/file1.txt"), "file 1\n").expect("write file1");
+        fs::write(dir.join("new_dir/file2.txt"), "file 2\n").expect("write file2");
+
+        std::env::set_current_dir(&dir).expect("set cwd");
+
+        let backend = GitBackend::from_cwd().expect("should open repo");
+        let options = super::super::DiffOptions {
+            reference: None,
+            pr: None,
+            file: None,
+            watch: false,
+            theme: None,
+            stacked: false,
+            focus: None,
+        };
+
+        let diffs = load_file_diffs(&options, &backend);
+        let filenames: Vec<&str> = diffs.iter().map(|d| d.filename.as_str()).collect();
+
+        // Should have individual files from the untracked directory, not just "new_dir/"
+        assert!(
+            diffs.iter().any(|d| d.filename == "new_dir/file1.txt"),
+            "should include new_dir/file1.txt, got: {:?}",
+            filenames
+        );
+        assert!(
+            diffs.iter().any(|d| d.filename == "new_dir/file2.txt"),
+            "should include new_dir/file2.txt, got: {:?}",
+            filenames
+        );
+
+        // Verify they're detected as Added with correct content
+        let file1 = diffs
+            .iter()
+            .find(|d| d.filename == "new_dir/file1.txt")
+            .unwrap();
+        assert_eq!(file1.status, FileStatus::Added);
+        assert!(file1.old_content.is_empty());
+        assert_eq!(file1.new_content, "file 1\n");
+
+        let _ = std::env::set_current_dir(&original);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn test_load_single_commit_diffs_added_file() {
         let _repo = RepoGuard::new();
         let backend = GitBackend::from_cwd().expect("should open repo");

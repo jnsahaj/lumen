@@ -591,6 +591,7 @@ impl VcsBackend for GitBackend {
 
         let mut opts = StatusOptions::new();
         opts.include_untracked(true);
+        opts.recurse_untracked_dirs(true);
         opts.exclude_submodules(true);
         opts.include_ignored(false);
 
