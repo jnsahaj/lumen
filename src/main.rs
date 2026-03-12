@@ -29,6 +29,11 @@ async fn main() {
 async fn run() -> Result<(), LumenError> {
     let cli = Cli::parse();
 
+    if let Commands::Completion { shell } = &cli.command {
+        command::completion::generate_completions(*shell);
+        return Ok(());
+    }
+
     let config = match LumenConfig::build(&cli) {
         Ok(config) => config,
         Err(e) => return Err(e),
@@ -132,6 +137,7 @@ async fn run() -> Result<(), LumenError> {
         Commands::Configure => {
             command::configure::ConfigureCommand::execute()?;
         }
+        Commands::Completion { .. } => unreachable!("completion handled before config"),
     }
 
     Ok(())
