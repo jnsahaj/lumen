@@ -754,7 +754,11 @@ impl AppState {
         self.annotations.retain(|a| a.id != id);
     }
 
-    /// Format all annotations for export
+    /// Format all annotations for export (GitHub PR review comment style).
+    ///
+    /// Uses `path`, `line`/`start_line`, and `side` references instead of
+    /// embedding full source code — matching the shape of the GitHub Pull
+    /// Request review comment API.
     pub fn format_annotations_for_export(&self) -> String {
         let mut result = String::new();
 
@@ -767,44 +771,25 @@ impl AppState {
                 result.push_str("---\n\n");
             }
 
-            // Header: filename with line range
             match &ann.target {
                 AnnotationTarget::File => {
                     result.push_str(&format!("**{}**\n\n", ann.filename));
                 }
                 AnnotationTarget::LineRange { panel, start_line, end_line, .. } => {
                     let side = match panel {
-                        DiffPanelFocus::Old => " (old)",
-                        _ => "",
+                        DiffPanelFocus::Old => "LEFT",
+                        _ => "RIGHT",
                     };
                     if start_line == end_line {
-                        result.push_str(&format!("**{}:{}**{}\n\n", ann.filename, start_line, side));
+                        result.push_str(&format!(
+                            "**{}** line {} ({})\n\n",
+                            ann.filename, start_line, side,
+                        ));
                     } else {
-                        result.push_str(&format!("**{}:{}-{}**{}\n\n", ann.filename, start_line, end_line, side));
-                    }
-
-                    // Include quoted source lines
-                    let file_content = match panel {
-                        DiffPanelFocus::Old => self.file_diffs.iter()
-                            .find(|d| d.filename == ann.filename)
-                            .map(|d| &d.old_content),
-                        _ => self.file_diffs.iter()
-                            .find(|d| d.filename == ann.filename)
-                            .map(|d| &d.new_content),
-                    };
-
-                    if let Some(content) = file_content {
-                        let source_lines: Vec<&str> = content.lines().collect();
-                        let start = start_line.saturating_sub(1); // 1-indexed → 0-indexed
-                        let end = (*end_line).min(source_lines.len());
-                        if start < source_lines.len() {
-                            result.push_str("```\n");
-                            for line_no in start..end {
-                                result.push_str(source_lines[line_no]);
-                                result.push('\n');
-                            }
-                            result.push_str("```\n\n");
-                        }
+                        result.push_str(&format!(
+                            "**{}** lines {}-{} ({})\n\n",
+                            ann.filename, start_line, end_line, side,
+                        ));
                     }
                 }
             }
