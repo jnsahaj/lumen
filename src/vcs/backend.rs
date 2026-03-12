@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::path::PathBuf;
 use thiserror::Error;
 
 /// Error types for VCS operations.
@@ -128,6 +129,10 @@ pub trait VcsBackend {
         from: &str,
         to: &str,
     ) -> Result<Vec<StackedCommitInfo>, VcsError>;
+
+    /// Get the workspace/repository root directory.
+    /// Used for resolving relative paths when reading working tree files.
+    fn get_workspace_root(&self) -> PathBuf;
 
     /// Get the name of this VCS backend ("git" or "jj").
     fn name(&self) -> &'static str;

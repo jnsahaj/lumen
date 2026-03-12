@@ -102,8 +102,9 @@ pub fn get_new_content(filename: &str, refs: &DiffRefs, backend: &dyn VcsBackend
             .get_file_content_at_ref(to, Path::new(filename))
             .unwrap_or_default(),
         DiffRefs::WorkingTree => {
-            // Read from working tree (actual filesystem)
-            fs::read_to_string(filename).unwrap_or_default()
+            // Read from working tree (actual filesystem) using workspace root
+            let full_path = backend.get_workspace_root().join(filename);
+            fs::read_to_string(full_path).unwrap_or_default()
         }
     }
 }
