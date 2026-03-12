@@ -124,20 +124,21 @@ impl PanelLayout {
         let rel_x = x.saturating_sub(panel_x);
 
         // Layout within panel: [focus_indicator 1][line_num 4][space 1][content...]
-        // Old panel always has focus indicator, new panel only in fullscreen mode
-        let gutter_start = match panel {
-            DiffPanelFocus::Old => self.focus_indicator_width,
+        // Clicking anywhere in the left margin (focus indicator + line numbers + space)
+        // should trigger line selection. So gutter starts at 0 for panels with focus indicator.
+        let gutter_start = 0;
+        let gutter_end = match panel {
+            DiffPanelFocus::Old => self.focus_indicator_width + self.gutter_width,
             DiffPanelFocus::New => {
                 if self.diff_fullscreen == DiffFullscreen::NewOnly {
-                    self.focus_indicator_width
+                    self.focus_indicator_width + self.gutter_width
                 } else {
-                    0
+                    self.gutter_width
                 }
             }
             DiffPanelFocus::None => return false,
         };
 
-        let gutter_end = gutter_start + self.gutter_width;
         rel_x >= gutter_start && rel_x < gutter_end
     }
 

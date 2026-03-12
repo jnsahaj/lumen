@@ -3,13 +3,9 @@ use std::time::SystemTime;
 
 use crate::command::diff::diff_algo::{compute_side_by_side, find_hunk_starts};
 
-/// Maximum number of diff lines to include inline when exporting annotations.
-/// Hunks with more lines than this will not include the diff content in the export
-/// to keep the output concise.
-const MAX_EXPORT_DIFF_LINES: usize = 5;
 use crate::command::diff::search::SearchState;
 use crate::command::diff::types::{
-    build_file_tree, ChangeType, CursorPosition, DiffFullscreen, DiffLine, DiffPanelFocus,
+    build_file_tree, CursorPosition, DiffFullscreen, DiffLine, DiffPanelFocus,
     DiffViewSettings, FileDiff, FocusedPanel, Selection, SelectionMode, SidebarItem,
 };
 use crate::vcs::StackedCommitInfo;
@@ -69,27 +65,33 @@ fn build_sidebar_visible_indices(
     visible
 }
 
-/// An annotation attached to a specific hunk in a file.
+/// The target of an annotation: either a whole file or a specific line range on one panel.
+#[derive(Clone)]
+pub enum AnnotationTarget {
+    /// Annotation applies to the whole file
+    File,
+    /// Annotation applies to a range of lines on a specific panel
+    LineRange {
+        panel: DiffPanelFocus,
+        start_line: usize,
+        end_line: usize,
+    },
+}
+
+/// An annotation attached to a file or line range.
 ///
 /// Annotations allow users to add notes to code changes during review.
-/// Each annotation is uniquely identified by its file index and hunk index.
+/// Each annotation is uniquely identified by its `id`.
 #[derive(Clone)]
-pub struct HunkAnnotation {
-    /// Index of the file in the file_diffs vector
-    pub file_index: usize,
-    /// Index of the hunk within the file (0-based)
-    pub hunk_index: usize,
-    /// The annotation text content (supports multi-line)
-    pub content: String,
-    /// Line range in the new file (start_line, end_line) for display purposes
-    pub line_range: (usize, usize),
-    /// The filename for display in export and UI
+pub struct Annotation {
+    pub id: u64,
     pub filename: String,
-    /// When the annotation was created
+    pub target: AnnotationTarget,
+    pub content: String,
     pub created_at: SystemTime,
 }
 
-impl HunkAnnotation {
+impl Annotation {
     /// Format the creation time as HH:MM in local time
     #[cfg(feature = "jj")]
     pub fn format_time(&self) -> String {
@@ -107,6 +109,32 @@ impl HunkAnnotation {
         let hours = (secs / 3600) % 24;
         let minutes = (secs / 60) % 60;
         format!("{:02}:{:02}", hours, minutes)
+    }
+
+    /// Get a display label for the target type
+    pub fn target_label(&self) -> &'static str {
+        match &self.target {
+            AnnotationTarget::File => "file",
+            AnnotationTarget::LineRange { panel, .. } => match panel {
+                DiffPanelFocus::Old => "old",
+                DiffPanelFocus::New => "new",
+                DiffPanelFocus::None => "new",
+            },
+        }
+    }
+
+    /// Get the line range display string
+    pub fn line_range_display(&self) -> String {
+        match &self.target {
+            AnnotationTarget::File => String::new(),
+            AnnotationTarget::LineRange { start_line, end_line, .. } => {
+                if start_line == end_line {
+                    format!("L{}", start_line)
+                } else {
+                    format!("L{}-{}", start_line, end_line)
+                }
+            }
+        }
     }
 }
 
@@ -131,7 +159,8 @@ pub struct AppState {
     pub needs_reload: bool,
     pub focused_hunk: Option<usize>,
     // Annotation fields
-    pub annotations: Vec<HunkAnnotation>,
+    pub annotations: Vec<Annotation>,
+    annotation_next_id: u64,
     // Stacked mode fields
     pub stacked_mode: bool,
     pub stacked_commits: Vec<StackedCommitInfo>,
@@ -154,6 +183,14 @@ pub struct AppState {
     cached_side_by_side: Option<(usize, Vec<DiffLine>)>,
     /// Cached hunk starts for current file
     cached_hunks: Option<(usize, Vec<usize>)>,
+    /// Number of non-content rows at the top of the rendered diff (context lines + file annotations).
+    /// Set by render_diff each frame, used by mouse handlers for coordinate mapping.
+    pub content_row_offset: usize,
+    /// Annotation overlay gaps within the content area. Each entry is
+    /// `(content_line_after, gap_height)` where `content_line_after` is the 0-based
+    /// visible content line index after which an overlay gap of `gap_height` rows appears.
+    /// Used by mouse handlers to correctly map screen rows to side_by_side indices.
+    pub annotation_overlay_gaps: Vec<(usize, usize)>,
 }
 
 impl AppState {
@@ -217,6 +254,7 @@ impl AppState {
             needs_reload: false,
             focused_hunk,
             annotations: Vec::new(),
+            annotation_next_id: 0,
             stacked_mode: false,
             stacked_commits: Vec::new(),
             current_commit_index: 0,
@@ -228,6 +266,8 @@ impl AppState {
             is_dragging: false,
             cached_side_by_side: None,
             cached_hunks: None,
+            content_row_offset: 0,
+            annotation_overlay_gaps: Vec::new(),
         }
     }
 
@@ -274,10 +314,103 @@ impl AppState {
         &self.cached_hunks.as_ref().unwrap().1
     }
 
+    /// Ensure the side_by_side and hunk caches are populated for the current file.
+    /// Call this before using `side_by_side_ref()` or `hunks_ref()`.
+    pub fn ensure_cache(&mut self) {
+        if self.file_diffs.is_empty() {
+            return;
+        }
+        let current = self.current_file;
+        let needs_recompute = match &self.cached_side_by_side {
+            Some((cached_file, _)) => *cached_file != current,
+            None => true,
+        };
+        if needs_recompute {
+            let diff = &self.file_diffs[current];
+            let sbs = compute_side_by_side(
+                &diff.old_content,
+                &diff.new_content,
+                self.settings.tab_width,
+            );
+            let hnks = find_hunk_starts(&sbs);
+            self.cached_side_by_side = Some((current, sbs));
+            self.cached_hunks = Some((current, hnks));
+        }
+    }
+
+    /// Get an immutable reference to the cached side_by_side data.
+    /// Must call `ensure_cache()` first.
+    pub fn side_by_side_ref(&self) -> &[DiffLine] {
+        match &self.cached_side_by_side {
+            Some((_, ref data)) => data,
+            None => &[],
+        }
+    }
+
+    /// Get an immutable reference to the cached hunk starts.
+    /// Must call `ensure_cache()` first.
+    pub fn hunks_ref(&self) -> &[usize] {
+        match &self.cached_hunks {
+            Some((_, ref data)) => data,
+            None => &[],
+        }
+    }
+
+    /// Ensure cache is populated and update search matches.
+    /// Combines the mutable cache population with search update to avoid borrow conflicts.
+    pub fn update_search_matches(&mut self) {
+        self.ensure_cache();
+        let sbs = match &self.cached_side_by_side {
+            Some((_, data)) => data.as_slice(),
+            None => &[],
+        };
+        self.search_state.update_matches(sbs, self.diff_fullscreen);
+    }
+
     /// Invalidate the cache (call when file changes)
     pub fn invalidate_cache(&mut self) {
         self.cached_side_by_side = None;
         self.cached_hunks = None;
+        self.content_row_offset = 0;
+        self.annotation_overlay_gaps.clear();
+    }
+
+    /// Adjust a screen-relative content row for annotation overlay gaps.
+    /// Returns `Some(adjusted_content_y)` for content rows, or `None` if the
+    /// click landed inside an annotation overlay.
+    pub fn adjust_for_overlay_gaps(&self, content_y: usize) -> Option<usize> {
+        let mut cumulative = 0;
+        for &(after_line, gap_height) in &self.annotation_overlay_gaps {
+            let gap_screen_start = after_line + 1 + cumulative;
+            let gap_screen_end = gap_screen_start + gap_height;
+            if content_y < gap_screen_start {
+                break; // Before this gap
+            }
+            if content_y < gap_screen_end {
+                return None; // Inside an overlay gap
+            }
+            cumulative += gap_height;
+        }
+        Some(content_y - cumulative)
+    }
+
+    /// Like `adjust_for_overlay_gaps`, but if the position is inside a gap,
+    /// returns the content line just before the gap instead of None.
+    /// Used for drag operations where we always need a valid line.
+    pub fn adjust_for_overlay_gaps_clamped(&self, content_y: usize) -> usize {
+        let mut cumulative = 0;
+        for &(after_line, gap_height) in &self.annotation_overlay_gaps {
+            let gap_screen_start = after_line + 1 + cumulative;
+            let gap_screen_end = gap_screen_start + gap_height;
+            if content_y < gap_screen_start {
+                break;
+            }
+            if content_y < gap_screen_end {
+                return after_line; // Map to the content line just before the gap
+            }
+            cumulative += gap_height;
+        }
+        content_y - cumulative
     }
 
     /// Clear all selection state
@@ -512,39 +645,9 @@ impl AppState {
         self.file_diffs = file_diffs;
         self.sidebar_items = build_file_tree(&self.file_diffs);
 
-        // Update annotations: remap file indices and remove stale ones
-        // Build a map of filename -> (new_file_index, hunk_count)
-        let file_info: HashMap<&str, (usize, usize)> = self
-            .file_diffs
-            .iter()
-            .enumerate()
-            .map(|(idx, diff)| {
-                let side_by_side = compute_side_by_side(
-                    &diff.old_content,
-                    &diff.new_content,
-                    self.settings.tab_width,
-                );
-                let hunk_count = find_hunk_starts(&side_by_side).len();
-                (diff.filename.as_str(), (idx, hunk_count))
-            })
-            .collect();
-
-        // Filter and update annotations
-        self.annotations.retain_mut(|ann| {
-            if let Some(&(new_file_index, hunk_count)) = file_info.get(ann.filename.as_str()) {
-                // File still exists - check if hunk index is valid
-                if ann.hunk_index < hunk_count {
-                    ann.file_index = new_file_index;
-                    true
-                } else {
-                    // Hunk no longer exists
-                    false
-                }
-            } else {
-                // File no longer exists
-                false
-            }
-        });
+        // Retain annotations whose file still exists
+        let filenames: HashSet<&str> = self.file_diffs.iter().map(|f| f.filename.as_str()).collect();
+        self.annotations.retain(|ann| filenames.contains(ann.filename.as_str()));
 
         // Convert viewed filenames back to indices in the new file_diffs
         self.viewed_files = self
@@ -603,198 +706,107 @@ impl AppState {
         self.focused_hunk = if hunks.is_empty() { None } else { Some(0) };
     }
 
-    /// Get annotation for a specific hunk in a file
-    pub fn get_annotation(&self, file_index: usize, hunk_index: usize) -> Option<&HunkAnnotation> {
-        self.annotations
-            .iter()
-            .find(|a| a.file_index == file_index && a.hunk_index == hunk_index)
+    /// Get annotation by id
+    pub fn get_annotation_by_id(&self, id: u64) -> Option<&Annotation> {
+        self.annotations.iter().find(|a| a.id == id)
     }
 
-    /// Add or update an annotation
-    pub fn set_annotation(&mut self, annotation: HunkAnnotation) {
-        if let Some(existing) = self
-            .annotations
-            .iter_mut()
-            .find(|a| a.file_index == annotation.file_index && a.hunk_index == annotation.hunk_index)
-        {
-            *existing = annotation;
-        } else {
-            self.annotations.push(annotation);
+    /// Get all annotations for a file
+    #[allow(dead_code)]
+    pub fn get_annotations_for_file(&self, filename: &str) -> Vec<&Annotation> {
+        self.annotations
+            .iter()
+            .filter(|a| a.filename == filename)
+            .collect()
+    }
+
+    /// Add a new annotation, returns its id
+    pub fn add_annotation(&mut self, filename: String, target: AnnotationTarget, content: String, created_at: SystemTime) -> u64 {
+        let id = self.annotation_next_id;
+        self.annotation_next_id += 1;
+        self.annotations.push(Annotation {
+            id,
+            filename,
+            target,
+            content,
+            created_at,
+        });
+        id
+    }
+
+    /// Update an existing annotation's content
+    pub fn update_annotation(&mut self, id: u64, content: String) {
+        if let Some(ann) = self.annotations.iter_mut().find(|a| a.id == id) {
+            ann.content = content;
         }
     }
 
-    /// Remove an annotation
-    pub fn remove_annotation(&mut self, file_index: usize, hunk_index: usize) {
-        self.annotations
-            .retain(|a| !(a.file_index == file_index && a.hunk_index == hunk_index));
+    /// Remove an annotation by id
+    pub fn remove_annotation(&mut self, id: u64) {
+        self.annotations.retain(|a| a.id != id);
     }
 
-    /// Format all annotations for export with full diff context
+    /// Format all annotations for export
     pub fn format_annotations_for_export(&self) -> String {
         let mut result = String::new();
 
-        // Add header with diff reference context
         if let Some(ref reference) = self.diff_reference {
-            result.push_str(&format!("Annotations for diff: {}\n\n", reference));
+            result.push_str(&format!("# {}\n\n", reference));
         }
 
-        let annotations_text = self
-            .annotations
-            .iter()
-            .map(|a| {
-                // Try to get the diff content for this hunk
-                let diff_content = self.get_hunk_diff_content(a.file_index, a.hunk_index);
-
-                let mut output = format!("- {}", a.filename);
-
-                // Add line info based on what we have
-                if let Some((old_range, new_range, _)) = &diff_content {
-                    // Format line ranges intelligently
-                    match (old_range, new_range) {
-                        (Some(_), Some((new_start, new_end))) => {
-                            // Modified: show new file lines
-                            if new_start == new_end {
-                                output.push_str(&format!(":L{}", new_start));
-                            } else {
-                                output.push_str(&format!(":L{}-{}", new_start, new_end));
-                            }
-                        }
-                        (Some((old_start, old_end)), None) => {
-                            // Pure deletion: indicate where it was in the base
-                            let base_ref = self
-                                .diff_reference
-                                .as_ref()
-                                .and_then(|r| {
-                                    // Check for three-dot range first, then two-dot, then single ref
-                                    if let Some((base, _)) = r.split_once("...") {
-                                        Some(base)
-                                    } else if let Some((base, _)) = r.split_once("..") {
-                                        Some(base)
-                                    } else {
-                                        Some(r.as_str())
-                                    }
-                                })
-                                .unwrap_or("base");
-                            if old_start == old_end {
-                                output.push_str(&format!(" (deleted from {}:L{})", base_ref, old_start));
-                            } else {
-                                output.push_str(&format!(
-                                    " (deleted from {}:L{}-{})",
-                                    base_ref, old_start, old_end
-                                ));
-                            }
-                        }
-                        (None, Some((new_start, new_end))) => {
-                            // Pure addition
-                            if new_start == new_end {
-                                output.push_str(&format!(":L{}", new_start));
-                            } else {
-                                output.push_str(&format!(":L{}-{}", new_start, new_end));
-                            }
-                        }
-                        (None, None) => {
-                            // Fallback to stored line_range
-                            output.push_str(&format!(":L{}-{}", a.line_range.0, a.line_range.1));
-                        }
-                    }
-                } else {
-                    // Fallback if we can't compute diff
-                    output.push_str(&format!(":L{}-{}", a.line_range.0, a.line_range.1));
-                }
-
-                output.push('\n');
-
-                // Add diff content if available and small enough
-                if let Some((_, _, lines)) = diff_content {
-                    let line_count = lines.lines().count();
-                    if line_count > 0 && line_count <= MAX_EXPORT_DIFF_LINES {
-                        output.push_str("```diff\n");
-                        output.push_str(&lines);
-                        output.push_str("```\n");
-                    }
-                }
-
-                // Add the annotation
-                output.push_str(&format!("comment: {}\n", a.content));
-                output
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        result.push_str(&annotations_text);
-        result
-    }
-
-    /// Get the diff content for a specific hunk
-    /// Returns (old_line_range, new_line_range, diff_lines)
-    fn get_hunk_diff_content(
-        &self,
-        file_index: usize,
-        hunk_index: usize,
-    ) -> Option<(Option<(usize, usize)>, Option<(usize, usize)>, String)> {
-        let diff = self.file_diffs.get(file_index)?;
-        let side_by_side =
-            compute_side_by_side(&diff.old_content, &diff.new_content, self.settings.tab_width);
-        let hunks = find_hunk_starts(&side_by_side);
-
-        let hunk_start = *hunks.get(hunk_index)?;
-        let next_hunk_start = hunks.get(hunk_index + 1).copied().unwrap_or(side_by_side.len());
-
-        let mut diff_lines = String::new();
-        let mut old_start: Option<usize> = None;
-        let mut old_end: Option<usize> = None;
-        let mut new_start: Option<usize> = None;
-        let mut new_end: Option<usize> = None;
-
-        for i in hunk_start..next_hunk_start {
-            let dl = &side_by_side[i];
-            if matches!(dl.change_type, ChangeType::Equal) {
-                continue;
+        for (i, ann) in self.annotations.iter().enumerate() {
+            if i > 0 {
+                result.push_str("---\n\n");
             }
 
-            match dl.change_type {
-                ChangeType::Delete => {
-                    if let Some((num, text)) = &dl.old_line {
-                        diff_lines.push_str(&format!("- {}\n", text));
-                        if old_start.is_none() {
-                            old_start = Some(*num);
+            // Header: filename with line range
+            match &ann.target {
+                AnnotationTarget::File => {
+                    result.push_str(&format!("**{}**\n\n", ann.filename));
+                }
+                AnnotationTarget::LineRange { panel, start_line, end_line, .. } => {
+                    let side = match panel {
+                        DiffPanelFocus::Old => " (old)",
+                        _ => "",
+                    };
+                    if start_line == end_line {
+                        result.push_str(&format!("**{}:{}**{}\n\n", ann.filename, start_line, side));
+                    } else {
+                        result.push_str(&format!("**{}:{}-{}**{}\n\n", ann.filename, start_line, end_line, side));
+                    }
+
+                    // Include quoted source lines
+                    let file_content = match panel {
+                        DiffPanelFocus::Old => self.file_diffs.iter()
+                            .find(|d| d.filename == ann.filename)
+                            .map(|d| &d.old_content),
+                        _ => self.file_diffs.iter()
+                            .find(|d| d.filename == ann.filename)
+                            .map(|d| &d.new_content),
+                    };
+
+                    if let Some(content) = file_content {
+                        let source_lines: Vec<&str> = content.lines().collect();
+                        let start = start_line.saturating_sub(1); // 1-indexed → 0-indexed
+                        let end = (*end_line).min(source_lines.len());
+                        if start < source_lines.len() {
+                            result.push_str("```\n");
+                            for line_no in start..end {
+                                result.push_str(source_lines[line_no]);
+                                result.push('\n');
+                            }
+                            result.push_str("```\n\n");
                         }
-                        old_end = Some(*num);
                     }
                 }
-                ChangeType::Insert => {
-                    if let Some((num, text)) = &dl.new_line {
-                        diff_lines.push_str(&format!("+ {}\n", text));
-                        if new_start.is_none() {
-                            new_start = Some(*num);
-                        }
-                        new_end = Some(*num);
-                    }
-                }
-                ChangeType::Modified => {
-                    if let Some((num, text)) = &dl.old_line {
-                        diff_lines.push_str(&format!("- {}\n", text));
-                        if old_start.is_none() {
-                            old_start = Some(*num);
-                        }
-                        old_end = Some(*num);
-                    }
-                    if let Some((num, text)) = &dl.new_line {
-                        diff_lines.push_str(&format!("+ {}\n", text));
-                        if new_start.is_none() {
-                            new_start = Some(*num);
-                        }
-                        new_end = Some(*num);
-                    }
-                }
-                ChangeType::Equal => {}
             }
+
+            // Comment body
+            result.push_str(&ann.content);
+            result.push_str("\n\n");
         }
 
-        let old_range = old_start.zip(old_end);
-        let new_range = new_start.zip(new_end);
-
-        Some((old_range, new_range, diff_lines))
+        result.trim_end().to_string()
     }
 }
 pub fn adjust_scroll_to_line(
