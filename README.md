@@ -192,13 +192,16 @@ LUMEN_THEME=catppuccin-mocha lumen diff
 
 Priority: CLI flag > config file > `LUMEN_THEME` env var > OS auto-detect.
 
-#### Annotations
+#### Selection & Annotations
 
-Add comments to hunks during code review:
-- `i`: Add/edit annotation on focused hunk
-- `I`: View all annotations (edit, delete, copy, or export)
+**Selection**: Click-drag in the content area for character-level selection, or on line numbers for line-level selection. Selected text can be copied or annotated.
 
-Annotations can be copied to clipboard or exported to a file for sharing.
+**Annotations**: Add review comments at three levels of granularity:
+- **Selection** — select lines with mouse, press `i` to annotate the selected range
+- **Hunk** — focus a hunk with `{`/`}`, press `i` to annotate the hunk
+- **File** — press `i` with no selection or hunk focus to annotate the whole file
+
+Annotated lines display a `▍` gutter indicator. Use `I` to view, edit, delete, copy, or export all annotations.
 
 #### Keybindings
 
@@ -207,7 +210,9 @@ Annotations can be copied to clipboard or exported to a file for sharing.
 - `tab`: Toggle sidebar
 - `space`: Mark file as viewed
 - `e`: Open file in editor
-- `i/I`: Add annotation / view all annotations
+- `y`: Copy selection (or filename)
+- `i`: Annotate selection / hunk / file
+- `I`: View all annotations
 - `ctrl+h/l`: Previous/next commit (stacked mode)
 - `?`: Show all keybindings
 

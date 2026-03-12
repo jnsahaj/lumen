@@ -178,6 +178,8 @@ pub struct AppState {
     pub selection: Selection,
     /// Whether a mouse drag is in progress
     pub is_dragging: bool,
+    /// Whether to show the selection action tooltip
+    pub show_selection_tooltip: bool,
     // Cached diff computation
     /// Cached side_by_side diff for current file (invalidated on file change)
     cached_side_by_side: Option<(usize, Vec<DiffLine>)>,
@@ -264,6 +266,7 @@ impl AppState {
             diff_panel_focus: DiffPanelFocus::default(),
             selection: Selection::default(),
             is_dragging: false,
+            show_selection_tooltip: false,
             cached_side_by_side: None,
             cached_hunks: None,
             content_row_offset: 0,
@@ -418,6 +421,7 @@ impl AppState {
         self.diff_panel_focus = DiffPanelFocus::None;
         self.selection = Selection::default();
         self.is_dragging = false;
+        self.show_selection_tooltip = false;
     }
 
     /// Start a new selection
@@ -442,6 +446,10 @@ impl AppState {
     /// End the drag operation but keep the selection
     pub fn end_drag(&mut self) {
         self.is_dragging = false;
+        // Show tooltip only if there's an actual selection (not just a click)
+        if self.selection.is_active() && self.selection.anchor != self.selection.head {
+            self.show_selection_tooltip = true;
+        }
     }
 
     /// Set the VCS backend name

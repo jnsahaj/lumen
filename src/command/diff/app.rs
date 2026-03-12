@@ -322,6 +322,83 @@ fn run_app_internal(
                     &state.selection,
                 );
                 row_offset.set(offset);
+
+                // Selection action tooltip (shown after drag completes)
+                if state.show_selection_tooltip
+                    && state.selection.is_active()
+                    && !state.is_dragging
+                    && annotation_editor.is_none()
+                    && active_modal.is_none()
+                {
+                    let t = theme::get();
+                    let term = frame.area();
+                    let header_h: u16 = if state.stacked_mode { 1 } else { 0 };
+                    let sidebar_w: u16 = if state.show_sidebar {
+                        (term.width / 4).clamp(20, 35)
+                    } else {
+                        0
+                    };
+                    let layout = PanelLayout::calculate(
+                        term.width,
+                        sidebar_w,
+                        state.show_sidebar,
+                        state.diff_fullscreen,
+                    );
+
+                    let sel = &state.selection;
+                    let (_, sel_end) = sel.normalized_range();
+                    let scroll_usize = state.scroll as usize;
+
+                    if sel_end.line >= scroll_usize {
+                        let content_y = sel_end.line - scroll_usize;
+
+                        // Account for annotation overlay gaps
+                        let mut cum_gaps: u16 = 0;
+                        for &(after_line, gap_h) in &gaps {
+                            if after_line < content_y {
+                                cum_gaps += gap_h as u16;
+                            }
+                        }
+
+                        // Position below the selection end
+                        let screen_y = header_h + 1 + offset as u16 + content_y as u16 + cum_gaps + 1;
+
+                        let (panel_x, panel_w) = match sel.panel {
+                            DiffPanelFocus::Old => (layout.old_panel_x, layout.old_panel_width),
+                            DiffPanelFocus::New => (layout.new_panel_x, layout.new_panel_width),
+                            _ => (0, 0),
+                        };
+
+                        if panel_w > 0 && screen_y < term.height.saturating_sub(1) {
+                            let tip_w: u16 = 27;
+                            let tip_h: u16 = 1;
+
+                            let cx = layout.content_x_offset(sel.panel);
+                            let tip_x = (panel_x + cx).min(panel_x + panel_w.saturating_sub(tip_w + 1));
+
+                            let tip_area = Rect::new(tip_x, screen_y, tip_w.min(panel_w), tip_h);
+
+                            let bg = t.ui.footer_branch_bg;
+                            let key_style = Style::default().fg(t.ui.text_primary).bg(bg).bold();
+                            let desc_style = Style::default().fg(t.ui.text_muted).bg(bg);
+                            let tip_line = Line::from(vec![
+                                Span::styled(" i", key_style),
+                                Span::styled(" annotate ", desc_style),
+                                Span::styled("y", key_style),
+                                Span::styled(" copy ", desc_style),
+                                Span::styled("esc", key_style),
+                                Span::styled("   ", desc_style),
+                            ]);
+
+                            frame.render_widget(ratatui::widgets::Clear, tip_area);
+                            frame.render_widget(
+                                ratatui::widgets::Paragraph::new(tip_line).style(Style::default().bg(bg)),
+                                tip_area,
+                            );
+                        }
+                    }
+                }
+
                 *gaps_cell.borrow_mut() = gaps;
                 // Render annotation editor (on top of everything except modal)
                 if let Some(ref editor) = annotation_editor {
@@ -851,6 +928,7 @@ fn run_app_internal(
                     if key.code != KeyCode::Char('g') {
                         state.pending_key = PendingKey::None;
                     }
+                    state.show_selection_tooltip = false;
                     match key.code {
                         KeyCode::Esc | KeyCode::Char('c')
                             if (key.code == KeyCode::Esc
@@ -1687,11 +1765,15 @@ fn run_app_internal(
                                         ],
                                     },
                                     KeyBindSection {
-                                        title: "Annotations",
+                                        title: "Selection & Annotations",
                                         bindings: vec![
                                             KeyBind {
+                                                key: "y",
+                                                description: "Copy selection (or filename)",
+                                            },
+                                            KeyBind {
                                                 key: "i",
-                                                description: "Add annotation to focused hunk",
+                                                description: "Annotate selection / hunk / file",
                                             },
                                             KeyBind {
                                                 key: "I",
