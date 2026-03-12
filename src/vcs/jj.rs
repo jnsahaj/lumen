@@ -970,6 +970,10 @@ impl VcsBackend for JjBackend {
         })
     }
 
+    fn get_repository_root(&self) -> Result<std::path::PathBuf, VcsError> {
+        Ok(self.workspace.workspace_root().to_path_buf())
+    }
+
     fn name(&self) -> &'static str {
         "jj"
     }
