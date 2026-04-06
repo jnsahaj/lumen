@@ -14,7 +14,6 @@ use crossterm::{
 use ratatui::prelude::*;
 
 use super::coordinates::{extract_selected_text, PanelLayout};
-use super::diff_algo::{compute_side_by_side, find_hunk_starts};
 use super::git::{
     get_current_branch, load_file_diffs, load_pr_file_diffs, load_single_commit_diffs,
 };
@@ -275,9 +274,12 @@ fn run_app_internal(
         } else {
             // Use cached side_by_side (avoids recomputing diff every frame during drag etc.)
             state.update_search_matches();
+            // Ensure highlighters are cached (only recomputed when file changes)
+            state.get_highlighters();
             let diff = &state.file_diffs[state.current_file];
             let side_by_side = state.side_by_side_ref();
             let hunks = state.hunks_ref();
+            let (old_hl, new_hl) = state.highlighters_ref().unwrap();
             let hunk_count = hunks.len();
             let branch_fallback = get_current_branch(backend);
             let commit_ref = state
@@ -320,6 +322,8 @@ fn run_app_internal(
                     state.vcs_name,
                     &state.annotations,
                     &state.selection,
+                    old_hl,
+                    new_hl,
                 );
                 row_offset.set(offset);
 
@@ -422,13 +426,7 @@ fn run_app_internal(
             let visible_height = terminal.size()?.height.saturating_sub(2) as usize;
             let bottom_padding = 5;
             let max_scroll = if !state.file_diffs.is_empty() {
-                let diff = &state.file_diffs[state.current_file];
-                let total_lines = compute_side_by_side(
-                    &diff.old_content,
-                    &diff.new_content,
-                    state.settings.tab_width,
-                )
-                .len();
+                let total_lines = state.total_lines();
                 total_lines.saturating_sub(visible_height.saturating_sub(bottom_padding))
             } else {
                 0
@@ -441,6 +439,7 @@ fn run_app_internal(
                     match key.code {
                         KeyCode::Esc => {
                             state.search_state.cancel();
+                            state.mark_search_dirty();
                         }
                         KeyCode::Enter => {
                             state.search_state.confirm();
@@ -455,9 +454,11 @@ fn run_app_internal(
                         }
                         KeyCode::Backspace => {
                             state.search_state.pop_char();
+                            state.mark_search_dirty();
                         }
                         KeyCode::Char(c) => {
                             state.search_state.push_char(c);
+                            state.mark_search_dirty();
                         }
                         _ => {}
                     }
@@ -525,14 +526,10 @@ fn run_app_internal(
                                             state.select_file(file_index);
                                             // Scroll to annotation's line range
                                             if let super::state::AnnotationTarget::LineRange { panel, start_line, .. } = &target {
-                                                let diff = &state.file_diffs[file_index];
-                                                let sbs = compute_side_by_side(
-                                                    &diff.old_content,
-                                                    &diff.new_content,
-                                                    state.settings.tab_width,
-                                                );
+                                                state.ensure_cache();
+                                                let sbs = state.side_by_side_ref();
                                                 // Find the side_by_side index for start_line
-                                                if let Some(sbs_idx) = find_sbs_index_for_line(&sbs, *panel, *start_line) {
+                                                if let Some(sbs_idx) = find_sbs_index_for_line(sbs, *panel, *start_line) {
                                                     state.scroll = adjust_scroll_to_line(
                                                         sbs_idx,
                                                         state.scroll,
@@ -944,6 +941,7 @@ fn run_app_internal(
                                 && state.search_state.has_query() =>
                         {
                             state.search_state.clear();
+                            state.mark_search_dirty();
                         }
                         KeyCode::Char('q') | KeyCode::Esc => break 'main,
                         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -1064,6 +1062,7 @@ fn run_app_internal(
                                         DiffFullscreen::NewOnly => DiffFullscreen::None,
                                         _ => DiffFullscreen::NewOnly,
                                     };
+                                    state.mark_search_dirty();
                                 }
                             }
                         }
@@ -1075,11 +1074,13 @@ fn run_app_internal(
                                         DiffFullscreen::OldOnly => DiffFullscreen::None,
                                         _ => DiffFullscreen::OldOnly,
                                     };
+                                    state.mark_search_dirty();
                                 }
                             }
                         }
                         KeyCode::Char('=') => {
                             state.diff_fullscreen = DiffFullscreen::None;
+                            state.mark_search_dirty();
                         }
                         KeyCode::Down
                             if state.search_state.has_query()
@@ -1328,13 +1329,7 @@ fn run_app_internal(
                         KeyCode::Char('}') => {
                             if !state.file_diffs.is_empty() {
                                 state.clear_selection(); // Clear selection on hunk navigation
-                                let diff = &state.file_diffs[state.current_file];
-                                let side_by_side = compute_side_by_side(
-                                    &diff.old_content,
-                                    &diff.new_content,
-                                    state.settings.tab_width,
-                                );
-                                let hunks = find_hunk_starts(&side_by_side);
+                                let hunks = state.get_hunks().to_vec();
                                 let current_hunk = state.focused_hunk.unwrap_or(0);
                                 let next_hunk = if state.focused_hunk.is_none() {
                                     hunks
@@ -1358,13 +1353,7 @@ fn run_app_internal(
                         KeyCode::Char('{') => {
                             if !state.file_diffs.is_empty() {
                                 state.clear_selection(); // Clear selection on hunk navigation
-                                let diff = &state.file_diffs[state.current_file];
-                                let side_by_side = compute_side_by_side(
-                                    &diff.old_content,
-                                    &diff.new_content,
-                                    state.settings.tab_width,
-                                );
-                                let hunks = find_hunk_starts(&side_by_side);
+                                let hunks = state.get_hunks().to_vec();
                                 let current_hunk = state.focused_hunk.unwrap_or(hunks.len());
                                 let prev_hunk = if state.focused_hunk.is_none() {
                                     hunks
@@ -1434,12 +1423,9 @@ fn run_app_internal(
                                         DiffPanelFocus::New
                                     };
 
-                                    let sbs = compute_side_by_side(
-                                        &diff.old_content,
-                                        &diff.new_content,
-                                        state.settings.tab_width,
-                                    );
-                                    let hunks = find_hunk_starts(&sbs);
+                                    state.ensure_cache();
+                                    let sbs = state.side_by_side_ref();
+                                    let hunks = state.hunks_ref();
                                     let hunk_start = hunks.get(hunk_index).copied().unwrap_or(0);
                                     let next_hunk_start = hunks
                                         .get(hunk_index + 1)
@@ -1503,13 +1489,9 @@ fn run_app_internal(
                             if !state.file_diffs.is_empty() {
                                 // If selection is active, copy selected text
                                 if state.selection.is_active() {
-                                    let diff = &state.file_diffs[state.current_file];
-                                    let side_by_side = compute_side_by_side(
-                                        &diff.old_content,
-                                        &diff.new_content,
-                                        state.settings.tab_width,
-                                    );
-                                    if let Some(text) = extract_selected_text(&state.selection, &side_by_side) {
+                                    state.ensure_cache();
+                                    let side_by_side = state.side_by_side_ref();
+                                    if let Some(text) = extract_selected_text(&state.selection, side_by_side) {
                                         if let Ok(mut clipboard) = arboard::Clipboard::new() {
                                             let _ = clipboard.set_text(&text);
                                         }
@@ -1532,16 +1514,12 @@ fn run_app_internal(
 
                                 let editor =
                                     std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
-                                let filename = &state.file_diffs[state.current_file].filename;
+                                let filename = state.file_diffs[state.current_file].filename.clone();
 
                                 let line_arg = if let Some(hunk_idx) = state.focused_hunk {
-                                    let diff = &state.file_diffs[state.current_file];
-                                    let side_by_side = compute_side_by_side(
-                                        &diff.old_content,
-                                        &diff.new_content,
-                                        state.settings.tab_width,
-                                    );
-                                    let hunks = find_hunk_starts(&side_by_side);
+                                    state.ensure_cache();
+                                    let side_by_side = state.side_by_side_ref();
+                                    let hunks = state.hunks_ref();
                                     if let Some(&hunk_start) = hunks.get(hunk_idx) {
                                         side_by_side.get(hunk_start).and_then(|dl| {
                                             dl.new_line
@@ -1603,6 +1581,7 @@ fn run_app_internal(
                                 || key.modifiers.contains(KeyModifiers::CONTROL) =>
                         {
                             state.search_state.start_forward();
+                            state.mark_search_dirty();
                         }
                         KeyCode::Char('n') if state.search_state.has_query() => {
                             if let Some(line) = state.search_state.find_next() {

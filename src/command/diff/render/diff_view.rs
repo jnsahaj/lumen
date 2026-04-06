@@ -934,6 +934,8 @@ pub fn render_diff(
     vcs_name: &str,
     annotations: &[Annotation],
     selection: &Selection,
+    old_highlighter: &FileHighlighter,
+    new_highlighter: &FileHighlighter,
 ) -> (usize, Vec<(usize, usize)>) {
     let area = frame.area();
     let t = theme::get();
@@ -1042,11 +1044,6 @@ pub fn render_diff(
     // side_by_side is now passed as a parameter (pre-computed and cached)
     let line_stats = compute_line_stats(side_by_side);
 
-    // Pre-compute highlights for the entire file to properly handle multi-line constructs
-    // like JSDoc comments that span multiple lines
-    let old_highlighter = FileHighlighter::new(&diff.old_content, &diff.filename);
-    let new_highlighter = FileHighlighter::new(&diff.new_content, &diff.filename);
-
     let is_new_file = diff.old_content.is_empty() && !diff.new_content.is_empty();
     let is_deleted_file = !diff.old_content.is_empty() && diff.new_content.is_empty();
 
@@ -1107,7 +1104,7 @@ pub fn render_diff(
                 context_count,
                 &mut new_lines,
                 &diff.filename,
-                &new_highlighter,
+                new_highlighter,
                 settings.tab_width,
             );
         }
@@ -1156,7 +1153,7 @@ pub fn render_diff(
                     &diff.filename,
                     Some(t.diff.added_bg),
                     &matches,
-                    Some(&new_highlighter),
+                    Some(new_highlighter),
                     Some(*num),
                     settings.tab_width,
                 );
@@ -1243,7 +1240,7 @@ pub fn render_diff(
                 context_count,
                 &mut old_lines,
                 &diff.filename,
-                &old_highlighter,
+                old_highlighter,
                 settings.tab_width,
             );
         }
@@ -1292,7 +1289,7 @@ pub fn render_diff(
                     &diff.filename,
                     Some(t.diff.deleted_bg),
                     &matches,
-                    Some(&old_highlighter),
+                    Some(old_highlighter),
                     Some(*num),
                     settings.tab_width,
                 );
@@ -1400,7 +1397,7 @@ pub fn render_diff(
                     context_count,
                     &mut old_lines,
                     &diff.filename,
-                    &old_highlighter,
+                    old_highlighter,
                     settings.tab_width,
                 );
             }
@@ -1410,7 +1407,7 @@ pub fn render_diff(
                     context_count,
                     &mut new_lines,
                     &diff.filename,
-                    &new_highlighter,
+                    new_highlighter,
                     settings.tab_width,
                 );
             }
@@ -1500,7 +1497,7 @@ pub fn render_diff(
                                     t.diff.deleted_word_bg,
                                     &emphasis_ranges,
                                     &matches,
-                                    Some(&old_highlighter),
+                                    Some(old_highlighter),
                                     Some(*num),
                                     settings.tab_width,
                                 )
@@ -1510,7 +1507,7 @@ pub fn render_diff(
                                     &diff.filename,
                                     style.old_bg,
                                     &matches,
-                                    Some(&old_highlighter),
+                                    Some(old_highlighter),
                                     Some(*num),
                                     settings.tab_width,
                                 )
@@ -1521,7 +1518,7 @@ pub fn render_diff(
                                 &diff.filename,
                                 style.old_bg,
                                 &matches,
-                                Some(&old_highlighter),
+                                Some(old_highlighter),
                                 Some(*num),
                                 settings.tab_width,
                             )
@@ -1580,7 +1577,7 @@ pub fn render_diff(
                                     t.diff.added_word_bg,
                                     &emphasis_ranges,
                                     &matches,
-                                    Some(&new_highlighter),
+                                    Some(new_highlighter),
                                     Some(*num),
                                     settings.tab_width,
                                 )
@@ -1590,7 +1587,7 @@ pub fn render_diff(
                                     &diff.filename,
                                     style.new_bg,
                                     &matches,
-                                    Some(&new_highlighter),
+                                    Some(new_highlighter),
                                     Some(*num),
                                     settings.tab_width,
                                 )
@@ -1601,7 +1598,7 @@ pub fn render_diff(
                                 &diff.filename,
                                 style.new_bg,
                                 &matches,
-                                Some(&new_highlighter),
+                                Some(new_highlighter),
                                 Some(*num),
                                 settings.tab_width,
                             )

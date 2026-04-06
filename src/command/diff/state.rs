@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::SystemTime;
 
 use crate::command::diff::diff_algo::{compute_side_by_side, find_hunk_starts};
+use crate::command::diff::highlight::FileHighlighter;
 
 use crate::command::diff::search::SearchState;
 use crate::command::diff::types::{
@@ -185,6 +186,12 @@ pub struct AppState {
     cached_side_by_side: Option<(usize, Vec<DiffLine>)>,
     /// Cached hunk starts for current file
     cached_hunks: Option<(usize, Vec<usize>)>,
+    /// Cached total line count for current file (avoids recomputing diff for max_scroll)
+    cached_total_lines: Option<(usize, usize)>,
+    /// Cached syntax highlighters for current file (avoids re-parsing with tree-sitter every frame)
+    cached_highlighters: Option<(usize, FileHighlighter, FileHighlighter)>,
+    /// Whether search matches need to be recomputed
+    search_dirty: bool,
     /// Number of non-content rows at the top of the rendered diff (context lines + file annotations).
     /// Set by render_diff each frame, used by mouse handlers for coordinate mapping.
     pub content_row_offset: usize,
@@ -269,6 +276,9 @@ impl AppState {
             show_selection_tooltip: false,
             cached_side_by_side: None,
             cached_hunks: None,
+            cached_total_lines: None,
+            cached_highlighters: None,
+            search_dirty: true,
             content_row_offset: 0,
             annotation_overlay_gaps: Vec::new(),
         }
@@ -303,8 +313,10 @@ impl AppState {
                 self.settings.tab_width,
             );
             let hunks = find_hunk_starts(&side_by_side);
+            let total = side_by_side.len();
             self.cached_side_by_side = Some((current, side_by_side));
             self.cached_hunks = Some((current, hunks));
+            self.cached_total_lines = Some((current, total));
         }
 
         &self.cached_side_by_side.as_ref().unwrap().1
@@ -336,8 +348,10 @@ impl AppState {
                 self.settings.tab_width,
             );
             let hnks = find_hunk_starts(&sbs);
+            let total = sbs.len();
             self.cached_side_by_side = Some((current, sbs));
             self.cached_hunks = Some((current, hnks));
+            self.cached_total_lines = Some((current, total));
         }
     }
 
@@ -363,17 +377,64 @@ impl AppState {
     /// Combines the mutable cache population with search update to avoid borrow conflicts.
     pub fn update_search_matches(&mut self) {
         self.ensure_cache();
-        let sbs = match &self.cached_side_by_side {
-            Some((_, data)) => data.as_slice(),
-            None => &[],
+        if self.search_dirty {
+            let sbs = match &self.cached_side_by_side {
+                Some((_, data)) => data.as_slice(),
+                None => &[],
+            };
+            self.search_state.update_matches(sbs, self.diff_fullscreen);
+            self.search_dirty = false;
+        }
+    }
+
+    /// Mark search matches as needing recomputation
+    pub fn mark_search_dirty(&mut self) {
+        self.search_dirty = true;
+    }
+
+    /// Get the cached total line count for the current file.
+    /// Ensures cache is populated first.
+    pub fn total_lines(&mut self) -> usize {
+        self.ensure_cache();
+        self.cached_total_lines
+            .as_ref()
+            .map(|(_, n)| *n)
+            .unwrap_or(0)
+    }
+
+    /// Get cached FileHighlighters for the current file, creating them if needed.
+    /// Returns (old_highlighter, new_highlighter).
+    pub fn get_highlighters(&mut self) -> (&FileHighlighter, &FileHighlighter) {
+        let current = self.current_file;
+        let needs_recompute = match &self.cached_highlighters {
+            Some((cached_file, _, _)) => *cached_file != current,
+            None => true,
         };
-        self.search_state.update_matches(sbs, self.diff_fullscreen);
+        if needs_recompute {
+            let diff = &self.file_diffs[current];
+            let old_hl = FileHighlighter::new(&diff.old_content, &diff.filename);
+            let new_hl = FileHighlighter::new(&diff.new_content, &diff.filename);
+            self.cached_highlighters = Some((current, old_hl, new_hl));
+        }
+        let (_, old_hl, new_hl) = self.cached_highlighters.as_ref().unwrap();
+        (old_hl, new_hl)
+    }
+
+    /// Get cached highlighters without triggering recompute.
+    /// Must call get_highlighters() at least once first for current file.
+    pub fn highlighters_ref(&self) -> Option<(&FileHighlighter, &FileHighlighter)> {
+        self.cached_highlighters
+            .as_ref()
+            .map(|(_, old_hl, new_hl)| (old_hl, new_hl))
     }
 
     /// Invalidate the cache (call when file changes)
     pub fn invalidate_cache(&mut self) {
         self.cached_side_by_side = None;
         self.cached_hunks = None;
+        self.cached_total_lines = None;
+        self.cached_highlighters = None;
+        self.search_dirty = true;
         self.content_row_offset = 0;
         self.annotation_overlay_gaps.clear();
     }
@@ -680,22 +741,17 @@ impl AppState {
 
         self.rebuild_sidebar_visible();
 
+        self.needs_reload = false;
+        self.invalidate_cache(); // Clear cache after reload
+
         // Preserve scroll position instead of resetting
         if !self.file_diffs.is_empty() {
             // Keep the old scroll position, but clamp to valid range
-            let diff = &self.file_diffs[self.current_file];
-            let side_by_side = compute_side_by_side(
-                &diff.old_content,
-                &diff.new_content,
-                self.settings.tab_width,
-            );
-            let max_scroll = side_by_side.len().saturating_sub(10);
+            let total = self.total_lines();
+            let max_scroll = total.saturating_sub(10);
             self.scroll = old_scroll.min(max_scroll as u16);
             self.h_scroll = old_h_scroll;
         }
-
-        self.needs_reload = false;
-        self.invalidate_cache(); // Clear cache after reload
     }
 
     pub fn select_file(&mut self, file_index: usize) {
