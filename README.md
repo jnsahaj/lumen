@@ -168,14 +168,14 @@ Customize the diff viewer colors with preset themes:
 
 ```bash
 # Using CLI flag
-lumen diff --theme dracula
+lumen diff --theme 0github-dark
 
 # Using environment variable
-LUMEN_THEME=catppuccin-mocha lumen diff
+LUMEN_THEME=0github-light lumen diff
 
 # Or set permanently in config file (~/.config/lumen/lumen.config.json)
 {
-  "theme": "dracula"
+  "theme": "0github-dark"
 }
 ```
 
@@ -183,6 +183,7 @@ LUMEN_THEME=catppuccin-mocha lumen diff
 | Theme | Value |
 |-------|-------|
 | Default (auto-detect) | `dark`, `light` |
+| 0github | `0github-dark`, `0github-light` |
 | Catppuccin | `catppuccin-mocha`, `catppuccin-latte` |
 | Dracula | `dracula` |
 | Nord | `nord` |
