@@ -10,55 +10,76 @@
     };
   };
 
-  outputs = {
-    self,
-    nixpkgs,
-    flake-utils,
-    fenix,
-    ...
-  }:
-    flake-utils.lib.eachDefaultSystem (system: let
-      pkgs = import nixpkgs {inherit system;};
-      rustToolchain = fenix.packages.${system}.stable.withComponents [
-        "cargo"
-        "clippy"
-        "rustc"
-        "rustfmt"
-        "rust-src"
-      ];
-      rust-analyzer = fenix.packages.${system}.rust-analyzer;
-    in {
-      packages = {
-        lumen = let
-          manifest = (pkgs.lib.importTOML ./Cargo.toml).package;
-        in
-          pkgs.rustPlatform.buildRustPackage {
-            pname = manifest.name;
-            version = manifest.version;
-
-            cargoLock.lockFile = ./Cargo.lock;
-
-            src = pkgs.lib.cleanSource ./.;
-
-            nativeBuildInputs = [pkgs.pkg-config pkgs.perl];
-            buildInputs = [pkgs.openssl];
-            doCheck = false;
-          };
-        default = self.packages.${system}.lumen;
-      };
-
-      devShells.default = pkgs.mkShell {
-        nativeBuildInputs = [
-          rustToolchain
-          rust-analyzer
-          pkgs.pkg-config
-          pkgs.perl
+  outputs =
+    {
+      self,
+      nixpkgs,
+      flake-utils,
+      fenix,
+      ...
+    }:
+    flake-utils.lib.eachDefaultSystem (
+      system:
+      let
+        pkgs = import nixpkgs { inherit system; };
+        rustToolchain = fenix.packages.${system}.stable.withComponents [
+          "cargo"
+          "clippy"
+          "rustc"
+          "rustfmt"
+          "rust-src"
         ];
-        buildInputs = [
-          pkgs.openssl
-        ];
-      };
-    })
+        rust-analyzer = fenix.packages.${system}.rust-analyzer;
+      in
+      {
+        packages = {
+          lumen =
+            let
+              manifest = (pkgs.lib.importTOML ./Cargo.toml).package;
+            in
+            pkgs.rustPlatform.buildRustPackage {
+              pname = manifest.name;
+              version = manifest.version;
+
+              cargoLock.lockFile = ./Cargo.lock;
+
+              src = pkgs.lib.cleanSource ./.;
+
+              nativeBuildInputs = with pkgs; [
+                installShellFiles
+                pkg-config
+                perl
+              ];
+              buildInputs = [ pkgs.openssl ];
+              doCheck = false;
+              postInstall =
+                let
+                  inherit (pkgs) stdenv lib buildPackages;
+                  lumen = "${stdenv.hostPlatform.emulator buildPackages} $out/bin/lumen";
+                in
+                lib.optionalString (stdenv.hostPlatform.emulatorAvailable buildPackages) ''
+                  installShellCompletion --cmd lumen \
+                    --bash <(${lumen} completion --shell bash) \
+                    --fish <(${lumen} completion --shell fish) \
+                    --zsh <(${lumen} completion --shell zsh)
+                '';
+            };
+          default = self.packages.${system}.lumen;
+        };
+
+        devShells.default = pkgs.mkShell {
+          nativeBuildInputs = [
+            rustToolchain
+            rust-analyzer
+            pkgs.pkg-config
+            pkgs.perl
+          ];
+          buildInputs = [
+            pkgs.openssl
+          ];
+        };
+      }
+    )
     // {
       overlays.default = final: prev: {
         inherit (self.packages.${final.system}) lumen;
