@@ -1,11 +1,23 @@
-# <p align="center"><img src="https://github.com/user-attachments/assets/896f9239-134a-4428-9bb5-50ea59cdb5c3" alt="lumen" /></p>
+<p align="center"><img src="https://github.com/user-attachments/assets/896f9239-134a-4428-9bb5-50ea59cdb5c3" alt="lumen" /></p>
+
+# lumen
+
+A fast terminal diff viewer and code review TUI, written in Rust.
 
 [![Crates.io Total Downloads](https://img.shields.io/crates/d/lumen?label=downloads%20%40crates.io)](https://crates.io/crates/lumen)
 [![GitHub Releases](https://img.shields.io/github/downloads/jnsahaj/lumen/total?label=dowloads%20%40releases)](https://github.com/jnsahaj/lumen/releases)
 ![GitHub License](https://img.shields.io/github/license/jnsahaj/lumen)
 ![Crates.io Size](https://img.shields.io/crates/size/lumen)
 
-## The missing code review tool in the era of AI coding agents.
+Review `git diff`, commits, branches, or GitHub PRs side-by-side without leaving your terminal. Ships as a single static Rust binary and stays snappy on multi-thousand-line diffs.
+
+- Side-by-side diff viewer with tree-sitter syntax highlighting
+- Review GitHub Pull Requests with `lumen diff --pr 123`
+- Annotate selections, hunks, or whole files
+- Watch mode and stacked-commit review
+- Optional AI commit messages and change explanations (10+ providers)
+- Works with Git and Jujutsu (jj)
+
 [![Demo](https://github.com/user-attachments/assets/dc425871-3826-4368-88d8-931b9403f0ec)](https://github.com/user-attachments/assets/70d07324-8394-423c-bbc3-9460ed84877b)
 
 ## Special Thanks
@@ -16,7 +28,6 @@
 </div>
 
 ## Table of Contents
-- [Features](#features-)
 - [Getting Started](#getting-started-)
   - [Prerequisites](#prerequisites)
   - [Installation](#installation)
@@ -32,13 +43,6 @@
 - [Advanced Configuration](#advanced-configuration-)
   - [Configuration File](#configuration-file)
   - [Configuration Precedence](#configuration-precedence)
-
-## Features 🔅
-
-- **Beautiful & Ergonomic Diff Viewer**: Review your code with syntax highlighting, side-by-side view, annotations, and PR support — works standalone with no configuration
-- **Watch & Stacked Modes**: Auto-refresh on file changes, or step through commits one at a time
-- **Themeable**: Catppuccin, Dracula, Nord, Gruvbox, Solarized, and more
-- **AI Helpers (optional)**: Generate commit messages, explain changes, and translate natural language to git commands using your preferred AI provider
 
 ## Getting Started 🔅
 
