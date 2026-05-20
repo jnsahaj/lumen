@@ -29,6 +29,7 @@ use super::types::{
     ChangeType, CursorPosition, DiffFullscreen, DiffPanelFocus, FileStatus, FocusedPanel,
     SelectionMode, SidebarItem,
 };
+use super::keybindings::{KeyAction, KeyBindings};
 use super::watcher::{setup_watcher, WatchEvent};
 use super::{
     fetch_viewed_files, mark_file_as_viewed_async, unmark_file_as_viewed_async, DiffOptions, PrInfo,
@@ -176,6 +177,9 @@ fn run_app_internal(
 ) -> io::Result<()> {
     theme::init(options.theme.as_deref());
     highlight::init();
+
+    // Build keybinding lookup from defaults + user overrides.
+    let keybindings = KeyBindings::new(options.keybindings.as_ref());
 
     // Initialize state before TUI so we can sync viewed files
     let mut state = AppState::new(file_diffs, options.focus.as_deref());
@@ -926,87 +930,177 @@ fn run_app_internal(
                         state.pending_key = PendingKey::None;
                     }
                     state.show_selection_tooltip = false;
-                    match key.code {
-                        KeyCode::Esc | KeyCode::Char('c')
-                            if (key.code == KeyCode::Esc
-                                || key.modifiers.contains(KeyModifiers::CONTROL))
-                                && state.selection.is_active() =>
-                        {
-                            // First priority: clear selection
-                            state.clear_selection();
-                        }
-                        KeyCode::Esc | KeyCode::Char('c')
-                            if (key.code == KeyCode::Esc
-                                || key.modifiers.contains(KeyModifiers::CONTROL))
-                                && state.search_state.has_query() =>
-                        {
-                            state.search_state.clear();
-                            state.mark_search_dirty();
-                        }
-                        KeyCode::Char('q') | KeyCode::Esc => break 'main,
-                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            break 'main
-                        }
-                        KeyCode::Char('1') => {
-                            state.focused_panel = FocusedPanel::Sidebar;
-                            state.show_sidebar = true;
-                            if !matches!(
-                                state.sidebar_item_at_visible(state.sidebar_selected),
-                                Some(SidebarItem::File { .. })
-                            ) {
-                                if let Some(idx) = state.sidebar_visible.iter().position(|idx| {
-                                    matches!(state.sidebar_items[*idx], SidebarItem::File { .. })
-                                }) {
-                                    state.sidebar_selected = idx;
+
+                    // --- Hardcoded priority handlers (selection/search clear) ---
+                    // These must fire before rebindable actions because Esc/Ctrl+C
+                    // serve double duty: clearing state first, quitting second.
+                    if (key.code == KeyCode::Esc
+                        || (key.code == KeyCode::Char('c')
+                            && key.modifiers.contains(KeyModifiers::CONTROL)))
+                        && state.selection.is_active()
+                    {
+                        state.clear_selection();
+                    } else if (key.code == KeyCode::Esc
+                        || (key.code == KeyCode::Char('c')
+                            && key.modifiers.contains(KeyModifiers::CONTROL)))
+                        && state.search_state.has_query()
+                    {
+                        state.search_state.clear();
+                        state.mark_search_dirty();
+                    } else if key.code == KeyCode::Char('c')
+                        && key.modifiers.contains(KeyModifiers::CONTROL)
+                    {
+                        // Ctrl+C always quits (not rebindable).
+                        break 'main;
+                    } else if let Some(action) = keybindings.resolve(key.code, key.modifiers) {
+                        // --- Rebindable actions resolved from the keybinding map ---
+                        match action {
+                            KeyAction::Quit => break 'main,
+                            KeyAction::FocusSidebar => {
+                                state.focused_panel = FocusedPanel::Sidebar;
+                                state.show_sidebar = true;
+                                if !matches!(
+                                    state.sidebar_item_at_visible(state.sidebar_selected),
+                                    Some(SidebarItem::File { .. })
+                                ) {
+                                    if let Some(idx) =
+                                        state.sidebar_visible.iter().position(|idx| {
+                                            matches!(
+                                                state.sidebar_items[*idx],
+                                                SidebarItem::File { .. }
+                                            )
+                                        })
+                                    {
+                                        state.sidebar_selected = idx;
+                                    }
                                 }
                             }
-                        }
-                        KeyCode::Char('2') => {
-                            state.focused_panel = FocusedPanel::DiffView;
-                        }
-                        KeyCode::Tab => {
-                            state.show_sidebar = !state.show_sidebar;
-                            if !state.show_sidebar {
+                            KeyAction::FocusDiff => {
                                 state.focused_panel = FocusedPanel::DiffView;
                             }
-                        }
-                        KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            if !state.file_diffs.is_empty() {
-                                let mut next = state.sidebar_selected + 1;
-                                while next < state.sidebar_visible_len() {
-                                    if let Some(SidebarItem::File { file_index, .. }) =
-                                        state.sidebar_item_at_visible(next).cloned()
-                                    {
-                                        state.sidebar_selected = next;
-                                        state.select_file(file_index);
-                                        let visible_height =
-                                            terminal.size()?.height.saturating_sub(5) as usize;
-                                        ensure_sidebar_visible(&mut state, visible_height);
-                                        break;
+                            KeyAction::ToggleSidebar => {
+                                state.show_sidebar = !state.show_sidebar;
+                                if !state.show_sidebar {
+                                    state.focused_panel = FocusedPanel::DiffView;
+                                }
+                            }
+                            KeyAction::NextFile => {
+                                if !state.file_diffs.is_empty() {
+                                    let mut next = state.sidebar_selected + 1;
+                                    while next < state.sidebar_visible_len() {
+                                        if let Some(SidebarItem::File { file_index, .. }) =
+                                            state.sidebar_item_at_visible(next).cloned()
+                                        {
+                                            state.sidebar_selected = next;
+                                            state.select_file(file_index);
+                                            let visible_height =
+                                                terminal.size()?.height.saturating_sub(5) as usize;
+                                            ensure_sidebar_visible(&mut state, visible_height);
+                                            break;
+                                        }
+                                        next += 1;
                                     }
-                                    next += 1;
+                                }
+                            }
+                            KeyAction::PrevFile => {
+                                if !state.file_diffs.is_empty() && state.sidebar_selected > 0 {
+                                    let mut prev = state.sidebar_selected - 1;
+                                    loop {
+                                        if let Some(SidebarItem::File { file_index, .. }) =
+                                            state.sidebar_item_at_visible(prev).cloned()
+                                        {
+                                            state.sidebar_selected = prev;
+                                            state.select_file(file_index);
+                                            ensure_sidebar_visible(&mut state, usize::MAX);
+                                            break;
+                                        }
+                                        if prev == 0 {
+                                            break;
+                                        }
+                                        prev -= 1;
+                                    }
+                                }
+                            }
+                            KeyAction::HalfPageDown => {
+                                let half_screen = (visible_height / 2) as u16;
+                                state.scroll =
+                                    (state.scroll + half_screen).min(max_scroll as u16);
+                            }
+                            KeyAction::HalfPageUp => {
+                                let half_screen = (visible_height / 2) as u16;
+                                state.scroll = state.scroll.saturating_sub(half_screen);
+                            }
+                            KeyAction::NextHunk => {
+                                if !state.file_diffs.is_empty() {
+                                    state.clear_selection();
+                                    let hunks = state.get_hunks().to_vec();
+                                    let current_hunk = state.focused_hunk.unwrap_or(0);
+                                    let next_hunk = if state.focused_hunk.is_none() {
+                                        hunks
+                                            .iter()
+                                            .position(|&h| h > state.scroll as usize + 5)
+                                            .unwrap_or(0)
+                                    } else {
+                                        (current_hunk + 1).min(hunks.len().saturating_sub(1))
+                                    };
+                                    if !hunks.is_empty() {
+                                        state.focused_hunk = Some(next_hunk);
+                                        state.scroll = adjust_scroll_for_hunk(
+                                            hunks[next_hunk],
+                                            state.scroll,
+                                            visible_height,
+                                            max_scroll,
+                                        );
+                                    }
+                                }
+                            }
+                            KeyAction::PrevHunk => {
+                                if !state.file_diffs.is_empty() {
+                                    state.clear_selection();
+                                    let hunks = state.get_hunks().to_vec();
+                                    let current_hunk =
+                                        state.focused_hunk.unwrap_or(hunks.len());
+                                    let prev_hunk = if state.focused_hunk.is_none() {
+                                        hunks
+                                            .iter()
+                                            .rposition(|&h| {
+                                                (h as u16) < state.scroll.saturating_sub(5)
+                                            })
+                                            .unwrap_or(hunks.len().saturating_sub(1))
+                                    } else {
+                                        current_hunk.saturating_sub(1)
+                                    };
+                                    if !hunks.is_empty() {
+                                        state.focused_hunk = Some(prev_hunk);
+                                        state.scroll = adjust_scroll_for_hunk(
+                                            hunks[prev_hunk],
+                                            state.scroll,
+                                            visible_height,
+                                            max_scroll,
+                                        );
+                                    }
+                                }
+                            }
+                            KeyAction::HScrollLeft => {
+                                if state.focused_panel == FocusedPanel::DiffView {
+                                    state.h_scroll = state.h_scroll.saturating_sub(4);
+                                } else if state.focused_panel == FocusedPanel::Sidebar {
+                                    state.sidebar_h_scroll =
+                                        state.sidebar_h_scroll.saturating_sub(4);
+                                }
+                            }
+                            KeyAction::HScrollRight => {
+                                if state.focused_panel == FocusedPanel::DiffView {
+                                    state.h_scroll = state.h_scroll.saturating_add(4);
+                                } else if state.focused_panel == FocusedPanel::Sidebar {
+                                    state.sidebar_h_scroll =
+                                        state.sidebar_h_scroll.saturating_add(4);
                                 }
                             }
                         }
-                        KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            if !state.file_diffs.is_empty() && state.sidebar_selected > 0 {
-                                let mut prev = state.sidebar_selected - 1;
-                                loop {
-                                    if let Some(SidebarItem::File { file_index, .. }) =
-                                        state.sidebar_item_at_visible(prev).cloned()
-                                    {
-                                        state.sidebar_selected = prev;
-                                        state.select_file(file_index);
-                                        ensure_sidebar_visible(&mut state, usize::MAX);
-                                        break;
-                                    }
-                                    if prev == 0 {
-                                        break;
-                                    }
-                                    prev -= 1;
-                                }
-                            }
-                        }
+                    } else {
+                    // --- Fallback: non-rebindable actions handled by match ---
+                    match key.code {
                         // Stacked mode: navigate to next commit
                         KeyCode::Char('l') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                             if state.stacked_mode
@@ -1022,14 +1116,6 @@ fn run_app_internal(
                                 let new_index = state.current_commit_index - 1;
                                 navigate_stacked_commit(&mut state, new_index, &options, backend);
                             }
-                        }
-                        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            let half_screen = (visible_height / 2) as u16;
-                            state.scroll = (state.scroll + half_screen).min(max_scroll as u16);
-                        }
-                        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            let half_screen = (visible_height / 2) as u16;
-                            state.scroll = state.scroll.saturating_sub(half_screen);
                         }
                         KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                             if !state.file_diffs.is_empty() {
@@ -1129,20 +1215,6 @@ fn run_app_internal(
                                 ensure_sidebar_visible(&mut state, usize::MAX);
                             } else {
                                 state.scroll = state.scroll.saturating_sub(1);
-                            }
-                        }
-                        KeyCode::Char('h') | KeyCode::Left => {
-                            if state.focused_panel == FocusedPanel::DiffView {
-                                state.h_scroll = state.h_scroll.saturating_sub(4);
-                            } else if state.focused_panel == FocusedPanel::Sidebar {
-                                state.sidebar_h_scroll = state.sidebar_h_scroll.saturating_sub(4);
-                            }
-                        }
-                        KeyCode::Char('l') | KeyCode::Right => {
-                            if state.focused_panel == FocusedPanel::DiffView {
-                                state.h_scroll = state.h_scroll.saturating_add(4);
-                            } else if state.focused_panel == FocusedPanel::Sidebar {
-                                state.sidebar_h_scroll = state.sidebar_h_scroll.saturating_add(4);
                             }
                         }
                         KeyCode::Enter => {
@@ -1325,54 +1397,6 @@ fn run_app_internal(
                         }
                         KeyCode::PageUp => {
                             state.scroll = state.scroll.saturating_sub(20);
-                        }
-                        KeyCode::Char('}') => {
-                            if !state.file_diffs.is_empty() {
-                                state.clear_selection(); // Clear selection on hunk navigation
-                                let hunks = state.get_hunks().to_vec();
-                                let current_hunk = state.focused_hunk.unwrap_or(0);
-                                let next_hunk = if state.focused_hunk.is_none() {
-                                    hunks
-                                        .iter()
-                                        .position(|&h| h > state.scroll as usize + 5)
-                                        .unwrap_or(0)
-                                } else {
-                                    (current_hunk + 1).min(hunks.len().saturating_sub(1))
-                                };
-                                if !hunks.is_empty() {
-                                    state.focused_hunk = Some(next_hunk);
-                                    state.scroll = adjust_scroll_for_hunk(
-                                        hunks[next_hunk],
-                                        state.scroll,
-                                        visible_height,
-                                        max_scroll,
-                                    );
-                                }
-                            }
-                        }
-                        KeyCode::Char('{') => {
-                            if !state.file_diffs.is_empty() {
-                                state.clear_selection(); // Clear selection on hunk navigation
-                                let hunks = state.get_hunks().to_vec();
-                                let current_hunk = state.focused_hunk.unwrap_or(hunks.len());
-                                let prev_hunk = if state.focused_hunk.is_none() {
-                                    hunks
-                                        .iter()
-                                        .rposition(|&h| (h as u16) < state.scroll.saturating_sub(5))
-                                        .unwrap_or(hunks.len().saturating_sub(1))
-                                } else {
-                                    current_hunk.saturating_sub(1)
-                                };
-                                if !hunks.is_empty() {
-                                    state.focused_hunk = Some(prev_hunk);
-                                    state.scroll = adjust_scroll_for_hunk(
-                                        hunks[prev_hunk],
-                                        state.scroll,
-                                        visible_height,
-                                        max_scroll,
-                                    );
-                                }
-                            }
                         }
                         KeyCode::Char('i') => {
                             if !state.file_diffs.is_empty() {
@@ -1765,6 +1789,7 @@ fn run_app_internal(
                         }
                         _ => {}
                     }
+                    } // close else (fallback match block)
                 }
                 _ => {}
             }

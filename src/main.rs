@@ -126,6 +126,7 @@ async fn run() -> Result<(), LumenError> {
                 theme: theme.or(config.theme.clone()),
                 stacked,
                 focus,
+                keybindings: config.keybindings.clone(),
             };
             command::diff::run_diff_ui(options, backend.as_ref())?;
         }

@@ -29,6 +29,13 @@ pub struct LumenConfig {
 
     #[serde(default)]
     pub theme: Option<String>,
+
+    /// Optional keybinding overrides for the diff TUI.
+    ///
+    /// Keys are action names (e.g. `"focus_sidebar"`, `"quit"`).
+    /// Values are key strings (e.g. `"Left"`, `"Ctrl+j"`, `"Shift+Right"`).
+    #[serde(default)]
+    pub keybindings: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -126,6 +133,7 @@ impl LumenConfig {
             api_key,
             draft: config.draft,
             theme: config.theme,
+            keybindings: config.keybindings,
         })
     }
 
@@ -151,6 +159,7 @@ impl Default for LumenConfig {
             api_key: default_api_key(),
             draft: default_draft_config(),
             theme: None,
+            keybindings: None,
         }
     }
 }

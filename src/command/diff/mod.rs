@@ -5,6 +5,7 @@ mod coordinates;
 mod diff_algo;
 pub mod git;
 pub mod highlight;
+mod keybindings;
 mod render;
 mod search;
 mod state;
@@ -13,7 +14,7 @@ pub mod theme;
 mod types;
 mod watcher;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::process::{self, Command};
 use std::thread;
@@ -31,6 +32,8 @@ pub struct DiffOptions {
     pub theme: Option<String>,
     pub stacked: bool,
     pub focus: Option<String>,
+    /// User-provided keybinding overrides from `lumen.config.json`.
+    pub keybindings: Option<HashMap<String, String>>,
 }
 
 #[derive(Clone)]
