@@ -31,7 +31,7 @@ pub struct DiffOptions {
     pub theme: Option<String>,
     pub stacked: bool,
     pub focus: Option<String>,
-    pub repo: Option<String>,
+    pub origin: Option<String>,
 }
 
 #[derive(Clone)]
@@ -81,7 +81,7 @@ fn resolve_origin_repo() -> Result<String, String> {
         .map_err(|e| format!("Failed to run git: {}", e))?;
     if !output.status.success() {
         return Err(
-            "Could not determine repository. Set origin remote or use --repo owner/repo"
+            "Could not determine repository. Set origin remote or use --origin owner/repo"
                 .to_string(),
         );
     }
@@ -327,7 +327,7 @@ pub fn run_diff_ui(options: DiffOptions, backend: &dyn VcsBackend) -> io::Result
             None => "Fetching PR".to_string(),
         };
         let mut spinner = Spinner::new(spinners::Dots, spinner_msg, Color::Cyan);
-        match fetch_pr_info(pr_input, options.repo.as_deref()) {
+        match fetch_pr_info(pr_input, options.origin.as_deref()) {
             Ok(pr_info) => {
                 spinner.success("Fetched PR metadata");
                 return app::run_app_with_pr(options, pr_info, backend);
@@ -352,7 +352,7 @@ pub fn run_diff_ui(options: DiffOptions, backend: &dyn VcsBackend) -> io::Result
                 None => "Fetching PR".to_string(),
             };
             let mut spinner = Spinner::new(spinners::Dots, spinner_msg, Color::Cyan);
-            match fetch_pr_info(input, options.repo.as_deref()) {
+            match fetch_pr_info(input, options.origin.as_deref()) {
                 Ok(pr_info) => {
                     spinner.success("Fetched PR metadata");
                     return app::run_app_with_pr(options, pr_info, backend);

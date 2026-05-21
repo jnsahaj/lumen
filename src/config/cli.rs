@@ -136,9 +136,9 @@ pub enum Commands {
         #[arg(long)]
         focus: Option<String>,
 
-        /// Repository in owner/repo format (default: origin remote)
+        /// Origin repository in owner/repo format (default: origin git remote)
         #[arg(long)]
-        repo: Option<String>,
+        origin: Option<String>,
     },
     /// Interactively configure Lumen (provider, API key)
     Configure,
