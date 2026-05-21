@@ -135,6 +135,10 @@ pub enum Commands {
         /// Initially focus on this file path
         #[arg(long)]
         focus: Option<String>,
+
+        /// Repository in owner/repo format (default: origin remote)
+        #[arg(long)]
+        repo: Option<String>,
     },
     /// Interactively configure Lumen (provider, API key)
     Configure,
