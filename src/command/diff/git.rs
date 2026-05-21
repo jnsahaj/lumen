@@ -335,6 +335,7 @@ mod tests {
             theme: None,
             stacked: false,
             focus: None,
+            origin: None,
         };
 
         let diffs = load_file_diffs(&options, &backend);

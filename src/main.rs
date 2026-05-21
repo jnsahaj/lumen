@@ -117,6 +117,7 @@ async fn run() -> Result<(), LumenError> {
             theme,
             stacked,
             focus,
+            origin,
         } => {
             let options = command::diff::DiffOptions {
                 reference,
@@ -126,6 +127,7 @@ async fn run() -> Result<(), LumenError> {
                 theme: theme.or(config.theme.clone()),
                 stacked,
                 focus,
+                origin,
             };
             command::diff::run_diff_ui(options, backend.as_ref())?;
         }
