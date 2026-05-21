@@ -1,0 +1,133 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-22.04
+            name: linux-amd64
+            artifact: lumen-x86_64-linux
+            cross: false
+
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-22.04
+            name: linux-arm64
+            artifact: lumen-aarch64-linux
+            cross: true
+
+          - target: x86_64-apple-darwin
+            runner: macos-latest
+            name: macos-intel
+            artifact: lumen-x86_64-darwin
+            cross: false
+
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+            name: macos-apple-silicon
+            artifact: lumen-aarch64-darwin
+            cross: false
+
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+            name: windows-amd64
+            artifact: lumen-x86_64-windows.exe
+            cross: false
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Install cross (Linux ARM64 only)
+        if: matrix.cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Build binary (cross)
+        if: matrix.cross
+        run: cross build --release --target ${{ matrix.target }}
+
+      - name: Build binary (native)
+        if: "!matrix.cross"
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Strip binary (Linux)
+        if: runner.os == 'Linux' && !matrix.cross
+        run: strip target/${{ matrix.target }}/release/lumen
+
+      - name: Strip binary (Linux ARM64 via cross)
+        if: matrix.cross
+        run: |
+          docker run --rm \
+            -v "$PWD/target/${{ matrix.target }}/release:/work" \
+            ghcr.io/cross-rs/${{ matrix.target }}:main \
+            aarch64-linux-gnu-strip /work/lumen
+
+      - name: Strip binary (macOS)
+        if: runner.os == 'macOS'
+        run: strip target/${{ matrix.target }}/release/lumen
+
+      - name: Rename binary (Unix)
+        if: runner.os != 'Windows'
+        run: cp target/${{ matrix.target }}/release/lumen ${{ matrix.artifact }}
+
+      - name: Rename binary (Windows)
+        if: runner.os == 'Windows'
+        run: cp target/${{ matrix.target }}/release/lumen.exe ${{ matrix.artifact }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+          if-no-files-found: error
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List release artifacts
+        run: ls -lah artifacts/
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: artifacts/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
