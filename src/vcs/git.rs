@@ -137,8 +137,16 @@ impl GitBackend {
     /// Open a git repository at the given path.
     /// Uses git2::Repository::discover to find the repo from any subdirectory.
     pub fn new(path: &Path) -> Result<Self, VcsError> {
-        let repo = Repository::discover(path).map_err(|_| VcsError::NotARepository)?;
-        Ok(GitBackend { repo })
+        let discover_result = Repository::discover(path);//map_err(|_| VcsError::NotARepository)?;
+        return match discover_result {
+            Ok(repo) =>  Ok(GitBackend { repo }),
+            Err(error) => {
+                // Print libgit2 so there is a chance to diagnose any errors with git
+                println!("Error on repository discovery: {error:?}");
+                return Err(VcsError::NotARepository)
+            },
+        };
+
     }
 
     /// Open a git repository from the current working directory.
@@ -591,6 +599,7 @@ impl VcsBackend for GitBackend {
 
         let mut opts = StatusOptions::new();
         opts.include_untracked(true);
+        opts.recurse_untracked_dirs(true);
         opts.exclude_submodules(true);
         opts.include_ignored(false);
 

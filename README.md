@@ -1,11 +1,23 @@
-# <p align="center"><img src="https://github.com/user-attachments/assets/896f9239-134a-4428-9bb5-50ea59cdb5c3" alt="lumen" /></p>
+<p align="center"><img src="https://github.com/user-attachments/assets/896f9239-134a-4428-9bb5-50ea59cdb5c3" alt="lumen" /></p>
+
+# lumen
+
+A fast terminal diff viewer and code review TUI, written in Rust.
 
 [![Crates.io Total Downloads](https://img.shields.io/crates/d/lumen?label=downloads%20%40crates.io)](https://crates.io/crates/lumen)
 [![GitHub Releases](https://img.shields.io/github/downloads/jnsahaj/lumen/total?label=dowloads%20%40releases)](https://github.com/jnsahaj/lumen/releases)
 ![GitHub License](https://img.shields.io/github/license/jnsahaj/lumen)
 ![Crates.io Size](https://img.shields.io/crates/size/lumen)
 
-## The missing code review tool in the era of AI coding agents.
+Review `git diff`, commits, branches, or GitHub PRs side-by-side without leaving your terminal. Ships as a single static Rust binary and stays snappy on multi-thousand-line diffs.
+
+- Side-by-side diff viewer with tree-sitter syntax highlighting
+- Review GitHub Pull Requests with `lumen diff --pr 123`
+- Annotate selections, hunks, or whole files
+- Watch mode and stacked-commit review
+- Optional AI commit messages and change explanations (10+ providers)
+- Works with Git and Jujutsu (jj)
+
 [![Demo](https://github.com/user-attachments/assets/dc425871-3826-4368-88d8-931b9403f0ec)](https://github.com/user-attachments/assets/70d07324-8394-423c-bbc3-9460ed84877b)
 
 ## Special Thanks
@@ -16,31 +28,21 @@
 </div>
 
 ## Table of Contents
-- [Features](#features-)
 - [Getting Started](#getting-started-)
   - [Prerequisites](#prerequisites)
   - [Installation](#installation)
-  - [Configuration (for AI features)](#configuration-for-ai-features)
 - [Usage](#usage-)
   - [Visual Diff Viewer](#visual-diff-viewer)
+- [AI Features](#ai-features-)
+  - [Configuration](#configuration)
   - [Generate Commit Messages](#generate-commit-messages)
   - [Generate Git Commands](#generate-git-commands)
   - [Explain Changes](#explain-changes)
-  - [Interactive Mode](#interactive-mode)
   - [Tips & Tricks](#tips--tricks)
-- [AI Providers](#ai-providers-)
+  - [AI Providers](#ai-providers)
 - [Advanced Configuration](#advanced-configuration-)
   - [Configuration File](#configuration-file)
   - [Configuration Precedence](#configuration-precedence)
-
-## Features 🔅
-
-- **Beautiful & Ergonomic Diff Viewer**: Review your code with syntax highlighting & leave comments
-- **Smart Commit Messages**: Generate conventional commit messages for your staged changes
-- **Interactive Search**: Find and explore commits using fuzzy search
-- **Multiple AI Providers**: Supports OpenAI, Claude, Groq, Ollama, and more
-- **Flexible**: Works with any git workflow and supports multiple AI providers
-- **Rich Output**: Markdown support for readable explanations and diffs (requires: mdcat)
 
 ## Getting Started 🔅
 
@@ -66,52 +68,7 @@ brew install jnsahaj/lumen/lumen
 cargo install lumen
 ```
 
-### Configuration (for AI features)
-
-If you want to use AI-powered features (`explain`, `draft`, `list`, `operate`), run the interactive setup:
-
-```bash
-lumen configure
-```
-
-This will guide you through:
-1. Selecting an AI provider
-2. Entering your API key (optional if using environment variable)
-3. Specifying a custom model name (optional - press Enter to use the default)
-
-The configuration is saved to `~/.config/lumen/lumen.config.json`.
-
-> [!NOTE]
-> The `diff` command works without any configuration - it's a standalone visual diff viewer.
-
-
 ## Usage 🔅
-
-### Generate Commit Messages
-
-Create meaningful commit messages for your staged changes:
-
-```bash
-# Basic usage - generates a commit message based on staged changes
-lumen draft
-# Output: "feat(button.tsx): Update button color to blue"
-
-# Add context for more meaningful messages
-lumen draft --context "match brand guidelines"
-# Output: "feat(button.tsx): Update button color to align with brand identity guidelines"
-```
-
-
-### Generate Git Commands
-
-Ask Lumen to generate Git commands based on a natural language query:
-
-```bash
-lumen operate "squash the last 3 commits into 1 with the message 'squashed commit'"
-# Output: git reset --soft HEAD~3 && git commit -m "squashed commit" [y/N]
-```
-
-The command will display an explanation of what the generated command does, show any warnings for potentially dangerous operations, and prompt for confirmation before execution.
 
 ### Visual Diff Viewer
 
@@ -192,13 +149,16 @@ LUMEN_THEME=catppuccin-mocha lumen diff
 
 Priority: CLI flag > config file > `LUMEN_THEME` env var > OS auto-detect.
 
-#### Annotations
+#### Selection & Annotations
 
-Add comments to hunks during code review:
-- `i`: Add/edit annotation on focused hunk
-- `I`: View all annotations (edit, delete, copy, or export)
+**Selection**: Click-drag in the content area for character-level selection, or on line numbers for line-level selection. Selected text can be copied or annotated.
 
-Annotations can be copied to clipboard or exported to a file for sharing.
+**Annotations**: Add review comments at three levels of granularity:
+- **Selection** — select lines with mouse, press `i` to annotate the selected range
+- **Hunk** — focus a hunk with `{`/`}`, press `i` to annotate the hunk
+- **File** — press `i` with no selection or hunk focus to annotate the whole file
+
+Annotated lines display a `▍` gutter indicator. Use `I` to view, edit, delete, copy, or export all annotations.
 
 #### Keybindings
 
@@ -207,79 +167,80 @@ Annotations can be copied to clipboard or exported to a file for sharing.
 - `tab`: Toggle sidebar
 - `space`: Mark file as viewed
 - `e`: Open file in editor
-- `i/I`: Add annotation / view all annotations
+- `y`: Copy selection (or filename)
+- `i`: Annotate selection / hunk / file
+- `I`: View all annotations
 - `ctrl+h/l`: Previous/next commit (stacked mode)
 - `?`: Show all keybindings
+
+## AI Features 🔅
+
+Lumen also bundles optional AI helpers for commit messages, explanations, and natural-language git commands. These require configuring an AI provider — the diff viewer above does not.
+
+### Configuration
+
+Run `lumen configure` for interactive setup (provider, API key, model). Settings are saved to `~/.config/lumen/lumen.config.json`.
+
+### Generate Commit Messages
+
+Create meaningful commit messages for your staged changes:
+
+```bash
+# Basic usage - generates a commit message based on staged changes
+lumen draft
+# Output: "feat(button.tsx): Update button color to blue"
+
+# Add context for more meaningful messages
+lumen draft --context "match brand guidelines"
+# Output: "feat(button.tsx): Update button color to align with brand identity guidelines"
+```
+
+### Generate Git Commands
+
+Ask Lumen to generate Git commands based on a natural language query:
+
+```bash
+lumen operate "squash the last 3 commits into 1 with the message 'squashed commit'"
+# Output: git reset --soft HEAD~3 && git commit -m "squashed commit" [y/N]
+```
+
+The command will display an explanation of what the generated command does, show any warnings for potentially dangerous operations, and prompt for confirmation before execution.
 
 ### Explain Changes
 
 Understand what changed and why:
 
 ```bash
-# Explain current changes in your working directory
-lumen explain                         # All changes
-lumen explain --staged                # Only staged changes
+# Working directory or staged changes
+lumen explain
+lumen explain --staged
 
-# Explain specific commits
-lumen explain HEAD                    # Latest commit
-lumen explain abc123f                 # Specific commit
-lumen explain HEAD~3..HEAD            # Last 3 commits
-lumen explain main..feature/A         # Branch comparison
-lumen explain main...feature/A        # Branch comparison (merge base)
+# Specific commits or ranges
+lumen explain HEAD
+lumen explain HEAD~3..HEAD
+lumen explain main..feature/A
 
-# Ask specific questions about changes
+# Ask specific questions
 lumen explain --query "What's the performance impact of these changes?"
-lumen explain HEAD --query "What are the potential side effects?"
 
-# Interactive commit selection
-lumen explain --list                  # Select commit interactively
-```
-
-### Interactive Mode
-```bash
-# Launch interactive fuzzy finder to search through commits (requires: fzf)
+# Interactive commit selection (requires: fzf)
 lumen explain --list
-
-# Deprecated: lumen list (use lumen explain --list instead)
 ```
 
 ### Tips & Tricks
 
 ```bash
-# Copy commit message to clipboard
-lumen draft | pbcopy                  # macOS
-lumen draft | xclip -selection c      # Linux
-
-# View the commit message and copy it
-lumen draft | tee >(pbcopy)
-
-# Open in your favorite editor
-lumen draft | code -      
+# Copy commit message to clipboard (macOS / Linux)
+lumen draft | pbcopy
+lumen draft | xclip -selection c
 
 # Directly commit using the generated message
-lumen draft | git commit -F -           
+lumen draft | git commit -F -
 ```
 
-If you are using [lazygit](https://github.com/jesseduffield/lazygit), you can add this to the [user config](https://github.com/jesseduffield/lazygit/blob/master/docs/Config.md)
-```yml
-customCommands:
-  - key: '<c-l>'
-    context: 'files'
-    command: 'lumen draft | tee >(pbcopy)'
-    loadingText: 'Generating message...'
-    showOutput: true
-  - key: '<c-k>'
-    context: 'files'
-    command: 'lumen draft -c {{.Form.Context | quote}} | tee >(pbcopy)'
-    loadingText: 'Generating message...'
-    showOutput: true
-    prompts:
-          - type: 'input'
-            title: 'Context'
-            key: 'Context'
-```
+[lazygit](https://github.com/jesseduffield/lazygit) integration is available — see the [user config docs](https://github.com/jesseduffield/lazygit/blob/master/docs/Config.md) for binding `lumen draft` to a custom command.
 
-## AI Providers 🔅
+### AI Providers
 
 Configure your preferred AI provider:
 
@@ -293,7 +254,7 @@ export LUMEN_API_KEY="your-api-key"
 export LUMEN_AI_MODEL="gpt-5-mini"
 ```
 
-### Supported Providers
+#### Supported Providers
 
 | Provider | API Key Required | Models |
 |----------|-----------------|---------|

@@ -748,3 +748,283 @@ pub const CSHARP_HIGHLIGHTS: &str = r#"
 ";" @punctuation.delimiter
 ":" @punctuation.delimiter
 "#;
+
+/*
+Portions of `ZIG_HIGHLIGHTS` are adapted from tree-sitter-zig 1.1.2
+`queries/highlights.scm` and remapped to Lumen's supported capture names.
+
+Upstream project: https://github.com/tree-sitter-grammars/tree-sitter-zig
+
+MIT License
+
+Copyright (c) 2024 Amaan Qureshi <amaanq12@gmail.com>
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*/
+pub const ZIG_HIGHLIGHTS: &str = r#"
+; Variables
+(identifier) @variable
+
+; Parameters
+(parameter
+  name: (identifier) @variable.parameter)
+
+((payload
+  (identifier) @variable.parameter)
+  (#set! "priority" 110))
+
+; Types
+(parameter
+  type: (identifier) @type)
+
+((identifier) @type
+  (#match? @type "^[A-Z_][a-zA-Z0-9_]*$"))
+
+(variable_declaration
+  (identifier) @type
+  "="
+  [
+    (struct_declaration)
+    (enum_declaration)
+    (union_declaration)
+    (opaque_declaration)
+  ])
+
+[
+  (builtin_type)
+  "anyframe"
+] @type.builtin
+
+; Constants
+((identifier) @constant
+  (#match? @constant "^[A-Z][A-Z_0-9]+$"))
+
+[
+  "null"
+  "unreachable"
+  "undefined"
+] @constant.builtin
+
+(field_expression
+  .
+  member: (identifier) @constant)
+
+(enum_declaration
+  (container_field
+    type: (identifier) @constant))
+
+; Labels
+(block_label (identifier) @label)
+
+(break_label (identifier) @label)
+
+; Fields
+(field_initializer
+  .
+  (identifier) @variable.member)
+
+(field_expression
+  (_)
+  member: (identifier) @variable.member)
+
+(container_field
+  name: (identifier) @variable.member)
+
+(initializer_list
+  (assignment_expression
+      left: (field_expression
+              .
+              member: (identifier) @variable.member)))
+
+; Functions
+(builtin_identifier) @function.builtin
+
+(call_expression
+  function: (identifier) @function)
+
+(call_expression
+  function: (field_expression
+    member: (identifier) @function.method))
+
+(function_declaration
+  name: (identifier) @function)
+
+; Modules
+(variable_declaration
+  (identifier) @module
+  (builtin_function
+    (builtin_identifier) @keyword
+    (#any-of? @keyword "@import" "@cImport")))
+
+; Builtins
+[
+  "c"
+  "..."
+] @variable.builtin
+
+((identifier) @variable.builtin
+  (#eq? @variable.builtin "_"))
+
+(calling_convention
+  (identifier) @variable.builtin)
+
+; Keywords
+[
+  "asm"
+  "defer"
+  "errdefer"
+  "test"
+  "error"
+  "const"
+  "var"
+  "struct"
+  "union"
+  "enum"
+  "opaque"
+  "async"
+  "await"
+  "suspend"
+  "nosuspend"
+  "resume"
+  "fn"
+  "and"
+  "or"
+  "orelse"
+  "return"
+  "if"
+  "else"
+  "switch"
+  "for"
+  "while"
+  "break"
+  "continue"
+  "usingnamespace"
+  "export"
+  "try"
+  "catch"
+  "volatile"
+  "allowzero"
+  "noalias"
+  "addrspace"
+  "align"
+  "callconv"
+  "linksection"
+  "pub"
+  "inline"
+  "noinline"
+  "extern"
+  "comptime"
+  "packed"
+  "threadlocal"
+] @keyword
+
+; Operators
+[
+  "="
+  "*="
+  "*%="
+  "*|="
+  "/="
+  "%="
+  "+="
+  "+%="
+  "+|="
+  "-="
+  "-%="
+  "-|="
+  "<<="
+  "<<|="
+  ">>="
+  "&="
+  "^="
+  "|="
+  "!"
+  "~"
+  "-"
+  "-%"
+  "&"
+  "=="
+  "!="
+  ">"
+  ">="
+  "<="
+  "<"
+  "^"
+  "|"
+  "<<"
+  ">>"
+  "<<|"
+  "+"
+  "++"
+  "+%"
+  "+|"
+  "*"
+  "/"
+  "%"
+  "**"
+  "*%"
+  "*|"
+  "||"
+  ".*"
+  ".?"
+  "?"
+  ".."
+] @operator
+
+; Literals
+(character) @string.special
+
+([
+  (string)
+  (multiline_string)
+] @string
+  (#set! "priority" 95))
+
+(integer) @number
+
+(float) @number
+
+(boolean) @constant.builtin
+
+(escape_sequence) @string.special
+
+; Punctuation
+[
+  "["
+  "]"
+  "("
+  ")"
+  "{"
+  "}"
+] @punctuation.bracket
+
+[
+  ";"
+  "."
+  ","
+  ":"
+  "=>"
+  "->"
+] @punctuation.delimiter
+
+(payload "|" @punctuation.bracket)
+
+; Comments
+(comment) @comment
+"#;

@@ -86,6 +86,16 @@ pub struct DiffLine {
     pub new_segments: Option<Vec<InlineSegment>>,
 }
 
+impl DiffLine {
+    /// Get the line number for the given panel side.
+    pub fn line_number(&self, panel: DiffPanelFocus) -> Option<usize> {
+        match panel {
+            DiffPanelFocus::Old => self.old_line.as_ref().map(|(n, _)| *n),
+            DiffPanelFocus::New | DiffPanelFocus::None => self.new_line.as_ref().map(|(n, _)| *n),
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 pub enum ChangeType {
     Equal,

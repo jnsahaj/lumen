@@ -4,7 +4,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
 };
 
-use crate::command::diff::state::HunkAnnotation;
+use crate::command::diff::state::Annotation;
 use crate::command::diff::theme;
 
 #[derive(Clone)]
@@ -60,7 +60,7 @@ pub enum ModalContent {
     Annotations {
         title: String,
         items: Vec<String>,
-        annotations: Vec<HunkAnnotation>,
+        annotations: Vec<Annotation>,
         selected: usize,
         export_input: Option<String>,
         /// Error message to display (e.g., for failed export)
@@ -78,9 +78,9 @@ pub enum ModalResult {
     #[allow(dead_code)]
     Selected(usize, String),
     FileSelected(usize),
-    AnnotationJump { file_index: usize, hunk_index: usize },
-    AnnotationEdit { file_index: usize, hunk_index: usize },
-    AnnotationDelete { file_index: usize, hunk_index: usize },
+    AnnotationJump { annotation_id: u64 },
+    AnnotationEdit { annotation_id: u64 },
+    AnnotationDelete { annotation_id: u64 },
     AnnotationCopyAll,
     AnnotationExport(String),
 }
@@ -138,7 +138,7 @@ impl Modal {
     pub fn annotations(
         title: impl Into<String>,
         items: Vec<String>,
-        annotations: Vec<HunkAnnotation>,
+        annotations: Vec<Annotation>,
     ) -> Self {
         Self {
             content: ModalContent::Annotations {
@@ -920,20 +920,17 @@ impl Modal {
                         }
                         KeyCode::Enter => annotations.get(*selected).map(|ann| {
                             ModalResult::AnnotationJump {
-                                file_index: ann.file_index,
-                                hunk_index: ann.hunk_index,
+                                annotation_id: ann.id,
                             }
                         }),
                         KeyCode::Char('e') => annotations.get(*selected).map(|ann| {
                             ModalResult::AnnotationEdit {
-                                file_index: ann.file_index,
-                                hunk_index: ann.hunk_index,
+                                annotation_id: ann.id,
                             }
                         }),
                         KeyCode::Char('d') => annotations.get(*selected).map(|ann| {
                             ModalResult::AnnotationDelete {
-                                file_index: ann.file_index,
-                                hunk_index: ann.hunk_index,
+                                annotation_id: ann.id,
                             }
                         }),
                         KeyCode::Char('y') => Some(ModalResult::AnnotationCopyAll),

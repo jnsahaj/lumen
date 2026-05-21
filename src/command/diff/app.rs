@@ -14,7 +14,6 @@ use crossterm::{
 use ratatui::prelude::*;
 
 use super::coordinates::{extract_selected_text, PanelLayout};
-use super::diff_algo::{compute_side_by_side, find_hunk_starts};
 use super::git::{
     get_current_branch, load_file_diffs, load_pr_file_diffs, load_single_commit_diffs,
 };
@@ -71,8 +70,17 @@ fn ensure_sidebar_visible(state: &mut AppState, visible_height: usize) {
     }
 }
 
+/// Find the side_by_side array index for a given file line number on a specific panel.
+fn find_sbs_index_for_line(
+    side_by_side: &[super::types::DiffLine],
+    panel: DiffPanelFocus,
+    line_num: usize,
+) -> Option<usize> {
+    side_by_side.iter().position(|dl| dl.line_number(panel) == Some(line_num))
+}
+
 /// Format an annotation for display in the annotations list.
-fn format_annotation_preview(annotation: &super::state::HunkAnnotation) -> String {
+fn format_annotation_preview(annotation: &super::state::Annotation) -> String {
     let preview = annotation.content.lines().next().unwrap_or("");
     let preview = if preview.len() > 40 {
         format!("{}...", &preview[..40])
@@ -80,14 +88,26 @@ fn format_annotation_preview(annotation: &super::state::HunkAnnotation) -> Strin
         preview.to_string()
     };
     let truncated_filename = truncate_path(&annotation.filename, 30);
-    format!(
-        "{}:{}-{} | {} | {}",
-        truncated_filename,
-        annotation.line_range.0,
-        annotation.line_range.1,
-        preview,
-        annotation.format_time()
-    )
+    let line_display = annotation.line_range_display();
+    let label = annotation.target_label();
+    if line_display.is_empty() {
+        format!(
+            "{} [{}] | {} | {}",
+            truncated_filename,
+            label,
+            preview,
+            annotation.format_time()
+        )
+    } else {
+        format!(
+            "{}:{} [{}] | {} | {}",
+            truncated_filename,
+            line_display,
+            label,
+            preview,
+            annotation.format_time()
+        )
+    }
 }
 
 pub fn run_app_with_pr(
@@ -253,24 +273,24 @@ fn run_app_internal(
                 }
             })?;
         } else {
+            // Use cached side_by_side (avoids recomputing diff every frame during drag etc.)
+            state.update_search_matches();
+            // Ensure highlighters are cached (only recomputed when file changes)
+            state.get_highlighters();
             let diff = &state.file_diffs[state.current_file];
-            let side_by_side = compute_side_by_side(
-                &diff.old_content,
-                &diff.new_content,
-                state.settings.tab_width,
-            );
-            let hunks = find_hunk_starts(&side_by_side);
+            let side_by_side = state.side_by_side_ref();
+            let hunks = state.hunks_ref();
+            let (old_hl, new_hl) = state.highlighters_ref().unwrap();
             let hunk_count = hunks.len();
-            state
-                .search_state
-                .update_matches(&side_by_side, state.diff_fullscreen);
             let branch_fallback = get_current_branch(backend);
             let commit_ref = state
                 .diff_reference
                 .as_deref()
                 .unwrap_or(&branch_fallback);
+            let row_offset = std::cell::Cell::new(0usize);
+            let gaps_cell = std::cell::RefCell::new(Vec::new());
             terminal.draw(|frame| {
-                render_diff(
+                let (offset, gaps) = render_diff(
                     frame,
                     diff,
                     &state.file_diffs,
@@ -303,7 +323,88 @@ fn run_app_internal(
                     state.vcs_name,
                     &state.annotations,
                     &state.selection,
+                    old_hl,
+                    new_hl,
                 );
+                row_offset.set(offset);
+
+                // Selection action tooltip (shown after drag completes)
+                if state.show_selection_tooltip
+                    && state.selection.is_active()
+                    && !state.is_dragging
+                    && annotation_editor.is_none()
+                    && active_modal.is_none()
+                {
+                    let t = theme::get();
+                    let term = frame.area();
+                    let header_h: u16 = if state.stacked_mode { 1 } else { 0 };
+                    let sidebar_w: u16 = if state.show_sidebar {
+                        (term.width / 4).clamp(20, 35)
+                    } else {
+                        0
+                    };
+                    let layout = PanelLayout::calculate(
+                        term.width,
+                        sidebar_w,
+                        state.show_sidebar,
+                        state.diff_fullscreen,
+                    );
+
+                    let sel = &state.selection;
+                    let (_, sel_end) = sel.normalized_range();
+                    let scroll_usize = state.scroll as usize;
+
+                    if sel_end.line >= scroll_usize {
+                        let content_y = sel_end.line - scroll_usize;
+
+                        // Account for annotation overlay gaps
+                        let mut cum_gaps: u16 = 0;
+                        for &(after_line, gap_h) in &gaps {
+                            if after_line < content_y {
+                                cum_gaps += gap_h as u16;
+                            }
+                        }
+
+                        // Position below the selection end
+                        let screen_y = header_h + 1 + offset as u16 + content_y as u16 + cum_gaps + 1;
+
+                        let (panel_x, panel_w) = match sel.panel {
+                            DiffPanelFocus::Old => (layout.old_panel_x, layout.old_panel_width),
+                            DiffPanelFocus::New => (layout.new_panel_x, layout.new_panel_width),
+                            _ => (0, 0),
+                        };
+
+                        if panel_w > 0 && screen_y < term.height.saturating_sub(1) {
+                            let tip_w: u16 = 27;
+                            let tip_h: u16 = 1;
+
+                            let cx = layout.content_x_offset(sel.panel);
+                            let tip_x = (panel_x + cx).min(panel_x + panel_w.saturating_sub(tip_w + 1));
+
+                            let tip_area = Rect::new(tip_x, screen_y, tip_w.min(panel_w), tip_h);
+
+                            let bg = t.ui.footer_branch_bg;
+                            let key_style = Style::default().fg(t.ui.text_primary).bg(bg).bold();
+                            let desc_style = Style::default().fg(t.ui.text_muted).bg(bg);
+                            let tip_line = Line::from(vec![
+                                Span::styled(" i", key_style),
+                                Span::styled(" annotate ", desc_style),
+                                Span::styled("y", key_style),
+                                Span::styled(" copy ", desc_style),
+                                Span::styled("esc", key_style),
+                                Span::styled("   ", desc_style),
+                            ]);
+
+                            frame.render_widget(ratatui::widgets::Clear, tip_area);
+                            frame.render_widget(
+                                ratatui::widgets::Paragraph::new(tip_line).style(Style::default().bg(bg)),
+                                tip_area,
+                            );
+                        }
+                    }
+                }
+
+                *gaps_cell.borrow_mut() = gaps;
                 // Render annotation editor (on top of everything except modal)
                 if let Some(ref editor) = annotation_editor {
                     editor.render(frame);
@@ -312,6 +413,8 @@ fn run_app_internal(
                     modal.render(frame);
                 }
             })?;
+            state.content_row_offset = row_offset.get();
+            state.annotation_overlay_gaps = gaps_cell.into_inner();
         }
 
         // Poll for new events if no pending events
@@ -324,13 +427,7 @@ fn run_app_internal(
             let visible_height = terminal.size()?.height.saturating_sub(2) as usize;
             let bottom_padding = 5;
             let max_scroll = if !state.file_diffs.is_empty() {
-                let diff = &state.file_diffs[state.current_file];
-                let total_lines = compute_side_by_side(
-                    &diff.old_content,
-                    &diff.new_content,
-                    state.settings.tab_width,
-                )
-                .len();
+                let total_lines = state.total_lines();
                 total_lines.saturating_sub(visible_height.saturating_sub(bottom_padding))
             } else {
                 0
@@ -343,6 +440,7 @@ fn run_app_internal(
                     match key.code {
                         KeyCode::Esc => {
                             state.search_state.cancel();
+                            state.mark_search_dirty();
                         }
                         KeyCode::Enter => {
                             state.search_state.confirm();
@@ -357,9 +455,11 @@ fn run_app_internal(
                         }
                         KeyCode::Backspace => {
                             state.search_state.pop_char();
+                            state.mark_search_dirty();
                         }
                         KeyCode::Char(c) => {
                             state.search_state.push_char(c);
+                            state.mark_search_dirty();
                         }
                         _ => {}
                     }
@@ -373,11 +473,25 @@ fn run_app_internal(
                         match editor.handle_input(key) {
                             AnnotationEditorResult::Continue => {}
                             AnnotationEditorResult::Save => {
-                                state.set_annotation(editor.to_annotation());
+                                let content = editor.content();
+                                if let Some(id) = editor.id {
+                                    // Editing existing annotation
+                                    state.update_annotation(id, content);
+                                } else {
+                                    // New annotation
+                                    state.add_annotation(
+                                        editor.filename.clone(),
+                                        editor.target.clone(),
+                                        content,
+                                        editor.created_at(),
+                                    );
+                                }
                                 annotation_editor = None;
                             }
                             AnnotationEditorResult::Delete => {
-                                state.remove_annotation(editor.file_index, editor.hunk_index);
+                                if let Some(id) = editor.id {
+                                    state.remove_annotation(id);
+                                }
                                 annotation_editor = None;
                             }
                             AnnotationEditorResult::Cancel => {
@@ -409,46 +523,48 @@ fn run_app_internal(
                                     }
                                     active_modal = None;
                                 }
-                                ModalResult::AnnotationJump { file_index, hunk_index } => {
-                                    // Jump to the file and hunk
-                                    state.select_file(file_index);
-                                    state.focused_hunk = Some(hunk_index);
-                                    // Scroll to the hunk
-                                    let diff = &state.file_diffs[file_index];
-                                    let side_by_side = compute_side_by_side(
-                                        &diff.old_content,
-                                        &diff.new_content,
-                                        state.settings.tab_width,
-                                    );
-                                    let hunks = find_hunk_starts(&side_by_side);
-                                    if let Some(&hunk_start) = hunks.get(hunk_index) {
-                                        state.scroll = adjust_scroll_for_hunk(
-                                            hunk_start,
-                                            state.scroll,
-                                            visible_height,
-                                            max_scroll,
-                                        );
+                                ModalResult::AnnotationJump { annotation_id } => {
+                                    if let Some(ann) = state.get_annotation_by_id(annotation_id) {
+                                        let filename = ann.filename.clone();
+                                        let target = ann.target.clone();
+                                        // Find and switch to the file
+                                        if let Some(file_index) = state.file_diffs.iter().position(|f| f.filename == filename) {
+                                            state.select_file(file_index);
+                                            // Scroll to annotation's line range
+                                            if let super::state::AnnotationTarget::LineRange { panel, start_line, .. } = &target {
+                                                state.ensure_cache();
+                                                let sbs = state.side_by_side_ref();
+                                                // Find the side_by_side index for start_line
+                                                if let Some(sbs_idx) = find_sbs_index_for_line(sbs, *panel, *start_line) {
+                                                    state.scroll = adjust_scroll_to_line(
+                                                        sbs_idx,
+                                                        state.scroll,
+                                                        visible_height,
+                                                        max_scroll,
+                                                    );
+                                                }
+                                            }
+                                        }
                                     }
                                     active_modal = None;
                                 }
-                                ModalResult::AnnotationEdit { file_index, hunk_index } => {
-                                    // Close modal and open annotation editor for editing
-                                    if let Some(ann) = state.get_annotation(file_index, hunk_index) {
+                                ModalResult::AnnotationEdit { annotation_id } => {
+                                    if let Some(ann) = state.get_annotation_by_id(annotation_id) {
                                         let editor = AnnotationEditor::new(
-                                            file_index,
-                                            hunk_index,
                                             ann.filename.clone(),
-                                            ann.line_range,
-                                        ).with_content(&ann.content, ann.created_at);
+                                            ann.target.clone(),
+                                        ).with_existing(ann.id, &ann.content, ann.created_at);
+                                        // Jump to the file
+                                        let filename = ann.filename.clone();
+                                        if let Some(file_index) = state.file_diffs.iter().position(|f| f.filename == filename) {
+                                            state.select_file(file_index);
+                                        }
                                         annotation_editor = Some(editor);
-                                        // Also jump to the hunk
-                                        state.select_file(file_index);
-                                        state.focused_hunk = Some(hunk_index);
                                     }
                                     active_modal = None;
                                 }
-                                ModalResult::AnnotationDelete { file_index, hunk_index } => {
-                                    state.remove_annotation(file_index, hunk_index);
+                                ModalResult::AnnotationDelete { annotation_id } => {
+                                    state.remove_annotation(annotation_id);
                                     // Refresh the modal if there are still annotations
                                     if !state.annotations.is_empty() {
                                         let mut sorted_annotations = state.annotations.clone();
@@ -505,7 +621,26 @@ fn run_app_internal(
                     let term_size = terminal.size()?;
                     let footer_height = 1u16;
                     let header_height = if state.stacked_mode { 1u16 } else { 0u16 };
-                    let sidebar_width = if state.show_sidebar { 40u16 } else { 0u16 };
+                    let sidebar_width = if state.show_sidebar {
+                        (term_size.width / 4).clamp(20, 35)
+                    } else {
+                        0u16
+                    };
+
+                    // For new/deleted files the renderer uses a single full-width panel,
+                    // so override diff_fullscreen so PanelLayout matches.
+                    let effective_fullscreen = if !state.file_diffs.is_empty() {
+                        let d = &state.file_diffs[state.current_file];
+                        if d.old_content.is_empty() && !d.new_content.is_empty() {
+                            DiffFullscreen::NewOnly
+                        } else if !d.old_content.is_empty() && d.new_content.is_empty() {
+                            DiffFullscreen::OldOnly
+                        } else {
+                            state.diff_fullscreen
+                        }
+                    } else {
+                        state.diff_fullscreen
+                    };
 
                     match mouse.kind {
                         MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
@@ -567,23 +702,40 @@ fn run_app_internal(
                                 && !state.file_diffs.is_empty()
                             {
                                 state.focused_panel = FocusedPanel::DiffView;
+                                // Any new click in the diff area clears the previous selection
+                                state.clear_selection();
 
                                 // Calculate layout for selection
                                 let layout = PanelLayout::calculate(
                                     term_size.width,
                                     sidebar_width,
                                     state.show_sidebar,
-                                    state.diff_fullscreen,
+                                    effective_fullscreen,
                                 );
 
                                 if let Some(panel) = layout.panel_at_x(mouse.column) {
                                     let is_gutter = layout.is_in_gutter(mouse.column, panel);
                                     let content_start_y = header_height + 1;
 
-                                    // Fast coordinate calculation without side_by_side
+                                    // Coordinate calculation accounting for context lines and annotations
                                     if mouse.row >= content_start_y {
                                         let rel_y = (mouse.row - content_start_y) as usize;
-                                        let line = state.scroll as usize + rel_y;
+
+                                        // Skip clicks on context lines or file annotation rows
+                                        if rel_y < state.content_row_offset {
+                                            continue;
+                                        }
+                                        let content_y = rel_y - state.content_row_offset;
+                                        // Adjust for inline annotation overlay gaps
+                                        let adjusted_y = match state.adjust_for_overlay_gaps(content_y) {
+                                            Some(y) => y,
+                                            None => continue, // Clicked inside an annotation overlay
+                                        };
+                                        let line = state.scroll as usize + adjusted_y;
+                                        let sbs_len = state.side_by_side_ref().len();
+                                        if line >= sbs_len {
+                                            continue;
+                                        }
 
                                         let panel_x = match panel {
                                             DiffPanelFocus::Old => layout.old_panel_x,
@@ -614,7 +766,6 @@ fn run_app_internal(
                         }
                         MouseEventKind::Drag(crossterm::event::MouseButton::Left) => {
                             if state.is_dragging && !state.file_diffs.is_empty() {
-                                // Fast path: compute position without expensive side_by_side calculation
                                 let panel = state.selection.panel;
                                 if panel != DiffPanelFocus::None {
                                     let content_start_y = header_height + 1;
@@ -624,11 +775,18 @@ fn run_app_internal(
                                             term_size.width,
                                             sidebar_width,
                                             state.show_sidebar,
-                                            state.diff_fullscreen,
+                                            effective_fullscreen,
                                         );
 
                                         let rel_y = (mouse.row - content_start_y) as usize;
-                                        let line = state.scroll as usize + rel_y;
+                                        // Account for context lines and file annotations
+                                        let content_y = rel_y.saturating_sub(state.content_row_offset);
+                                        // Adjust for inline annotation overlay gaps (clamped for drag)
+                                        let adjusted_y = state.adjust_for_overlay_gaps_clamped(content_y);
+                                        let line = state.scroll as usize + adjusted_y;
+                                        // Clamp to valid side_by_side range
+                                        let sbs_len = state.side_by_side_ref().len();
+                                        let line = line.min(sbs_len.saturating_sub(1));
 
                                         let panel_x = match panel {
                                             DiffPanelFocus::Old => layout.old_panel_x,
@@ -773,6 +931,7 @@ fn run_app_internal(
                     if key.code != KeyCode::Char('g') {
                         state.pending_key = PendingKey::None;
                     }
+                    state.show_selection_tooltip = false;
                     match key.code {
                         KeyCode::Esc | KeyCode::Char('c')
                             if (key.code == KeyCode::Esc
@@ -788,6 +947,7 @@ fn run_app_internal(
                                 && state.search_state.has_query() =>
                         {
                             state.search_state.clear();
+                            state.mark_search_dirty();
                         }
                         KeyCode::Char('q') | KeyCode::Esc => break 'main,
                         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -908,6 +1068,7 @@ fn run_app_internal(
                                         DiffFullscreen::NewOnly => DiffFullscreen::None,
                                         _ => DiffFullscreen::NewOnly,
                                     };
+                                    state.mark_search_dirty();
                                 }
                             }
                         }
@@ -919,11 +1080,13 @@ fn run_app_internal(
                                         DiffFullscreen::OldOnly => DiffFullscreen::None,
                                         _ => DiffFullscreen::OldOnly,
                                     };
+                                    state.mark_search_dirty();
                                 }
                             }
                         }
                         KeyCode::Char('=') => {
                             state.diff_fullscreen = DiffFullscreen::None;
+                            state.mark_search_dirty();
                         }
                         KeyCode::Down
                             if state.search_state.has_query()
@@ -1172,13 +1335,7 @@ fn run_app_internal(
                         KeyCode::Char('}') => {
                             if !state.file_diffs.is_empty() {
                                 state.clear_selection(); // Clear selection on hunk navigation
-                                let diff = &state.file_diffs[state.current_file];
-                                let side_by_side = compute_side_by_side(
-                                    &diff.old_content,
-                                    &diff.new_content,
-                                    state.settings.tab_width,
-                                );
-                                let hunks = find_hunk_starts(&side_by_side);
+                                let hunks = state.get_hunks().to_vec();
                                 let current_hunk = state.focused_hunk.unwrap_or(0);
                                 let next_hunk = if state.focused_hunk.is_none() {
                                     hunks
@@ -1202,13 +1359,7 @@ fn run_app_internal(
                         KeyCode::Char('{') => {
                             if !state.file_diffs.is_empty() {
                                 state.clear_selection(); // Clear selection on hunk navigation
-                                let diff = &state.file_diffs[state.current_file];
-                                let side_by_side = compute_side_by_side(
-                                    &diff.old_content,
-                                    &diff.new_content,
-                                    state.settings.tab_width,
-                                );
-                                let hunks = find_hunk_starts(&side_by_side);
+                                let hunks = state.get_hunks().to_vec();
                                 let current_hunk = state.focused_hunk.unwrap_or(hunks.len());
                                 let prev_hunk = if state.focused_hunk.is_none() {
                                     hunks
@@ -1230,68 +1381,99 @@ fn run_app_internal(
                             }
                         }
                         KeyCode::Char('i') => {
-                            // Add annotation to focused hunk
-                            if let Some(hunk_index) = state.focused_hunk {
+                            if !state.file_diffs.is_empty() {
                                 let file_index = state.current_file;
                                 let diff = &state.file_diffs[file_index];
+                                let filename = diff.filename.clone();
 
-                                // Calculate line range for this hunk
-                                let side_by_side = compute_side_by_side(
-                                    &diff.old_content,
-                                    &diff.new_content,
-                                    state.settings.tab_width,
-                                );
-                                let hunks = find_hunk_starts(&side_by_side);
-                                let hunk_start = hunks.get(hunk_index).copied().unwrap_or(0);
-                                let next_hunk_start = hunks
-                                    .get(hunk_index + 1)
-                                    .copied()
-                                    .unwrap_or(side_by_side.len());
+                                if state.selection.is_active() && !matches!(state.selection.mode, SelectionMode::None) {
+                                    // Tier 1: Active selection (line or character) → line-range annotation
+                                    // Both line-mode and character-mode selections create full-line annotations
+                                    let panel = state.selection.panel;
+                                    let sel_start = state.selection.anchor.line.min(state.selection.head.line);
+                                    let sel_end = state.selection.anchor.line.max(state.selection.head.line);
 
-                                // Find the actual end of the hunk (last changed line, not start of next hunk)
-                                let mut actual_hunk_end = hunk_start;
-                                for i in hunk_start..next_hunk_start {
-                                    if let Some(dl) = side_by_side.get(i) {
-                                        if !matches!(dl.change_type, ChangeType::Equal) {
-                                            actual_hunk_end = i;
+                                    state.ensure_cache();
+                                    let sbs = state.side_by_side_ref();
+
+                                    // Resolve side_by_side indices to file line numbers
+                                    let mut start_line: Option<usize> = None;
+                                    let mut end_line: Option<usize> = None;
+                                    for idx in sel_start..=sel_end {
+                                        if let Some(dl) = sbs.get(idx) {
+                                            if let Some(n) = dl.line_number(panel) {
+                                                if start_line.is_none() {
+                                                    start_line = Some(n);
+                                                }
+                                                end_line = Some(n);
+                                            }
                                         }
                                     }
-                                }
 
-                                let start_line = side_by_side
-                                    .get(hunk_start)
-                                    .and_then(|dl| {
-                                        dl.new_line
-                                            .as_ref()
-                                            .map(|(n, _)| *n)
-                                            .or(dl.old_line.as_ref().map(|(n, _)| *n))
-                                    })
-                                    .unwrap_or(1);
-                                let end_line = side_by_side
-                                    .get(actual_hunk_end)
-                                    .and_then(|dl| {
-                                        dl.new_line
-                                            .as_ref()
-                                            .map(|(n, _)| *n)
-                                            .or(dl.old_line.as_ref().map(|(n, _)| *n))
-                                    })
-                                    .unwrap_or(start_line);
+                                    if let (Some(start), Some(end)) = (start_line, end_line) {
+                                        let target = super::state::AnnotationTarget::LineRange {
+                                            panel,
+                                            start_line: start,
+                                            end_line: end,
+                                        };
+                                        let editor = AnnotationEditor::new(filename, target);
+                                        annotation_editor = Some(editor);
+                                    }
+                                    state.clear_selection();
+                                } else if let Some(hunk_index) = state.focused_hunk {
+                                    // Tier 2: Focused hunk → line-range annotation for the hunk
+                                    let is_deleted = !diff.old_content.is_empty() && diff.new_content.is_empty();
+                                    let hunk_panel = if is_deleted {
+                                        DiffPanelFocus::Old
+                                    } else {
+                                        DiffPanelFocus::New
+                                    };
 
-                                let editor = AnnotationEditor::new(
-                                    file_index,
-                                    hunk_index,
-                                    diff.filename.clone(),
-                                    (start_line, end_line),
-                                );
+                                    state.ensure_cache();
+                                    let sbs = state.side_by_side_ref();
+                                    let hunks = state.hunks_ref();
+                                    let hunk_start = hunks.get(hunk_index).copied().unwrap_or(0);
+                                    let next_hunk_start = hunks
+                                        .get(hunk_index + 1)
+                                        .copied()
+                                        .unwrap_or(sbs.len());
 
-                                // If editing existing, pre-fill content
-                                let editor = if let Some(ann) = state.get_annotation(file_index, hunk_index) {
-                                    editor.with_content(&ann.content, ann.created_at)
+                                    let mut actual_hunk_end = hunk_start;
+                                    for i in hunk_start..next_hunk_start {
+                                        if let Some(dl) = sbs.get(i) {
+                                            if !matches!(dl.change_type, ChangeType::Equal) {
+                                                actual_hunk_end = i;
+                                            }
+                                        }
+                                    }
+
+                                    let line_num = |dl: &super::types::DiffLine| {
+                                        dl.line_number(hunk_panel)
+                                            .or_else(|| dl.line_number(DiffPanelFocus::Old))
+                                    };
+
+                                    let start_line = sbs
+                                        .get(hunk_start)
+                                        .and_then(line_num)
+                                        .unwrap_or(1);
+                                    let end_line = sbs
+                                        .get(actual_hunk_end)
+                                        .and_then(line_num)
+                                        .unwrap_or(start_line);
+
+                                    let target = super::state::AnnotationTarget::LineRange {
+                                        panel: hunk_panel,
+                                        start_line,
+                                        end_line,
+                                    };
+                                    let editor = AnnotationEditor::new(filename, target);
+                                    annotation_editor = Some(editor);
                                 } else {
-                                    editor
-                                };
-
-                                annotation_editor = Some(editor);
+                                    // Tier 3: No selection, no hunk → file-level annotation
+                                    let target = super::state::AnnotationTarget::File;
+                                    let editor = AnnotationEditor::new(filename, target);
+                                    annotation_editor = Some(editor);
+                                }
                             }
                         }
                         KeyCode::Char('I') => {
@@ -1313,13 +1495,9 @@ fn run_app_internal(
                             if !state.file_diffs.is_empty() {
                                 // If selection is active, copy selected text
                                 if state.selection.is_active() {
-                                    let diff = &state.file_diffs[state.current_file];
-                                    let side_by_side = compute_side_by_side(
-                                        &diff.old_content,
-                                        &diff.new_content,
-                                        state.settings.tab_width,
-                                    );
-                                    if let Some(text) = extract_selected_text(&state.selection, &side_by_side) {
+                                    state.ensure_cache();
+                                    let side_by_side = state.side_by_side_ref();
+                                    if let Some(text) = extract_selected_text(&state.selection, side_by_side) {
                                         if let Ok(mut clipboard) = arboard::Clipboard::new() {
                                             let _ = clipboard.set_text(&text);
                                         }
@@ -1343,16 +1521,12 @@ fn run_app_internal(
 
                                 let editor =
                                     std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
-                                let filename = &state.file_diffs[state.current_file].filename;
+                                let filename = state.file_diffs[state.current_file].filename.clone();
 
                                 let line_arg = if let Some(hunk_idx) = state.focused_hunk {
-                                    let diff = &state.file_diffs[state.current_file];
-                                    let side_by_side = compute_side_by_side(
-                                        &diff.old_content,
-                                        &diff.new_content,
-                                        state.settings.tab_width,
-                                    );
-                                    let hunks = find_hunk_starts(&side_by_side);
+                                    state.ensure_cache();
+                                    let side_by_side = state.side_by_side_ref();
+                                    let hunks = state.hunks_ref();
                                     if let Some(&hunk_start) = hunks.get(hunk_idx) {
                                         side_by_side.get(hunk_start).and_then(|dl| {
                                             dl.new_line
@@ -1415,6 +1589,7 @@ fn run_app_internal(
                                 || key.modifiers.contains(KeyModifiers::CONTROL) =>
                         {
                             state.search_state.start_forward();
+                            state.mark_search_dirty();
                         }
                         KeyCode::Char('n') if state.search_state.has_query() => {
                             if let Some(line) = state.search_state.find_next() {
@@ -1577,11 +1752,15 @@ fn run_app_internal(
                                         ],
                                     },
                                     KeyBindSection {
-                                        title: "Annotations",
+                                        title: "Selection & Annotations",
                                         bindings: vec![
                                             KeyBind {
+                                                key: "y",
+                                                description: "Copy selection (or filename)",
+                                            },
+                                            KeyBind {
                                                 key: "i",
-                                                description: "Add annotation to focused hunk",
+                                                description: "Annotate selection / hunk / file",
                                             },
                                             KeyBind {
                                                 key: "I",
