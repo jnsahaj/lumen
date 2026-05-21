@@ -189,6 +189,7 @@ fn run_app_internal(
             CommitReference::Single(s) => s.clone(),
             CommitReference::Range { from, to } => format!("{}..{}", from, to),
             CommitReference::TripleDots { from, to } => format!("{}...{}", from, to),
+            CommitReference::RangeToWorkingTree { from } => format!("{}..-", from),
         })
     };
     state.set_diff_reference(diff_ref_str);

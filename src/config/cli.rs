@@ -76,7 +76,7 @@ impl FromStr for ProviderType {
 pub enum Commands {
     /// Explain the changes in a commit, or the current diff (default). Use --list to select commit interactively
     Explain {
-        /// Commit reference: SHA, HEAD, HEAD~3..HEAD, main..feature, main...feature
+        /// Commit reference: SHA, HEAD, HEAD~3..HEAD, main..feature, main...feature, main..- (range + working tree)
         #[arg(value_parser = clap::value_parser!(CommitReference))]
         reference: Option<CommitReference>,
 

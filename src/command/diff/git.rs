@@ -23,6 +23,8 @@ pub enum DiffRefs {
     Single(String),
     /// Range between two refs
     Range { from: String, to: String },
+    /// Range from a ref to the working tree (range + uncommitted changes).
+    RangeToWorkingTree { from: String },
 }
 
 impl DiffRefs {
@@ -48,6 +50,9 @@ impl DiffRefs {
                     to: to.clone(),
                 }
             }
+            Some(CommitReference::RangeToWorkingTree { from }) => {
+                DiffRefs::RangeToWorkingTree { from: from.clone() }
+            }
         }
     }
 }
@@ -62,6 +67,22 @@ pub fn get_changed_files(options: &DiffOptions, backend: &dyn VcsBackend) -> Vec
             .get_range_changed_files(&from, &to)
             .unwrap_or_default(),
         DiffRefs::WorkingTree => backend.get_working_tree_changed_files().unwrap_or_default(),
+        DiffRefs::RangeToWorkingTree { from } => {
+            // Union of files changed in `from..HEAD` and files changed in the working tree.
+            let head_ref = backend.working_copy_parent_ref();
+            let range_files = backend
+                .get_range_changed_files(&from, head_ref)
+                .unwrap_or_default();
+            let wt_files = backend.get_working_tree_changed_files().unwrap_or_default();
+            let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+            let mut combined: Vec<String> = Vec::new();
+            for f in range_files.into_iter().chain(wt_files.into_iter()) {
+                if seen.insert(f.clone()) {
+                    combined.push(f);
+                }
+            }
+            combined
+        }
     };
 
     if let Some(ref filter) = options.file {
@@ -79,6 +100,7 @@ pub fn get_old_content(filename: &str, refs: &DiffRefs, backend: &dyn VcsBackend
             backend.get_parent_ref_or_empty(sha).unwrap_or_default()
         }
         DiffRefs::Range { from, .. } => from.clone(),
+        DiffRefs::RangeToWorkingTree { from } => from.clone(),
         DiffRefs::WorkingTree => backend.working_copy_parent_ref().to_string(),
     };
 
@@ -101,7 +123,7 @@ pub fn get_new_content(filename: &str, refs: &DiffRefs, backend: &dyn VcsBackend
         DiffRefs::Range { to, .. } => backend
             .get_file_content_at_ref(to, Path::new(filename))
             .unwrap_or_default(),
-        DiffRefs::WorkingTree => {
+        DiffRefs::WorkingTree | DiffRefs::RangeToWorkingTree { .. } => {
             // Read from working tree (actual filesystem)
             fs::read_to_string(filename).unwrap_or_default()
         }
@@ -361,6 +383,82 @@ mod tests {
         assert_eq!(file1.status, FileStatus::Added);
         assert!(file1.old_content.is_empty());
         assert_eq!(file1.new_content, "file 1\n");
+
+        let _ = std::env::set_current_dir(&original);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_load_file_diffs_range_to_working_tree() {
+        let _lock = crate::vcs::test_utils::cwd_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = make_temp_dir("git-diff-range-to-wt");
+        let original = std::env::current_dir().expect("get cwd");
+
+        git(&dir, &["init"]);
+        git(&dir, &["config", "user.email", "test@example.com"]);
+        git(&dir, &["config", "user.name", "Test User"]);
+
+        // Base commit (will be referenced as HEAD~1 later)
+        fs::write(dir.join("base.txt"), "base\n").expect("write base");
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-m", "base"]);
+
+        // Commit on top — committed change
+        fs::write(dir.join("committed.txt"), "committed\n").expect("write committed");
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-m", "add committed"]);
+
+        // Working tree changes (uncommitted)
+        fs::write(dir.join("uncommitted.txt"), "uncommitted\n").expect("write uncommitted");
+        fs::write(dir.join("base.txt"), "base modified\n").expect("modify base");
+
+        std::env::set_current_dir(&dir).expect("set cwd");
+
+        let backend = crate::vcs::GitBackend::from_cwd().expect("should open repo");
+        let options = super::super::DiffOptions {
+            reference: Some(crate::commit_reference::CommitReference::RangeToWorkingTree {
+                from: "HEAD~1".to_string(),
+            }),
+            pr: None,
+            file: None,
+            watch: false,
+            theme: None,
+            stacked: false,
+            focus: None,
+            origin: None,
+        };
+
+        let diffs = load_file_diffs(&options, &backend);
+        let filenames: Vec<&str> = diffs.iter().map(|d| d.filename.as_str()).collect();
+
+        // Should include both the committed file and the uncommitted/modified ones
+        assert!(
+            filenames.contains(&"committed.txt"),
+            "should include committed file, got: {:?}",
+            filenames
+        );
+        assert!(
+            filenames.contains(&"uncommitted.txt"),
+            "should include untracked working tree file, got: {:?}",
+            filenames
+        );
+        assert!(
+            filenames.contains(&"base.txt"),
+            "should include modified working tree file, got: {:?}",
+            filenames
+        );
+
+        // base.txt: old=from HEAD~1 ("base\n"), new=working tree ("base modified\n")
+        let base = diffs.iter().find(|d| d.filename == "base.txt").unwrap();
+        assert_eq!(base.old_content, "base\n");
+        assert_eq!(base.new_content, "base modified\n");
+
+        // committed.txt: old=empty (not in HEAD~1), new=fs content
+        let committed = diffs.iter().find(|d| d.filename == "committed.txt").unwrap();
+        assert_eq!(committed.old_content, "");
+        assert_eq!(committed.new_content, "committed\n");
 
         let _ = std::env::set_current_dir(&original);
         let _ = fs::remove_dir_all(&dir);

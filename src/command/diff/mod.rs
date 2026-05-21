@@ -377,7 +377,7 @@ pub fn run_diff_ui(options: DiffOptions, backend: &dyn VcsBackend) -> io::Result
                         .unwrap_or_else(|_| from.clone());
                     (merge_base, to.clone())
                 }
-                CommitReference::Single(_) => {
+                CommitReference::Single(_) | CommitReference::RangeToWorkingTree { .. } => {
                     eprintln!(
                         "\x1b[91merror:\x1b[0m --stacked requires a range (e.g., main..feature)"
                     );
