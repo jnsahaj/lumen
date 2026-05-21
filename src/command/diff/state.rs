@@ -152,6 +152,9 @@ pub struct AppState {
     pub h_scroll: u16,
     pub focused_panel: FocusedPanel,
     pub viewed_files: HashSet<usize>,
+    /// Hunks marked as viewed, keyed by filename (stable across reloads).
+    /// Values are hunk indices within that file's `find_hunk_starts` result.
+    pub viewed_hunks: HashMap<String, HashSet<usize>>,
     pub show_sidebar: bool,
     pub settings: DiffViewSettings,
     pub diff_fullscreen: DiffFullscreen,
@@ -255,6 +258,7 @@ impl AppState {
             h_scroll: 0,
             focused_panel: FocusedPanel::default(),
             viewed_files: HashSet::new(),
+            viewed_hunks: HashMap::new(),
             show_sidebar: true,
             settings,
             diff_fullscreen: DiffFullscreen::default(),
@@ -708,6 +712,7 @@ impl AppState {
         if let Some(changed) = changed_files {
             for filename in changed {
                 viewed_filenames.remove(filename);
+                self.viewed_hunks.remove(filename);
             }
         }
 
@@ -717,6 +722,7 @@ impl AppState {
         // Retain annotations whose file still exists
         let filenames: HashSet<&str> = self.file_diffs.iter().map(|f| f.filename.as_str()).collect();
         self.annotations.retain(|ann| filenames.contains(ann.filename.as_str()));
+        self.viewed_hunks.retain(|fname, _| filenames.contains(fname.as_str()));
 
         // Convert viewed filenames back to indices in the new file_diffs
         self.viewed_files = self

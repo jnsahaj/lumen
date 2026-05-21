@@ -936,6 +936,7 @@ pub fn render_diff(
     selection: &Selection,
     old_highlighter: &FileHighlighter,
     new_highlighter: &FileHighlighter,
+    viewed_hunks: &HashSet<usize>,
 ) -> (usize, Vec<(usize, usize)>) {
     let area = frame.area();
     let t = theme::get();
@@ -1129,6 +1130,11 @@ pub fn render_diff(
             let new_selection_range = get_selection_range_for_line(line_idx, DiffPanelFocus::New, selection);
             let in_annotation = is_in_ann_range(line_idx, None, &ann_index_ranges);
             let new_line_selected = new_selection_range.map_or(false, |(s, e)| s == 0 && e == usize::MAX);
+            let hunk_viewed = {
+                let h_idx = hunks.iter().rposition(|&h| h <= line_idx);
+                !matches!(diff_line.change_type, ChangeType::Equal)
+                    && h_idx.map_or(false, |idx| viewed_hunks.contains(&idx))
+            };
 
             if let Some((num, text)) = &diff_line.new_line {
                 let mut spans: Vec<Span> = Vec::new();
@@ -1148,10 +1154,11 @@ pub fn render_diff(
                         .bg(gutter_bg),
                 ));
                 let matches = search_state.get_matches_for_line(line_idx, MatchPanel::New);
+                let line_bg = if hunk_viewed { bg } else { t.diff.added_bg };
                 let content_spans = apply_search_highlight(
                     text,
                     &diff.filename,
-                    Some(t.diff.added_bg),
+                    Some(line_bg),
                     &matches,
                     Some(new_highlighter),
                     Some(*num),
@@ -1160,7 +1167,7 @@ pub fn render_diff(
                 let content_spans = apply_selection_to_spans(
                     content_spans,
                     new_selection_range,
-                    t.diff.added_bg,
+                    line_bg,
                 );
                 spans.extend(content_spans);
                 new_lines.push(Line::from(spans));
@@ -1265,6 +1272,11 @@ pub fn render_diff(
             let old_selection_range = get_selection_range_for_line(line_idx, DiffPanelFocus::Old, selection);
             let in_annotation = is_in_ann_range(line_idx, None, &ann_index_ranges);
             let old_line_selected = old_selection_range.map_or(false, |(s, e)| s == 0 && e == usize::MAX);
+            let hunk_viewed = {
+                let h_idx = hunks.iter().rposition(|&h| h <= line_idx);
+                !matches!(diff_line.change_type, ChangeType::Equal)
+                    && h_idx.map_or(false, |idx| viewed_hunks.contains(&idx))
+            };
 
             if let Some((num, text)) = &diff_line.old_line {
                 let mut spans: Vec<Span> = Vec::new();
@@ -1284,10 +1296,11 @@ pub fn render_diff(
                         .bg(gutter_bg),
                 ));
                 let matches = search_state.get_matches_for_line(line_idx, MatchPanel::Old);
+                let line_bg = if hunk_viewed { bg } else { t.diff.deleted_bg };
                 let content_spans = apply_search_highlight(
                     text,
                     &diff.filename,
-                    Some(t.diff.deleted_bg),
+                    Some(line_bg),
                     &matches,
                     Some(old_highlighter),
                     Some(*num),
@@ -1296,7 +1309,7 @@ pub fn render_diff(
                 let content_spans = apply_selection_to_spans(
                     content_spans,
                     old_selection_range,
-                    t.diff.deleted_bg,
+                    line_bg,
                 );
                 spans.extend(content_spans);
                 old_lines.push(Line::from(spans));
@@ -1413,6 +1426,19 @@ pub fn render_diff(
             }
         }
 
+        let hunk_index_for_line = |line_idx: usize| -> Option<usize> {
+            hunks.iter().rposition(|&h| h <= line_idx)
+        };
+        let is_line_in_viewed_hunk = |line_idx: usize, change_type: ChangeType| -> bool {
+            if matches!(change_type, ChangeType::Equal) {
+                return false;
+            }
+            match hunk_index_for_line(line_idx) {
+                Some(idx) => viewed_hunks.contains(&idx),
+                None => false,
+            }
+        };
+
         let is_in_focused_hunk = |line_idx: usize, change_type: ChangeType| -> bool {
             if matches!(change_type, ChangeType::Equal) {
                 return false;
@@ -1454,7 +1480,17 @@ pub fn render_diff(
         for (i, diff_line) in visible_lines.iter().enumerate() {
             let line_idx = scroll_usize + i;
             let in_focused = is_in_focused_hunk(line_idx, diff_line.change_type);
-            let style = DiffLineStyle::for_change_type(diff_line.change_type, bg, t);
+            let hunk_viewed = is_line_in_viewed_hunk(line_idx, diff_line.change_type);
+            let mut style = DiffLineStyle::for_change_type(diff_line.change_type, bg, t);
+            if hunk_viewed {
+                // Drop colored bg from the code area; keep the gutter colored.
+                if style.old_bg.is_some() {
+                    style.old_bg = Some(bg);
+                }
+                if style.new_bg.is_some() {
+                    style.new_bg = Some(bg);
+                }
+            }
 
             let old_selection_range = get_selection_range_for_line(line_idx, DiffPanelFocus::Old, selection);
             let new_selection_range = get_selection_range_for_line(line_idx, DiffPanelFocus::New, selection);
@@ -1487,7 +1523,7 @@ pub fn render_diff(
                         let matches = search_state.get_matches_for_line(line_idx, MatchPanel::Old);
 
                         // Use word-level rendering for modified lines if segments are available
-                        let content_spans = if matches!(diff_line.change_type, ChangeType::Modified) {
+                        let content_spans = if matches!(diff_line.change_type, ChangeType::Modified) && !hunk_viewed {
                             if let Some(ref segments) = diff_line.old_segments {
                                 let emphasis_ranges = segments_to_emphasis_ranges(segments);
                                 apply_word_emphasis_highlight(
@@ -1567,7 +1603,7 @@ pub fn render_diff(
                         let matches = search_state.get_matches_for_line(line_idx, MatchPanel::New);
 
                         // Use word-level rendering for modified lines if segments are available
-                        let content_spans = if matches!(diff_line.change_type, ChangeType::Modified) {
+                        let content_spans = if matches!(diff_line.change_type, ChangeType::Modified) && !hunk_viewed {
                             if let Some(ref segments) = diff_line.new_segments {
                                 let emphasis_ranges = segments_to_emphasis_ranges(segments);
                                 apply_word_emphasis_highlight(

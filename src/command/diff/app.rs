@@ -281,6 +281,12 @@ fn run_app_internal(
             let hunks = state.hunks_ref();
             let (old_hl, new_hl) = state.highlighters_ref().unwrap();
             let hunk_count = hunks.len();
+            let empty_viewed_hunks: std::collections::HashSet<usize> =
+                std::collections::HashSet::new();
+            let viewed_hunks_for_file = state
+                .viewed_hunks
+                .get(&diff.filename)
+                .unwrap_or(&empty_viewed_hunks);
             let branch_fallback = get_current_branch(backend);
             let commit_ref = state
                 .diff_reference
@@ -324,6 +330,7 @@ fn run_app_internal(
                     &state.selection,
                     old_hl,
                     new_hl,
+                    viewed_hunks_for_file,
                 );
                 row_offset.set(offset);
 
@@ -1374,6 +1381,40 @@ fn run_app_internal(
                                 }
                             }
                         }
+                        KeyCode::Char('m') => {
+                            if state.focused_panel == FocusedPanel::DiffView
+                                && !state.file_diffs.is_empty()
+                            {
+                                let hunks = state.get_hunks().to_vec();
+                                if let Some(hunk_idx) = state.focused_hunk {
+                                    if hunk_idx < hunks.len() {
+                                        let filename = state.file_diffs[state.current_file]
+                                            .filename
+                                            .clone();
+                                        let entry =
+                                            state.viewed_hunks.entry(filename).or_default();
+                                        let was_viewed = entry.contains(&hunk_idx);
+                                        if was_viewed {
+                                            entry.remove(&hunk_idx);
+                                        } else {
+                                            entry.insert(hunk_idx);
+                                        }
+
+                                        // On mark-viewed (not unmark), advance to next hunk.
+                                        if !was_viewed && hunk_idx + 1 < hunks.len() {
+                                            let next = hunk_idx + 1;
+                                            state.focused_hunk = Some(next);
+                                            state.scroll = adjust_scroll_for_hunk(
+                                                hunks[next],
+                                                state.scroll,
+                                                visible_height,
+                                                max_scroll,
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         KeyCode::Char('i') => {
                             if !state.file_diffs.is_empty() {
                                 let file_index = state.current_file;
@@ -1707,6 +1748,10 @@ fn run_app_internal(
                                             KeyBind {
                                                 key: "space",
                                                 description: "Mark viewed & next file",
+                                            },
+                                            KeyBind {
+                                                key: "m",
+                                                description: "Mark hunk viewed & next hunk",
                                             },
                                             KeyBind {
                                                 key: "]",
