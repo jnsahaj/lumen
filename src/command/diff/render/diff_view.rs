@@ -614,31 +614,79 @@ fn leading_indent_width(spans: &[Span<'_>]) -> usize {
     width
 }
 
-fn take_span_prefix<'a>(span: Span<'a>, take: usize) -> (Span<'a>, Option<Span<'a>>) {
-    let text = span.content.to_string();
-    let mut split_at = text.len();
-    for (idx, (byte_idx, _)) in text.char_indices().enumerate() {
-        if idx == take {
-            split_at = byte_idx;
-            break;
-        }
-    }
-
-    if take >= text.chars().count() {
-        return (Span::styled(text, span.style), None);
-    }
-
-    let head = text[..split_at].to_string();
-    let tail = text[split_at..].to_string();
-    (Span::styled(head, span.style), Some(Span::styled(tail, span.style)))
+fn flatten_spans(spans: Vec<Span<'_>>) -> Vec<(char, Style)> {
+    spans
+        .into_iter()
+        .flat_map(|span| {
+            let style = span.style;
+            span.content
+                .to_string()
+                .chars()
+                .map(move |ch| (ch, style))
+                .collect::<Vec<_>>()
+        })
+        .collect()
 }
 
-fn wrap_content_spans<'a>(
-    prefix: &[Span<'a>],
-    content: Vec<Span<'a>>,
+fn styled_chars_to_spans(chars: &[(char, Style)]) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    let mut current_style: Option<Style> = None;
+    let mut current_text = String::new();
+
+    for &(ch, style) in chars {
+        if current_style == Some(style) {
+            current_text.push(ch);
+            continue;
+        }
+
+        if let Some(style) = current_style {
+            spans.push(Span::styled(std::mem::take(&mut current_text), style));
+        }
+        current_style = Some(style);
+        current_text.push(ch);
+    }
+
+    if let Some(style) = current_style {
+        spans.push(Span::styled(current_text, style));
+    }
+
+    spans
+}
+
+fn next_wrap_break(chars: &[(char, Style)], limit: usize) -> (usize, usize) {
+    if chars.len() <= limit {
+        return (chars.len(), chars.len());
+    }
+
+    let first_non_ws = chars
+        .iter()
+        .position(|(ch, _)| !ch.is_whitespace())
+        .unwrap_or(0);
+    let break_pos = chars
+        .iter()
+        .take(limit + 1)
+        .enumerate()
+        .filter(|(idx, (ch, _))| *idx > first_non_ws && ch.is_whitespace())
+        .map(|(idx, _)| idx)
+        .last();
+
+    if let Some(idx) = break_pos {
+        let mut next_start = idx + 1;
+        while next_start < chars.len() && chars[next_start].0.is_whitespace() {
+            next_start += 1;
+        }
+        (idx, next_start)
+    } else {
+        (limit, limit)
+    }
+}
+
+fn wrap_content_spans(
+    prefix: &[Span<'_>],
+    content: Vec<Span<'_>>,
     panel_width: usize,
     default_bg: Color,
-) -> Vec<Line<'a>> {
+) -> Vec<Line<'static>> {
     let prefix_width = spans_width(prefix);
     let first_content_width = panel_width.saturating_sub(prefix_width).max(1);
     let indent = leading_indent_width(&content).min(first_content_width.saturating_sub(1));
@@ -651,7 +699,8 @@ fn wrap_content_spans<'a>(
         Style::default().bg(default_bg),
     );
 
-    let mut remaining = content;
+    let prefix_chars = flatten_spans(prefix.to_vec());
+    let mut remaining = flatten_spans(content);
     let mut lines = Vec::new();
     let mut first = true;
 
@@ -661,30 +710,12 @@ fn wrap_content_spans<'a>(
         } else {
             continuation_content_width
         };
-        let mut used = 0;
-        let mut row_content = Vec::new();
-
-        while !remaining.is_empty() && used < limit {
-            let span = remaining.remove(0);
-            let width = span_width(&span);
-            if used + width <= limit {
-                used += width;
-                row_content.push(span);
-            } else {
-                let take = limit - used;
-                let (head, tail) = take_span_prefix(span, take);
-                if span_width(&head) > 0 {
-                    row_content.push(head);
-                }
-                if let Some(tail) = tail {
-                    remaining.insert(0, tail);
-                }
-                used = limit;
-            }
-        }
+        let (break_at, next_start) = next_wrap_break(&remaining, limit);
+        let row_content = styled_chars_to_spans(&remaining[..break_at]);
+        remaining.drain(..next_start);
 
         let mut row = if first {
-            prefix.to_vec()
+            styled_chars_to_spans(&prefix_chars)
         } else {
             vec![continuation_prefix.clone()]
         };
@@ -2041,6 +2072,17 @@ mod wrap_tests {
         assert_eq!(line_text(&lines[0]), "  1  abcd");
         assert_eq!(line_text(&lines[1]), "     efgh");
         assert_eq!(line_text(&lines[2]), "     ij");
+    }
+
+    #[test]
+    fn wraps_at_word_boundaries() {
+        let prefix = vec![Span::raw("  1  ")];
+        let content = vec![Span::raw("alpha beta gamma")];
+        let lines = wrap_content_spans(&prefix, content, 16, Color::Reset);
+
+        assert_eq!(lines.len(), 2);
+        assert_eq!(line_text(&lines[0]), "  1  alpha beta");
+        assert_eq!(line_text(&lines[1]), "     gamma");
     }
 
     #[test]
