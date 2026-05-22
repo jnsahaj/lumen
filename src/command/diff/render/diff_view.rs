@@ -140,6 +140,20 @@ fn generate_stripe_pattern(width: usize) -> String {
     "╱".repeat(width)
 }
 
+/// Append a trailing span of bg-colored spaces so the line fills `target_width` cells.
+/// Used so diff line backgrounds extend to the right edge of the panel even when the
+/// content is shorter than the viewport or scrolled horizontally.
+fn pad_line_bg<'a>(mut spans: Vec<Span<'a>>, target_width: usize, bg: Color) -> Vec<Span<'a>> {
+    let current: usize = spans.iter().map(|s| s.content.chars().count()).sum();
+    if current < target_width {
+        spans.push(Span::styled(
+            " ".repeat(target_width - current),
+            Style::default().bg(bg),
+        ));
+    }
+    spans
+}
+
 pub struct LineStats {
     pub added: usize,
     pub removed: usize,
@@ -937,6 +951,8 @@ pub fn render_diff(
     old_highlighter: &FileHighlighter,
     new_highlighter: &FileHighlighter,
     viewed_hunks: &HashSet<usize>,
+    total_added: usize,
+    total_removed: usize,
 ) -> (usize, Vec<(usize, usize)>) {
     let area = frame.area();
     let t = theme::get();
@@ -991,6 +1007,9 @@ pub fn render_diff(
             sidebar_h_scroll,
             viewed_files,
             focused_panel == FocusedPanel::Sidebar,
+            _file_diffs.len(),
+            total_added,
+            total_removed,
         );
 
         main_chunks[1]
@@ -1125,6 +1144,9 @@ pub fn render_diff(
         let annotation_indicator_style = Style::default().fg(t.ui.highlight);
         let focus_style = Style::default().fg(t.ui.border_focused);
 
+        let row_target_width =
+            (main_area.width as usize).saturating_sub(2) + h_scroll as usize;
+
         for (i, diff_line) in visible_lines.iter().enumerate() {
             let line_idx = scroll_usize + i;
             let new_selection_range = get_selection_range_for_line(line_idx, DiffPanelFocus::New, selection);
@@ -1170,6 +1192,7 @@ pub fn render_diff(
                     line_bg,
                 );
                 spans.extend(content_spans);
+                let spans = pad_line_bg(spans, row_target_width, line_bg);
                 new_lines.push(Line::from(spans));
             }
 
@@ -1267,6 +1290,9 @@ pub fn render_diff(
         let annotation_indicator_style = Style::default().fg(t.ui.highlight);
         let focus_style = Style::default().fg(t.ui.border_focused);
 
+        let row_target_width =
+            (main_area.width as usize).saturating_sub(2) + h_scroll as usize;
+
         for (i, diff_line) in visible_lines.iter().enumerate() {
             let line_idx = scroll_usize + i;
             let old_selection_range = get_selection_range_for_line(line_idx, DiffPanelFocus::Old, selection);
@@ -1312,6 +1338,7 @@ pub fn render_diff(
                     line_bg,
                 );
                 spans.extend(content_spans);
+                let spans = pad_line_bg(spans, row_target_width, line_bg);
                 old_lines.push(Line::from(spans));
             }
 
@@ -1477,6 +1504,20 @@ pub fn render_diff(
         let focus_style = Style::default().fg(t.ui.border_focused);
         let annotation_indicator_style = Style::default().fg(t.ui.highlight);
 
+        // Old panel always has full borders (Borders::ALL); the new panel drops its left
+        // border when shown alongside the old panel (sharing it with the old panel's right).
+        let old_row_target_width = old_area
+            .map(|a| (a.width as usize).saturating_sub(2))
+            .unwrap_or(0)
+            + h_scroll as usize;
+        let new_row_target_width = new_area
+            .map(|a| {
+                let borders = if old_area.is_some() { 1 } else { 2 };
+                (a.width as usize).saturating_sub(borders)
+            })
+            .unwrap_or(0)
+            + h_scroll as usize;
+
         for (i, diff_line) in visible_lines.iter().enumerate() {
             let line_idx = scroll_usize + i;
             let in_focused = is_in_focused_hunk(line_idx, diff_line.change_type);
@@ -1568,19 +1609,22 @@ pub fn render_diff(
                         old_spans.extend(content_spans);
                     }
                     None => {
-                        let panel_width = old_area.map(|a| a.width as usize).unwrap_or(80);
-                        let content_width = panel_width.saturating_sub(8);
-                        let pattern = generate_stripe_pattern(content_width);
+                        // Fill the whole row (including the line-number gutter) with stripes,
+                        // extending past the visible viewport so horizontal scroll stays striped.
+                        let current_len: usize =
+                            old_spans.iter().map(|s| s.content.chars().count()).sum();
+                        let stripe_width = old_row_target_width.saturating_sub(current_len);
                         old_spans.push(Span::styled(
-                            "     ",
-                            Style::default().fg(t.diff.empty_placeholder_fg),
-                        ));
-                        old_spans.push(Span::styled(
-                            pattern,
+                            generate_stripe_pattern(stripe_width),
                             Style::default().fg(t.diff.empty_placeholder_fg),
                         ));
                     }
                 }
+                let old_spans = pad_line_bg(
+                    old_spans,
+                    old_row_target_width,
+                    style.old_bg.unwrap_or(bg),
+                );
                 old_lines.push(Line::from(old_spans));
             }
 
@@ -1648,19 +1692,22 @@ pub fn render_diff(
                         new_spans.extend(content_spans);
                     }
                     None => {
-                        let panel_width = new_area.map(|a| a.width as usize).unwrap_or(80);
-                        let content_width = panel_width.saturating_sub(8);
-                        let pattern = generate_stripe_pattern(content_width);
+                        // Fill the whole row (including the line-number gutter) with stripes,
+                        // extending past the visible viewport so horizontal scroll stays striped.
+                        let current_len: usize =
+                            new_spans.iter().map(|s| s.content.chars().count()).sum();
+                        let stripe_width = new_row_target_width.saturating_sub(current_len);
                         new_spans.push(Span::styled(
-                            "     ",
-                            Style::default().fg(t.diff.empty_placeholder_fg),
-                        ));
-                        new_spans.push(Span::styled(
-                            pattern,
+                            generate_stripe_pattern(stripe_width),
                             Style::default().fg(t.diff.empty_placeholder_fg),
                         ));
                     }
                 }
+                let new_spans = pad_line_bg(
+                    new_spans,
+                    new_row_target_width,
+                    style.new_bg.unwrap_or(bg),
+                );
                 new_lines.push(Line::from(new_spans));
             }
 
@@ -1812,6 +1859,27 @@ pub fn render_diff(
                         }
                     }
                 }
+            }
+        }
+    }
+
+    // Merge the sidebar's right border with the diff panel's left border into
+    // a single shared line by overwriting the corner cells with T-junctions.
+    if show_sidebar {
+        let junction_x = main_area.x;
+        let top_y = main_area.y;
+        let bottom_y = main_area.y + main_area.height.saturating_sub(1);
+        let border_color = t.ui.border_unfocused;
+        let buf = frame.buffer_mut();
+        if let Some(cell) = buf.cell_mut(ratatui::layout::Position::new(junction_x, top_y)) {
+            cell.set_char('┬');
+            cell.set_fg(border_color);
+        }
+        if bottom_y > top_y {
+            if let Some(cell) = buf.cell_mut(ratatui::layout::Position::new(junction_x, bottom_y))
+            {
+                cell.set_char('┴');
+                cell.set_fg(border_color);
             }
         }
     }
