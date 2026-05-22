@@ -139,6 +139,10 @@ pub enum Commands {
         /// Origin repository in owner/repo format (default: origin git remote)
         #[arg(long)]
         origin: Option<String>,
+
+        /// Soft-wrap long diff lines
+        #[arg(long)]
+        wrap: bool,
     },
     /// Interactively configure Lumen (provider, API key)
     Configure,
@@ -164,5 +168,14 @@ mod tests {
     fn test_vcs_not_specified() {
         let cli = Cli::try_parse_from(["lumen", "diff"]).unwrap();
         assert_eq!(cli.vcs, None);
+    }
+
+    #[test]
+    fn test_diff_wrap_parses() {
+        let cli = Cli::try_parse_from(["lumen", "diff", "--wrap"]).unwrap();
+        match cli.command {
+            Commands::Diff { wrap, .. } => assert!(wrap),
+            _ => panic!("expected diff command"),
+        }
     }
 }

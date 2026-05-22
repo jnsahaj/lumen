@@ -32,6 +32,7 @@ pub struct DiffOptions {
     pub stacked: bool,
     pub focus: Option<String>,
     pub origin: Option<String>,
+    pub wrap: bool,
 }
 
 #[derive(Clone)]

@@ -57,6 +57,7 @@ pub fn is_binary_content(content: &str) -> bool {
 pub struct DiffViewSettings {
     pub context: ContextConfig,
     pub tab_width: usize,
+    pub wrap: bool,
 }
 
 impl Default for DiffViewSettings {
@@ -64,6 +65,7 @@ impl Default for DiffViewSettings {
         Self {
             context: ContextConfig::default(),
             tab_width: 4,
+            wrap: false,
         }
     }
 }

@@ -592,6 +592,135 @@ fn apply_selection_to_spans<'a>(
     result
 }
 
+fn span_width(span: &Span<'_>) -> usize {
+    span.content.chars().count()
+}
+
+fn spans_width(spans: &[Span<'_>]) -> usize {
+    spans.iter().map(span_width).sum()
+}
+
+fn leading_indent_width(spans: &[Span<'_>]) -> usize {
+    let mut width = 0;
+    for span in spans {
+        for ch in span.content.chars() {
+            if ch == ' ' {
+                width += 1;
+            } else {
+                return width;
+            }
+        }
+    }
+    width
+}
+
+fn take_span_prefix<'a>(span: Span<'a>, take: usize) -> (Span<'a>, Option<Span<'a>>) {
+    let text = span.content.to_string();
+    let mut split_at = text.len();
+    for (idx, (byte_idx, _)) in text.char_indices().enumerate() {
+        if idx == take {
+            split_at = byte_idx;
+            break;
+        }
+    }
+
+    if take >= text.chars().count() {
+        return (Span::styled(text, span.style), None);
+    }
+
+    let head = text[..split_at].to_string();
+    let tail = text[split_at..].to_string();
+    (Span::styled(head, span.style), Some(Span::styled(tail, span.style)))
+}
+
+fn wrap_content_spans<'a>(
+    prefix: &[Span<'a>],
+    content: Vec<Span<'a>>,
+    panel_width: usize,
+    default_bg: Color,
+) -> Vec<Line<'a>> {
+    let prefix_width = spans_width(prefix);
+    let first_content_width = panel_width.saturating_sub(prefix_width).max(1);
+    let indent = leading_indent_width(&content).min(first_content_width.saturating_sub(1));
+    let continuation_prefix_width = prefix_width + indent;
+    let continuation_content_width = panel_width
+        .saturating_sub(continuation_prefix_width)
+        .max(1);
+    let continuation_prefix = Span::styled(
+        " ".repeat(continuation_prefix_width),
+        Style::default().bg(default_bg),
+    );
+
+    let mut remaining = content;
+    let mut lines = Vec::new();
+    let mut first = true;
+
+    loop {
+        let limit = if first {
+            first_content_width
+        } else {
+            continuation_content_width
+        };
+        let mut used = 0;
+        let mut row_content = Vec::new();
+
+        while !remaining.is_empty() && used < limit {
+            let span = remaining.remove(0);
+            let width = span_width(&span);
+            if used + width <= limit {
+                used += width;
+                row_content.push(span);
+            } else {
+                let take = limit - used;
+                let (head, tail) = take_span_prefix(span, take);
+                if span_width(&head) > 0 {
+                    row_content.push(head);
+                }
+                if let Some(tail) = tail {
+                    remaining.insert(0, tail);
+                }
+                used = limit;
+            }
+        }
+
+        let mut row = if first {
+            prefix.to_vec()
+        } else {
+            vec![continuation_prefix.clone()]
+        };
+        row.extend(row_content);
+        lines.push(Line::from(row));
+
+        if remaining.is_empty() {
+            break;
+        }
+        first = false;
+    }
+
+    lines
+}
+
+fn push_wrapped_line<'a>(
+    lines: &mut Vec<Line<'a>>,
+    spans: Vec<Span<'a>>,
+    prefix_len: usize,
+    panel_width: usize,
+    wrap: bool,
+    default_bg: Color,
+) -> usize {
+    if !wrap || spans.len() <= prefix_len {
+        lines.push(Line::from(spans));
+        return 1;
+    }
+
+    let prefix = spans[..prefix_len].to_vec();
+    let content = spans.into_iter().skip(prefix_len).collect();
+    let wrapped = wrap_content_spans(&prefix, content, panel_width, default_bg);
+    let count = wrapped.len();
+    lines.extend(wrapped);
+    count
+}
+
 pub fn compute_line_stats(side_by_side: &[DiffLine]) -> LineStats {
     let mut added = 0;
     let mut removed = 0;
@@ -1170,7 +1299,14 @@ pub fn render_diff(
                     line_bg,
                 );
                 spans.extend(content_spans);
-                new_lines.push(Line::from(spans));
+                push_wrapped_line(
+                    &mut new_lines,
+                    spans,
+                    2,
+                    main_area.width.saturating_sub(2) as usize,
+                    settings.wrap,
+                    bg,
+                );
             }
 
             // Check if this line is the end_line for any line-range annotation
@@ -1312,7 +1448,14 @@ pub fn render_diff(
                     line_bg,
                 );
                 spans.extend(content_spans);
-                old_lines.push(Line::from(spans));
+                push_wrapped_line(
+                    &mut old_lines,
+                    spans,
+                    2,
+                    main_area.width.saturating_sub(2) as usize,
+                    settings.wrap,
+                    bg,
+                );
             }
 
             // Check if this line is the end_line for any line-range annotation
@@ -1581,7 +1724,21 @@ pub fn render_diff(
                         ));
                     }
                 }
-                old_lines.push(Line::from(old_spans));
+                if diff_line.old_line.is_some() {
+                    let panel_width = old_area
+                        .map(|a| a.width.saturating_sub(2) as usize)
+                        .unwrap_or(80);
+                    push_wrapped_line(
+                        &mut old_lines,
+                        old_spans,
+                        2,
+                        panel_width,
+                        settings.wrap,
+                        bg,
+                    );
+                } else {
+                    old_lines.push(Line::from(old_spans));
+                }
             }
 
             if new_area.is_some() {
@@ -1661,7 +1818,22 @@ pub fn render_diff(
                         ));
                     }
                 }
-                new_lines.push(Line::from(new_spans));
+                if diff_line.new_line.is_some() {
+                    let prefix_len = if old_area.is_none() { 2 } else { 1 };
+                    let panel_width = new_area
+                        .map(|a| a.width.saturating_sub(2) as usize)
+                        .unwrap_or(80);
+                    push_wrapped_line(
+                        &mut new_lines,
+                        new_spans,
+                        prefix_len,
+                        panel_width,
+                        settings.wrap,
+                        bg,
+                    );
+                } else {
+                    new_lines.push(Line::from(new_spans));
+                }
             }
 
             // Check if this line is the end_line for any line-range annotation
@@ -1836,4 +2008,60 @@ pub fn render_diff(
     );
 
     (content_row_offset, overlay_gaps)
+}
+
+#[cfg(test)]
+mod wrap_tests {
+    use super::*;
+
+    fn line_text(line: &Line<'_>) -> String {
+        line.spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>()
+    }
+
+    #[test]
+    fn short_lines_do_not_wrap() {
+        let prefix = vec![Span::raw("  1  ")];
+        let content = vec![Span::raw("short")];
+        let lines = wrap_content_spans(&prefix, content, 20, Color::Reset);
+
+        assert_eq!(lines.len(), 1);
+        assert_eq!(line_text(&lines[0]), "  1  short");
+    }
+
+    #[test]
+    fn long_lines_wrap_at_available_width() {
+        let prefix = vec![Span::raw("  1  ")];
+        let content = vec![Span::raw("abcdefghij")];
+        let lines = wrap_content_spans(&prefix, content, 9, Color::Reset);
+
+        assert_eq!(lines.len(), 3);
+        assert_eq!(line_text(&lines[0]), "  1  abcd");
+        assert_eq!(line_text(&lines[1]), "     efgh");
+        assert_eq!(line_text(&lines[2]), "     ij");
+    }
+
+    #[test]
+    fn continuation_rows_preserve_indentation() {
+        let prefix = vec![Span::raw("  1  ")];
+        let content = vec![Span::raw("  abcdef")];
+        let lines = wrap_content_spans(&prefix, content, 10, Color::Reset);
+
+        assert_eq!(line_text(&lines[0]), "  1    abc");
+        assert_eq!(line_text(&lines[1]), "       def");
+    }
+
+    #[test]
+    fn narrow_widths_still_emit_content() {
+        let prefix = vec![Span::raw("  1  ")];
+        let content = vec![Span::raw("abc")];
+        let lines = wrap_content_spans(&prefix, content, 3, Color::Reset);
+
+        assert_eq!(lines.len(), 3);
+        assert_eq!(line_text(&lines[0]), "  1  a");
+        assert_eq!(line_text(&lines[1]), "     b");
+        assert_eq!(line_text(&lines[2]), "     c");
+    }
 }

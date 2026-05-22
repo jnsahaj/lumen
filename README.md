@@ -100,6 +100,9 @@ lumen diff main..feature --stacked
 
 # Jump to a specific file on open
 lumen diff --focus src/main.rs
+
+# Soft-wrap long diff lines
+lumen diff --wrap
 ```
 
 #### Stacked Diff Mode
@@ -164,6 +167,7 @@ Annotated lines display a `▍` gutter indicator. Use `I` to view, edit, delete,
 
 - `j/k` or arrow keys: Navigate
 - `{/}`: Jump between hunks
+- `w`: Toggle word wrap
 - `tab`: Toggle sidebar
 - `space`: Mark file as viewed
 - `e`: Open file in editor

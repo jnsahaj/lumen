@@ -179,6 +179,7 @@ fn run_app_internal(
 
     // Initialize state before TUI so we can sync viewed files
     let mut state = AppState::new(file_diffs, options.focus.as_deref());
+    state.settings.wrap = options.wrap;
     state.set_vcs_name(backend.name());
 
     // Set diff reference for annotation export context
@@ -305,7 +306,7 @@ fn run_app_internal(
                     &state.collapsed_dirs,
                     state.current_file,
                     state.scroll,
-                    state.h_scroll,
+                    if state.settings.wrap { 0 } else { state.h_scroll },
                     options.watch,
                     state.show_sidebar,
                     state.focused_panel,
@@ -917,7 +918,9 @@ fn run_app_internal(
                                         .saturating_sub((-h_scroll_delta) as u16);
                                 }
                             } else if in_diff {
-                                if h_scroll_delta > 0 {
+                                if state.settings.wrap {
+                                    state.h_scroll = 0;
+                                } else if h_scroll_delta > 0 {
                                     state.h_scroll =
                                         state.h_scroll.saturating_add(h_scroll_delta as u16);
                                 } else {
@@ -1140,17 +1143,23 @@ fn run_app_internal(
                             }
                         }
                         KeyCode::Char('h') | KeyCode::Left => {
-                            if state.focused_panel == FocusedPanel::DiffView {
+                            if state.focused_panel == FocusedPanel::DiffView && !state.settings.wrap {
                                 state.h_scroll = state.h_scroll.saturating_sub(4);
                             } else if state.focused_panel == FocusedPanel::Sidebar {
                                 state.sidebar_h_scroll = state.sidebar_h_scroll.saturating_sub(4);
                             }
                         }
                         KeyCode::Char('l') | KeyCode::Right => {
-                            if state.focused_panel == FocusedPanel::DiffView {
+                            if state.focused_panel == FocusedPanel::DiffView && !state.settings.wrap {
                                 state.h_scroll = state.h_scroll.saturating_add(4);
                             } else if state.focused_panel == FocusedPanel::Sidebar {
                                 state.sidebar_h_scroll = state.sidebar_h_scroll.saturating_add(4);
+                            }
+                        }
+                        KeyCode::Char('w') => {
+                            if state.focused_panel == FocusedPanel::DiffView {
+                                state.settings.wrap = !state.settings.wrap;
+                                state.h_scroll = 0;
                             }
                         }
                         KeyCode::Enter => {
@@ -1733,6 +1742,10 @@ fn run_app_internal(
                                             KeyBind {
                                                 key: "h/l or left/right",
                                                 description: "Scroll horizontally",
+                                            },
+                                            KeyBind {
+                                                key: "w",
+                                                description: "Toggle word wrap",
                                             },
                                             KeyBind {
                                                 key: "gg / G",
