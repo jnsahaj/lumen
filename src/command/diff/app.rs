@@ -1269,9 +1269,8 @@ fn run_app_internal(
                             }
                         }
                         KeyCode::Char('l') | KeyCode::Right => {
-                            if state.focused_panel == FocusedPanel::DiffView && !state.settings.wrap {
                             let term_width = terminal.size()?.width;
-                            if state.focused_panel == FocusedPanel::DiffView {
+                            if state.focused_panel == FocusedPanel::DiffView && !state.settings.wrap {
                                 state.h_scroll = state.h_scroll.saturating_add(4);
                                 clamp_h_scroll(&mut state, term_width);
                             } else if state.focused_panel == FocusedPanel::Sidebar {

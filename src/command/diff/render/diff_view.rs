@@ -1352,16 +1352,19 @@ pub fn render_diff(
                     line_bg,
                 );
                 spans.extend(content_spans);
-                push_wrapped_line(
-                    &mut new_lines,
-                    spans,
-                    2,
-                    main_area.width.saturating_sub(2) as usize,
-                    settings.wrap,
-                    bg,
-                );
-                let spans = pad_line_bg(spans, row_target_width, line_bg);
-                new_lines.push(Line::from(spans));
+                if settings.wrap {
+                    push_wrapped_line(
+                        &mut new_lines,
+                        spans,
+                        2,
+                        main_area.width.saturating_sub(2) as usize,
+                        true,
+                        bg,
+                    );
+                } else {
+                    let spans = pad_line_bg(spans, row_target_width, line_bg);
+                    new_lines.push(Line::from(spans));
+                }
             }
 
             // Check if this line is the end_line for any line-range annotation
@@ -1506,16 +1509,19 @@ pub fn render_diff(
                     line_bg,
                 );
                 spans.extend(content_spans);
-                push_wrapped_line(
-                    &mut old_lines,
-                    spans,
-                    2,
-                    main_area.width.saturating_sub(2) as usize,
-                    settings.wrap,
-                    bg,
-                );
-                let spans = pad_line_bg(spans, row_target_width, line_bg);
-                old_lines.push(Line::from(spans));
+                if settings.wrap {
+                    push_wrapped_line(
+                        &mut old_lines,
+                        spans,
+                        2,
+                        main_area.width.saturating_sub(2) as usize,
+                        true,
+                        bg,
+                    );
+                } else {
+                    let spans = pad_line_bg(spans, row_target_width, line_bg);
+                    old_lines.push(Line::from(spans));
+                }
             }
 
             // Check if this line is the end_line for any line-range annotation
@@ -1796,7 +1802,7 @@ pub fn render_diff(
                         ));
                     }
                 }
-                if diff_line.old_line.is_some() {
+                if diff_line.old_line.is_some() && settings.wrap {
                     let panel_width = old_area
                         .map(|a| a.width.saturating_sub(2) as usize)
                         .unwrap_or(80);
@@ -1805,18 +1811,17 @@ pub fn render_diff(
                         old_spans,
                         2,
                         panel_width,
-                        settings.wrap,
+                        true,
                         bg,
                     );
                 } else {
+                    let old_spans = pad_line_bg(
+                        old_spans,
+                        old_row_target_width,
+                        style.old_bg.unwrap_or(bg),
+                    );
                     old_lines.push(Line::from(old_spans));
                 }
-                let old_spans = pad_line_bg(
-                    old_spans,
-                    old_row_target_width,
-                    style.old_bg.unwrap_or(bg),
-                );
-                old_lines.push(Line::from(old_spans));
             }
 
             if new_area.is_some() {
@@ -1894,28 +1899,30 @@ pub fn render_diff(
                         ));
                     }
                 }
-                if diff_line.new_line.is_some() {
+                if diff_line.new_line.is_some() && settings.wrap {
                     let prefix_len = if old_area.is_none() { 2 } else { 1 };
                     let panel_width = new_area
-                        .map(|a| a.width.saturating_sub(2) as usize)
+                        .map(|a| {
+                            let borders = if old_area.is_some() { 1 } else { 2 };
+                            a.width.saturating_sub(borders) as usize
+                        })
                         .unwrap_or(80);
                     push_wrapped_line(
                         &mut new_lines,
                         new_spans,
                         prefix_len,
                         panel_width,
-                        settings.wrap,
+                        true,
                         bg,
                     );
                 } else {
+                    let new_spans = pad_line_bg(
+                        new_spans,
+                        new_row_target_width,
+                        style.new_bg.unwrap_or(bg),
+                    );
                     new_lines.push(Line::from(new_spans));
                 }
-                let new_spans = pad_line_bg(
-                    new_spans,
-                    new_row_target_width,
-                    style.new_bg.unwrap_or(bg),
-                );
-                new_lines.push(Line::from(new_spans));
             }
 
             // Check if this line is the end_line for any line-range annotation
