@@ -73,7 +73,7 @@ cargo install lumen
 ### Visual Diff Viewer
 
 Launch an interactive side-by-side diff viewer in your terminal:
-<img width="3456" height="2158" alt="image" src="https://github.com/user-attachments/assets/dc425871-3826-4368-88d8-931b9403f0ec" />
+<img width="3456" height="2122" alt="image" src="https://github.com/user-attachments/assets/757e1187-1615-4e90-bee2-5a1f59ec0960" />
 
 ```bash
 # View uncommitted changes

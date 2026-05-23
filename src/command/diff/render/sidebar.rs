@@ -21,6 +21,9 @@ pub fn render_sidebar(
     sidebar_h_scroll: u16,
     viewed_files: &HashSet<usize>,
     is_focused: bool,
+    total_files: usize,
+    total_added: usize,
+    total_removed: usize,
 ) {
     let t = theme::get();
     let bg = t.ui.bg;
@@ -146,6 +149,22 @@ pub fn render_sidebar(
         Style::default().fg(t.ui.border_unfocused)
     };
     let border_style = Style::default().fg(t.ui.border_unfocused);
+    let muted_style = Style::default().fg(t.ui.text_muted);
+
+    let title = Line::from(vec![
+        Span::styled(" [1] Files ", title_style),
+        Span::styled(format!("· {} ", total_files), muted_style),
+        Span::styled(
+            format!("+{}", total_added),
+            Style::default().fg(t.ui.stats_added),
+        ),
+        Span::raw(" "),
+        Span::styled(
+            format!("-{}", total_removed),
+            Style::default().fg(t.ui.stats_removed),
+        ),
+        Span::raw(" "),
+    ]);
 
     let visible_lines: Vec<Line> = lines
         .into_iter()
@@ -153,13 +172,18 @@ pub fn render_sidebar(
         .take(visible_height)
         .collect();
 
+    // Drop the right border so the sidebar shares a single vertical line with
+    // the adjacent diff panel. The parent renderer fixes up the corner cells
+    // at the boundary so the joined borders use `┬` / `┴` junctions.
+    let borders = Borders::TOP | Borders::LEFT | Borders::BOTTOM;
+
     let para = Paragraph::new(visible_lines)
         .style(Style::default().bg(bg))
         .scroll((0, sidebar_h_scroll))
         .block(
             Block::default()
-                .title(Line::styled(" [1] Files ", title_style))
-                .borders(Borders::ALL)
+                .title(title)
+                .borders(borders)
                 .border_style(border_style)
                 .style(Style::default().bg(bg)),
         );

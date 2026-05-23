@@ -77,6 +77,23 @@ fn compute_word_diff(
     Some((old_segments, new_segments))
 }
 
+/// Counts inserted and deleted lines for a file pair without building the
+/// full side-by-side structure. Cheaper than `compute_side_by_side` when only
+/// the totals are needed (e.g. sidebar aggregate stats).
+pub fn count_added_removed(old: &str, new: &str) -> (usize, usize) {
+    let diff = TextDiff::from_lines(old, new);
+    let mut added = 0usize;
+    let mut removed = 0usize;
+    for change in diff.iter_all_changes() {
+        match change.tag() {
+            ChangeTag::Insert => added += 1,
+            ChangeTag::Delete => removed += 1,
+            ChangeTag::Equal => {}
+        }
+    }
+    (added, removed)
+}
+
 /// Computes a side-by-side diff using GitHub-style pairing.
 ///
 /// This algorithm pairs consecutive deletions with consecutive insertions,

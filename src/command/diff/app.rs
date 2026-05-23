@@ -70,6 +70,121 @@ fn ensure_sidebar_visible(state: &mut AppState, visible_height: usize) {
     }
 }
 
+/// Compute the largest horizontal scroll offset that still keeps content
+/// in view for the current file. Walks `side_by_side` for the longest line
+/// on each side and compares against the panel widths from `PanelLayout`.
+fn max_h_scroll(state: &mut AppState, term_width: u16) -> u16 {
+    if state.file_diffs.is_empty() {
+        return 0;
+    }
+    let diff = &state.file_diffs[state.current_file];
+    if diff.is_binary {
+        return 0;
+    }
+
+    let sidebar_width = if state.show_sidebar {
+        (term_width / 4).clamp(20, 35)
+    } else {
+        0
+    };
+    // The renderer collapses to a single panel for added or deleted files,
+    // regardless of the diff_fullscreen toggle, so mirror that here.
+    let effective_fullscreen = if diff.old_content.is_empty() && !diff.new_content.is_empty() {
+        DiffFullscreen::NewOnly
+    } else if !diff.old_content.is_empty() && diff.new_content.is_empty() {
+        DiffFullscreen::OldOnly
+    } else {
+        state.diff_fullscreen
+    };
+    let layout = PanelLayout::calculate(
+        term_width,
+        sidebar_width,
+        state.show_sidebar,
+        effective_fullscreen,
+    );
+
+    state.ensure_cache();
+    let sbs = state.side_by_side_ref();
+    let mut max_old = 0usize;
+    let mut max_new = 0usize;
+    for line in sbs {
+        if let Some((_, text)) = &line.old_line {
+            max_old = max_old.max(text.chars().count());
+        }
+        if let Some((_, text)) = &line.new_line {
+            max_new = max_new.max(text.chars().count());
+        }
+    }
+
+    // Per-row overhead before the text: focus indicator (1 col) + line-number
+    // gutter (5 cols). The new panel drops its indicator when it's rendered
+    // alongside the old panel.
+    let gutter = layout.gutter_width as usize;
+    let old_overhead = layout.focus_indicator_width as usize + gutter;
+    let new_overhead = if layout.old_panel_width > 0 {
+        gutter
+    } else {
+        layout.focus_indicator_width as usize + gutter
+    };
+
+    let old_overflow = if layout.old_panel_width > 0 {
+        (max_old + old_overhead).saturating_sub(layout.old_panel_width as usize)
+    } else {
+        0
+    };
+    let new_overflow = if layout.new_panel_width > 0 {
+        (max_new + new_overhead).saturating_sub(layout.new_panel_width as usize)
+    } else {
+        0
+    };
+
+    old_overflow.max(new_overflow).min(u16::MAX as usize) as u16
+}
+
+/// Clamp `state.h_scroll` against the rightmost meaningful offset for the
+/// current file and terminal width.
+fn clamp_h_scroll(state: &mut AppState, term_width: u16) {
+    let max = max_h_scroll(state, term_width);
+    if state.h_scroll > max {
+        state.h_scroll = max;
+    }
+}
+
+/// Largest sidebar horizontal scroll offset that keeps a file/directory entry
+/// in view. Computed from the longest visible label minus the sidebar's inner
+/// content width.
+fn max_sidebar_h_scroll(state: &AppState, term_width: u16) -> u16 {
+    if !state.show_sidebar {
+        return 0;
+    }
+    let sidebar_width = (term_width / 4).clamp(20, 35) as usize;
+    // Sidebar uses Borders::TOP | LEFT | BOTTOM (the right edge is shared
+    // with the diff panel's left border), so only the left border eats width.
+    let inner_width = sidebar_width.saturating_sub(1);
+
+    let mut max_label = 0usize;
+    for item in &state.sidebar_items {
+        let len = match item {
+            SidebarItem::Directory { name, depth, .. } => {
+                depth * 2 + 2 + 1 + 1 + name.chars().count()
+            }
+            SidebarItem::File { name, depth, .. } => {
+                depth * 2 + 2 + 1 + 1 + name.chars().count()
+            }
+        };
+        max_label = max_label.max(len);
+    }
+    max_label.saturating_sub(inner_width).min(u16::MAX as usize) as u16
+}
+
+/// Clamp `state.sidebar_h_scroll` against the rightmost meaningful offset.
+fn clamp_sidebar_h_scroll(state: &mut AppState, term_width: u16) {
+    let max = max_sidebar_h_scroll(state, term_width);
+    if state.sidebar_h_scroll > max {
+        state.sidebar_h_scroll = max;
+    }
+}
+
 /// Find the side_by_side array index for a given file line number on a specific panel.
 fn find_sbs_index_for_line(
     side_by_side: &[super::types::DiffLine],
@@ -333,6 +448,8 @@ fn run_app_internal(
                     old_hl,
                     new_hl,
                     viewed_hunks_for_file,
+                    state.total_added,
+                    state.total_removed,
                 );
                 row_offset.set(offset);
 
@@ -912,6 +1029,7 @@ fn run_app_internal(
                                     state.sidebar_h_scroll = state
                                         .sidebar_h_scroll
                                         .saturating_add(h_scroll_delta as u16);
+                                    clamp_sidebar_h_scroll(&mut state, term_size.width);
                                 } else {
                                     state.sidebar_h_scroll = state
                                         .sidebar_h_scroll
@@ -923,6 +1041,7 @@ fn run_app_internal(
                                 } else if h_scroll_delta > 0 {
                                     state.h_scroll =
                                         state.h_scroll.saturating_add(h_scroll_delta as u16);
+                                    clamp_h_scroll(&mut state, term_size.width);
                                 } else {
                                     state.h_scroll =
                                         state.h_scroll.saturating_sub((-h_scroll_delta) as u16);
@@ -1151,9 +1270,13 @@ fn run_app_internal(
                         }
                         KeyCode::Char('l') | KeyCode::Right => {
                             if state.focused_panel == FocusedPanel::DiffView && !state.settings.wrap {
+                            let term_width = terminal.size()?.width;
+                            if state.focused_panel == FocusedPanel::DiffView {
                                 state.h_scroll = state.h_scroll.saturating_add(4);
+                                clamp_h_scroll(&mut state, term_width);
                             } else if state.focused_panel == FocusedPanel::Sidebar {
                                 state.sidebar_h_scroll = state.sidebar_h_scroll.saturating_add(4);
+                                clamp_sidebar_h_scroll(&mut state, term_width);
                             }
                         }
                         KeyCode::Char('w') => {
