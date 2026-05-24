@@ -265,6 +265,7 @@ export LUMEN_AI_MODEL="gpt-5-mini"
 | [DeepSeek](https://www.deepseek.com/) `deepseek` | Yes | `deepseek-chat` (V3.2), `deepseek-reasoner` (default: `deepseek-chat`) |
 | [xAI](https://x.ai/) `xai` | Yes | `grok-4`, `grok-4-mini`, `grok-4-mini-fast` (default: `grok-4-mini-fast`) |
 | [OpenCode Zen](https://opencode.ai/docs/zen) `opencode-zen` | Yes | [see list](https://opencode.ai/docs/zen#models) (default: `claude-sonnet-4-5`) |
+| [OpenCode Go](https://dev.opencode.ai/docs/go/) `opencode-go` | Yes | `glm-5.1`, `glm-5`, `kimi-k2.5`, `kimi-k2.6`, `deepseek-v4-pro`, `deepseek-v4-flash`, `mimo-v2.5`, `mimo-v2.5-pro`, `qwen3.6-plus`, `qwen3.5-plus` (default: `kimi-k2.6`) |
 | [Ollama](https://github.com/ollama/ollama) `ollama` | No (local) | [see list](https://ollama.com/library) (default: `llama3.2`) |
 | [OpenRouter](https://openrouter.ai/) `openrouter` | Yes | [see list](https://openrouter.ai/models) (default: `anthropic/claude-sonnet-4.5`) |
 | [Vercel AI Gateway](https://vercel.com/docs/ai-gateway) `vercel` | Yes | [see list](https://vercel.com/docs/ai-gateway/supported-models) (default: `anthropic/claude-sonnet-4.5`) |

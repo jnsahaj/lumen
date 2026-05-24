@@ -45,6 +45,7 @@ pub enum ProviderType {
     Claude,
     Ollama,
     OpencodeZen,
+    OpencodeGo,
     Openrouter,
     Deepseek,
     Gemini,
@@ -62,6 +63,7 @@ impl FromStr for ProviderType {
             "claude" => Ok(ProviderType::Claude),
             "ollama" => Ok(ProviderType::Ollama),
             "opencode-zen" => Ok(ProviderType::OpencodeZen),
+            "opencode-go" => Ok(ProviderType::OpencodeGo),
             "openrouter" => Ok(ProviderType::Openrouter),
             "deepseek" => Ok(ProviderType::Deepseek),
             "gemini" => Ok(ProviderType::Gemini),
@@ -164,5 +166,21 @@ mod tests {
     fn test_vcs_not_specified() {
         let cli = Cli::try_parse_from(["lumen", "diff"]).unwrap();
         assert_eq!(cli.vcs, None);
+    }
+
+    #[test]
+    fn test_opencode_go_provider_parses() {
+        let cli = Cli::try_parse_from([
+            "lumen",
+            "--provider",
+            "opencode-go",
+            "--model",
+            "kimi-k2.6",
+            "draft",
+        ])
+        .unwrap();
+
+        assert_eq!(cli.provider, Some(ProviderType::OpencodeGo));
+        assert_eq!(cli.model, Some("kimi-k2.6".to_string()));
     }
 }

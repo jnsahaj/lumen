@@ -34,7 +34,7 @@ pub struct LumenProvider {
     provider_name: String,
 }
 
-/// Provider configuration for custom endpoint providers (OpenCode Zen, OpenRouter, Vercel)
+/// Provider configuration for custom endpoint providers (OpenCode Zen, OpenCode Go, OpenRouter, Vercel)
 struct CustomProviderConfig {
     endpoint: &'static str,
     env_key: &'static str,
@@ -48,12 +48,20 @@ impl LumenProvider {
         model: Option<String>,
     ) -> Result<Self, LumenError> {
         let (backend, provider_name) = match provider_type {
-            // Custom endpoint providers (OpenCode Zen, OpenRouter, Vercel) - use ServiceTargetResolver
-            ProviderType::OpencodeZen | ProviderType::Openrouter | ProviderType::Vercel => {
+            // Custom endpoint providers (OpenCode Zen, OpenCode Go, OpenRouter, Vercel) - use ServiceTargetResolver
+            ProviderType::OpencodeZen
+            | ProviderType::OpencodeGo
+            | ProviderType::Openrouter
+            | ProviderType::Vercel => {
                 let defaults = ProviderInfo::for_provider(provider_type);
                 let config = match provider_type {
                     ProviderType::OpencodeZen => CustomProviderConfig {
                         endpoint: "https://opencode.ai/zen/v1/",
+                        env_key: defaults.env_key,
+                        adapter_kind: AdapterKind::OpenAI,
+                    },
+                    ProviderType::OpencodeGo => CustomProviderConfig {
+                        endpoint: "https://opencode.ai/zen/go/v1/",
                         env_key: defaults.env_key,
                         adapter_kind: AdapterKind::OpenAI,
                     },
