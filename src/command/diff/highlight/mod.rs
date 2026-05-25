@@ -239,6 +239,14 @@ mod tests {
         assert!(extensions.contains(&"ex"), "Elixir config should be loaded");
         assert!(extensions.contains(&"exs"), "Elixir script config should be loaded");
         assert!(extensions.contains(&"zig"), "Zig config should be loaded");
+        assert!(extensions.contains(&"c"), "C config should be loaded");
+        assert!(extensions.contains(&"h"), "C header config should be loaded");
+        assert!(extensions.contains(&"cpp"), "C++ config should be loaded");
+        assert!(extensions.contains(&"cc"), "C++ .cc config should be loaded");
+        assert!(extensions.contains(&"cxx"), "C++ .cxx config should be loaded");
+        assert!(extensions.contains(&"hpp"), "C++ .hpp config should be loaded");
+        assert!(extensions.contains(&"hh"), "C++ .hh config should be loaded");
+        assert!(extensions.contains(&"hxx"), "C++ .hxx config should be loaded");
     }
 
     #[test]
@@ -365,6 +373,67 @@ pub fn unwrap(maybe: ?u32) void {
             payload_span.style.fg,
             Some(parameter_color),
             "FileHighlighter should preserve the payload binding highlight"
+        );
+    }
+
+    #[test]
+    fn test_c_highlighting() {
+        let code = r#"#include <stdio.h>
+
+int main(void) {
+    int x = 42;
+    printf("Hello, %d\n", x);
+    return 0;
+}
+"#;
+        let result = highlight_code(code, "test.c");
+        assert!(
+            !result.is_empty(),
+            "C highlighting should produce output"
+        );
+        let has_highlights = result.iter().any(|(_, h)| h.is_some());
+        assert!(has_highlights, "C code should have syntax highlights");
+    }
+
+    #[test]
+    fn test_cpp_highlighting() {
+        use config::HIGHLIGHT_NAMES;
+        let code = r#"#include <vector>
+
+namespace ns {
+    template<typename T>
+    T add(T a, T b) {
+        return a + b;
+    }
+}
+
+int main() {
+    return ns::add<int>(1, 2);
+}
+"#;
+        let result = highlight_code(code, "test.cpp");
+        assert!(
+            !result.is_empty(),
+            "C++ highlighting should produce output"
+        );
+        let has_highlights = result.iter().any(|(_, h)| h.is_some());
+        assert!(has_highlights, "C++ code should have syntax highlights");
+
+        let keyword_idx = HIGHLIGHT_NAMES.iter().position(|&n| n == "keyword");
+        let has_template_keyword = result
+            .iter()
+            .any(|(t, h)| *t == "template" && *h == keyword_idx);
+        assert!(
+            has_template_keyword,
+            "C++ 'template' should be highlighted as keyword"
+        );
+
+        let has_namespace_keyword = result
+            .iter()
+            .any(|(t, h)| *t == "namespace" && *h == keyword_idx);
+        assert!(
+            has_namespace_keyword,
+            "C++ 'namespace' should be highlighted as keyword"
         );
     }
 
