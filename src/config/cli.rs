@@ -12,6 +12,14 @@ pub enum VcsOverride {
     Jj,
 }
 
+/// Output protocol when running as an agent hook.
+#[derive(Copy, Clone, PartialEq, Eq, ValueEnum, Debug)]
+pub enum HookFormat {
+    /// Codex `Stop` hook: emits `{"decision":"block","reason":"<annotations>"}`
+    /// on send, or `{}` on dismiss / nothing-to-review.
+    CodexStop,
+}
+
 #[derive(Parser)]
 #[command(name = "lumen")]
 #[command(about = "AI-powered CLI tool for git commit summaries", long_about = None)]
@@ -139,6 +147,13 @@ pub enum Commands {
         /// Origin repository in owner/repo format (default: origin git remote)
         #[arg(long)]
         origin: Option<String>,
+
+        /// Run as an agent hook: drain the hook event from stdin and emit a
+        /// protocol-specific JSON response (annotations from `s` become the
+        /// next user message in the agent's session). Skips the TUI when
+        /// there's nothing to review.
+        #[arg(long, value_enum)]
+        hook: Option<HookFormat>,
     },
     /// Interactively configure Lumen (provider, API key)
     Configure,

@@ -1,5 +1,5 @@
 use std::collections::VecDeque;
-use std::io;
+use std::io::{self, IsTerminal, Write};
 use std::sync::mpsc::TryRecvError;
 use std::time::Duration;
 
@@ -8,10 +8,31 @@ use crossterm::{
         self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
         MouseEventKind,
     },
+    execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-    ExecutableCommand,
 };
 use ratatui::prelude::*;
+
+/// Writer that drives the TUI. Falls back to /dev/tty when stdout is
+/// captured (e.g. when an agent shim does `output=$(lumen diff)`),
+/// so the alternate-screen escapes don't pollute the captured stdout
+/// and we can reserve stdout for the annotation payload (`s` keybind).
+fn open_tui_writer() -> io::Result<Box<dyn Write + Send>> {
+    if io::stdout().is_terminal() {
+        return Ok(Box::new(io::stdout()));
+    }
+    #[cfg(unix)]
+    {
+        if let Ok(f) = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open("/dev/tty")
+        {
+            return Ok(Box::new(f));
+        }
+    }
+    Ok(Box::new(io::stdout()))
+}
 
 use super::coordinates::{extract_selected_text, PanelLayout};
 use super::git::{
@@ -289,6 +310,18 @@ fn run_app_internal(
     stacked_commits: Option<Vec<StackedCommitInfo>>,
     backend: &dyn VcsBackend,
 ) -> io::Result<()> {
+    // Hook mode: drain the event JSON the agent piped to us, and if there's
+    // nothing to review, emit the protocol's no-op response and exit before
+    // we touch the terminal.
+    let hook = options.hook;
+    if hook.is_some() {
+        let _ = io::copy(&mut io::stdin().lock(), &mut io::sink());
+        if file_diffs.is_empty() {
+            emit_hook_response(hook, None)?;
+            return Ok(());
+        }
+    }
+
     theme::init(options.theme.as_deref());
     highlight::init();
 
@@ -326,12 +359,13 @@ fn run_app_internal(
         spinner.success(&format!("{} files marked as viewed", viewed_count));
     }
 
-    // Now enter TUI mode
+    // Now enter TUI mode. Use /dev/tty when stdout is captured so the
+    // alternate-screen escapes go to the real terminal, not the pipe.
     enable_raw_mode()?;
-    io::stdout().execute(EnterAlternateScreen)?;
-    io::stdout().execute(EnableMouseCapture)?;
+    let mut tui_writer = open_tui_writer()?;
+    execute!(tui_writer, EnterAlternateScreen, EnableMouseCapture)?;
 
-    let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
+    let mut terminal = Terminal::new(CrosstermBackend::new(tui_writer))?;
 
     let watch_rx = if options.watch && pr_info.is_none() {
         setup_watcher()
@@ -343,6 +377,7 @@ fn run_app_internal(
     let mut annotation_editor: Option<AnnotationEditor> = None;
     let mut pending_watch_event: Option<WatchEvent> = None;
     let mut pending_events: VecDeque<Event> = VecDeque::new();
+    let mut send_annotations_on_exit = false;
 
     'main: loop {
         if let Some(ref rx) = watch_rx {
@@ -722,6 +757,10 @@ fn run_app_internal(
                                             }
                                         }
                                     }
+                                }
+                                ModalResult::Confirmed => {
+                                    send_annotations_on_exit = true;
+                                    break 'main;
                                 }
                                 ModalResult::Dismissed | ModalResult::Selected(_, _) => {
                                     active_modal = None;
@@ -1649,6 +1688,18 @@ fn run_app_internal(
                         KeyCode::Char('r') => {
                             state.needs_reload = true;
                         }
+                        KeyCode::Char('s') => {
+                            if !state.annotations.is_empty() {
+                                let n = state.annotations.len();
+                                let noun = if n == 1 { "annotation" } else { "annotations" };
+                                let msg = format!(
+                                    "Exit lumen and write {} {} to stdout?\n\n\
+                                     Use this to pipe feedback back to a coding agent.",
+                                    n, noun,
+                                );
+                                active_modal = Some(Modal::confirm("Send annotations", msg));
+                            }
+                        }
                         KeyCode::Char('y') => {
                             if !state.file_diffs.is_empty() {
                                 // If selection is active, copy selected text
@@ -1672,8 +1723,11 @@ fn run_app_internal(
                         }
                         KeyCode::Char('e') => {
                             if !state.file_diffs.is_empty() {
-                                io::stdout().execute(DisableMouseCapture)?;
-                                io::stdout().execute(LeaveAlternateScreen)?;
+                                execute!(
+                                    terminal.backend_mut(),
+                                    DisableMouseCapture,
+                                    LeaveAlternateScreen
+                                )?;
                                 disable_raw_mode()?;
 
                                 let editor =
@@ -1709,8 +1763,11 @@ fn run_app_internal(
                                 let _ = status;
 
                                 enable_raw_mode()?;
-                                io::stdout().execute(EnterAlternateScreen)?;
-                                io::stdout().execute(EnableMouseCapture)?;
+                                execute!(
+                                    terminal.backend_mut(),
+                                    EnterAlternateScreen,
+                                    EnableMouseCapture
+                                )?;
                                 terminal.clear()?;
                             }
                         }
@@ -1926,6 +1983,10 @@ fn run_app_internal(
                                                 key: "I",
                                                 description: "View all annotations",
                                             },
+                                            KeyBind {
+                                                key: "s",
+                                                description: "Exit & send annotations to stdout",
+                                            },
                                         ],
                                     },
                                 ],
@@ -1939,10 +2000,54 @@ fn run_app_internal(
         }
     }
 
-    io::stdout().execute(DisableMouseCapture)?;
+    execute!(
+        terminal.backend_mut(),
+        DisableMouseCapture,
+        LeaveAlternateScreen
+    )?;
     disable_raw_mode()?;
-    io::stdout().execute(LeaveAlternateScreen)?;
 
+    let payload = if send_annotations_on_exit {
+        Some(state.format_annotations_for_export())
+    } else {
+        None
+    };
+
+    if hook.is_some() {
+        emit_hook_response(hook, payload.as_deref())?;
+    } else if let Some(formatted) = payload {
+        let stdout = io::stdout();
+        let mut handle = stdout.lock();
+        handle.write_all(formatted.as_bytes())?;
+        handle.write_all(b"\n")?;
+    }
+
+    Ok(())
+}
+
+/// Emit a hook-protocol-specific JSON response on stdout. `payload` is
+/// `Some(annotations)` when the user sent feedback with `s`, `None` when
+/// they dismissed or there was nothing to review.
+fn emit_hook_response(
+    hook: Option<crate::config::cli::HookFormat>,
+    payload: Option<&str>,
+) -> io::Result<()> {
+    use crate::config::cli::HookFormat;
+    let json = match hook {
+        Some(HookFormat::CodexStop) => match payload {
+            Some(text) => serde_json::json!({
+                "decision": "block",
+                "reason": text,
+            })
+            .to_string(),
+            None => "{}".to_string(),
+        },
+        None => return Ok(()),
+    };
+    let stdout = io::stdout();
+    let mut handle = stdout.lock();
+    handle.write_all(json.as_bytes())?;
+    handle.write_all(b"\n")?;
     Ok(())
 }
 

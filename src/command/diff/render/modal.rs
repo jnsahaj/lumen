@@ -38,6 +38,7 @@ pub enum FileStatus {
 pub enum ModalContent {
     #[allow(dead_code)]
     Info { title: String, message: String },
+    Confirm { title: String, message: String },
     #[allow(dead_code)]
     Select {
         title: String,
@@ -75,6 +76,7 @@ pub struct Modal {
 #[derive(Clone)]
 pub enum ModalResult {
     Dismissed,
+    Confirmed,
     #[allow(dead_code)]
     Selected(usize, String),
     FileSelected(usize),
@@ -90,6 +92,15 @@ impl Modal {
     pub fn info(title: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
             content: ModalContent::Info {
+                title: title.into(),
+                message: message.into(),
+            },
+        }
+    }
+
+    pub fn confirm(title: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            content: ModalContent::Confirm {
                 title: title.into(),
                 message: message.into(),
             },
@@ -162,6 +173,13 @@ impl Modal {
                 let height = (lines + 4).min(area.height * 80 / 100).max(5);
                 (width, height)
             }
+            ModalContent::Confirm { message, .. } => {
+                let width = 80.min(area.width.saturating_sub(4));
+                let lines = message.lines().count() as u16;
+                // +1 for the hint line ("Enter to confirm, Esc to cancel")
+                let height = (lines + 5).min(area.height * 80 / 100).max(6);
+                (width, height)
+            }
             ModalContent::Select { items, .. } => {
                 let width = 80.min(area.width.saturating_sub(4));
                 let items_count = items.len() as u16;
@@ -206,6 +224,9 @@ impl Modal {
         match &self.content {
             ModalContent::Info { title, message } => {
                 self.render_info(frame, modal_area, title, message);
+            }
+            ModalContent::Confirm { title, message } => {
+                self.render_confirm(frame, modal_area, title, message);
             }
             ModalContent::Select {
                 title,
@@ -263,6 +284,34 @@ impl Modal {
             .lines()
             .map(|line| Line::from(Span::styled(line, Style::default().fg(t.ui.text_primary))))
             .collect();
+
+        let para = Paragraph::new(lines);
+        frame.render_widget(para, inner);
+    }
+
+    fn render_confirm(&self, frame: &mut Frame, area: Rect, title: &str, message: &str) {
+        let t = theme::get();
+        let block = Block::default()
+            .title(format!(" {} ", title))
+            .title_style(Style::default().fg(t.ui.border_focused).bold())
+            .borders(Borders::ALL)
+            .border_type(ratatui::widgets::BorderType::Rounded)
+            .border_style(Style::default().fg(t.ui.border_unfocused));
+
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+
+        let mut lines: Vec<Line> = message
+            .lines()
+            .map(|line| Line::from(Span::styled(line, Style::default().fg(t.ui.text_primary))))
+            .collect();
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled("enter", Style::default().fg(t.ui.border_focused).bold()),
+            Span::styled(" confirm  ", Style::default().fg(t.ui.text_muted)),
+            Span::styled("esc", Style::default().fg(t.ui.border_focused).bold()),
+            Span::styled(" cancel", Style::default().fg(t.ui.text_muted)),
+        ]));
 
         let para = Paragraph::new(lines);
         frame.render_widget(para, inner);
@@ -738,6 +787,12 @@ impl Modal {
                 // Any key closes info modal
                 if key.code == KeyCode::Enter {
                     return Some(ModalResult::Dismissed);
+                }
+                None
+            }
+            ModalContent::Confirm { .. } => {
+                if key.code == KeyCode::Enter {
+                    return Some(ModalResult::Confirmed);
                 }
                 None
             }
