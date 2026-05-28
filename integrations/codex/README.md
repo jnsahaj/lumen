@@ -32,7 +32,23 @@ user message. `lumen diff --hook codex-stop` handles this protocol:
 
 ## Install
 
-Enable Codex hooks (experimental, behind a feature flag):
+One-shot script — detects Codex, flips the `hooks` feature flag in
+`~/.codex/config.toml`, and writes `~/.codex/hooks.json`. Idempotent;
+refuses to clobber an existing `hooks.json` (prints the snippet to add
+manually instead).
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jnsahaj/lumen/main/integrations/install.sh | bash
+
+# or from a clone:
+bash integrations/install.sh
+```
+
+Restart Codex. Done.
+
+### Manual install
+
+If you'd rather not run a script:
 
 `~/.codex/config.toml` (or repo-local `.codex/config.toml`):
 
@@ -41,8 +57,8 @@ Enable Codex hooks (experimental, behind a feature flag):
 hooks = true
 ```
 
-Register the hook — either copy [`hooks/hooks.json`](./hooks/hooks.json)
-to `~/.codex/hooks.json`, or paste this:
+`~/.codex/hooks.json` — copy [`hooks/hooks.json`](./hooks/hooks.json),
+or paste:
 
 ```json
 {
@@ -61,8 +77,6 @@ to `~/.codex/hooks.json`, or paste this:
   }
 }
 ```
-
-Restart Codex. Done.
 
 ### Notes
 
