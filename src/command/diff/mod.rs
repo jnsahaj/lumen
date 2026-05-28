@@ -31,6 +31,7 @@ pub struct DiffOptions {
     pub theme: Option<String>,
     pub stacked: bool,
     pub focus: Option<String>,
+    pub origin: Option<String>,
 }
 
 #[derive(Clone)]
@@ -73,7 +74,33 @@ fn parse_pr_input(input: &str) -> Option<(Option<String>, Option<String>, u64)> 
     }
 }
 
-fn fetch_pr_info(pr_input: &str) -> Result<PrInfo, String> {
+fn resolve_origin_repo() -> Result<String, String> {
+    let output = Command::new("git")
+        .args(["remote", "get-url", "origin"])
+        .output()
+        .map_err(|e| format!("Failed to run git: {}", e))?;
+    if !output.status.success() {
+        return Err(
+            "Could not determine repository. Set origin remote or use --origin owner/repo"
+                .to_string(),
+        );
+    }
+    let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let url = url.strip_suffix(".git").unwrap_or(&url);
+    let path = url
+        .split("github.com")
+        .nth(1)
+        .ok_or_else(|| format!("Origin URL is not a GitHub URL: {}", url))?;
+    let path = path.trim_start_matches(':').trim_start_matches('/');
+    let parts: Vec<&str> = path.split('/').collect();
+    if parts.len() >= 2 {
+        Ok(format!("{}/{}", parts[0], parts[1]))
+    } else {
+        Err(format!("Could not parse owner/repo from origin URL: {}", url))
+    }
+}
+
+fn fetch_pr_info(pr_input: &str, repo_override: Option<&str>) -> Result<PrInfo, String> {
     let (owner, repo, number) = parse_pr_input(pr_input).ok_or_else(|| {
         format!(
             "Invalid PR reference: {}. Use a PR number or URL.",
@@ -81,36 +108,10 @@ fn fetch_pr_info(pr_input: &str) -> Result<PrInfo, String> {
         )
     })?;
 
-    // Build gh command with repo if available
-    let repo_arg = match (&owner, &repo) {
-        (Some(o), Some(r)) => Some(format!("{}/{}", o, r)),
-        _ => None,
-    };
-
-    // Get PR URL, repo info, and node ID via GraphQL (more reliable for node_id)
-    let repo_full = match &repo_arg {
-        Some(r) => r.clone(),
-        None => {
-            // Get repo from current directory
-            let output = Command::new("gh")
-                .args([
-                    "repo",
-                    "view",
-                    "--json",
-                    "nameWithOwner",
-                    "-q",
-                    ".nameWithOwner",
-                ])
-                .output()
-                .map_err(|e| format!("Failed to get current repo: {}", e))?;
-            if !output.status.success() {
-                return Err(
-                    "Could not determine repository. Run from a git repo or specify --repo"
-                        .to_string(),
-                );
-            }
-            String::from_utf8_lossy(&output.stdout).trim().to_string()
-        }
+    let repo_full = match (&owner, &repo, repo_override) {
+        (Some(o), Some(r), _) => format!("{}/{}", o, r),
+        (_, _, Some(r)) => r.to_string(),
+        _ => resolve_origin_repo()?,
     };
 
     let (repo_owner, repo_name) = {
@@ -326,7 +327,7 @@ pub fn run_diff_ui(options: DiffOptions, backend: &dyn VcsBackend) -> io::Result
             None => "Fetching PR".to_string(),
         };
         let mut spinner = Spinner::new(spinners::Dots, spinner_msg, Color::Cyan);
-        match fetch_pr_info(pr_input) {
+        match fetch_pr_info(pr_input, options.origin.as_deref()) {
             Ok(pr_info) => {
                 spinner.success("Fetched PR metadata");
                 return app::run_app_with_pr(options, pr_info, backend);
@@ -351,7 +352,7 @@ pub fn run_diff_ui(options: DiffOptions, backend: &dyn VcsBackend) -> io::Result
                 None => "Fetching PR".to_string(),
             };
             let mut spinner = Spinner::new(spinners::Dots, spinner_msg, Color::Cyan);
-            match fetch_pr_info(input) {
+            match fetch_pr_info(input, options.origin.as_deref()) {
                 Ok(pr_info) => {
                     spinner.success("Fetched PR metadata");
                     return app::run_app_with_pr(options, pr_info, backend);
@@ -376,7 +377,7 @@ pub fn run_diff_ui(options: DiffOptions, backend: &dyn VcsBackend) -> io::Result
                         .unwrap_or_else(|_| from.clone());
                     (merge_base, to.clone())
                 }
-                CommitReference::Single(_) => {
+                CommitReference::Single(_) | CommitReference::RangeToWorkingTree { .. } => {
                     eprintln!(
                         "\x1b[91merror:\x1b[0m --stacked requires a range (e.g., main..feature)"
                     );

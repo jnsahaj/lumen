@@ -6,6 +6,9 @@ pub enum CommitReference {
     Single(String),
     Range { from: String, to: String },
     TripleDots { from: String, to: String },
+    /// Range from a ref to the working tree (uncommitted changes included).
+    /// Parsed from `<from>..-`.
+    RangeToWorkingTree { from: String },
 }
 
 #[derive(Debug, Error)]
@@ -33,6 +36,13 @@ impl FromStr for CommitReference {
             })
         } else if let Some((from, to)) = s.split_once("..") {
             let from = if from.is_empty() { "HEAD" } else { from };
+
+            if to == "-" {
+                return Ok(CommitReference::RangeToWorkingTree {
+                    from: from.to_string(),
+                });
+            }
+
             let to = if to.is_empty() { "HEAD" } else { to };
 
             Ok(CommitReference::Range {
@@ -121,6 +131,26 @@ mod tests {
             CommitReference::Range { from, to }
             if from == "HEAD" && to == "feature"
         ));
+    }
+
+    #[test]
+    fn test_range_to_working_tree() {
+        assert_eq!(
+            "main..-".parse::<CommitReference>().unwrap(),
+            CommitReference::RangeToWorkingTree {
+                from: "main".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_range_to_working_tree_empty_from() {
+        assert_eq!(
+            "..-".parse::<CommitReference>().unwrap(),
+            CommitReference::RangeToWorkingTree {
+                from: "HEAD".to_string(),
+            }
+        );
     }
 
     #[test]

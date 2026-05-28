@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::time::SystemTime;
 
-use crate::command::diff::diff_algo::{compute_side_by_side, find_hunk_starts};
+use crate::command::diff::diff_algo::{compute_side_by_side, count_added_removed, find_hunk_starts};
 use crate::command::diff::highlight::FileHighlighter;
 
 use crate::command::diff::search::SearchState;
@@ -152,6 +152,9 @@ pub struct AppState {
     pub h_scroll: u16,
     pub focused_panel: FocusedPanel,
     pub viewed_files: HashSet<usize>,
+    /// Hunks marked as viewed, keyed by filename (stable across reloads).
+    /// Values are hunk indices within that file's `find_hunk_starts` result.
+    pub viewed_hunks: HashMap<String, HashSet<usize>>,
     pub show_sidebar: bool,
     pub settings: DiffViewSettings,
     pub diff_fullscreen: DiffFullscreen,
@@ -200,6 +203,24 @@ pub struct AppState {
     /// visible content line index after which an overlay gap of `gap_height` rows appears.
     /// Used by mouse handlers to correctly map screen rows to side_by_side indices.
     pub annotation_overlay_gaps: Vec<(usize, usize)>,
+    /// Total added lines across all files in the current diff. Recomputed on reload.
+    pub total_added: usize,
+    /// Total removed lines across all files in the current diff. Recomputed on reload.
+    pub total_removed: usize,
+}
+
+fn compute_total_line_stats(file_diffs: &[FileDiff]) -> (usize, usize) {
+    let mut added = 0usize;
+    let mut removed = 0usize;
+    for diff in file_diffs {
+        if diff.is_binary {
+            continue;
+        }
+        let (a, r) = count_added_removed(&diff.old_content, &diff.new_content);
+        added += a;
+        removed += r;
+    }
+    (added, removed)
 }
 
 impl AppState {
@@ -227,6 +248,7 @@ impl AppState {
             Self::find_first_file(&sidebar_items, &sidebar_visible)
         };
         let settings = DiffViewSettings::default();
+        let (total_added, total_removed) = compute_total_line_stats(&file_diffs);
         let (scroll, focused_hunk) = if !file_diffs.is_empty() && current_file < file_diffs.len() {
             let diff = &file_diffs[current_file];
             let side_by_side =
@@ -255,6 +277,7 @@ impl AppState {
             h_scroll: 0,
             focused_panel: FocusedPanel::default(),
             viewed_files: HashSet::new(),
+            viewed_hunks: HashMap::new(),
             show_sidebar: true,
             settings,
             diff_fullscreen: DiffFullscreen::default(),
@@ -281,6 +304,8 @@ impl AppState {
             search_dirty: true,
             content_row_offset: 0,
             annotation_overlay_gaps: Vec::new(),
+            total_added,
+            total_removed,
         }
     }
 
@@ -708,15 +733,20 @@ impl AppState {
         if let Some(changed) = changed_files {
             for filename in changed {
                 viewed_filenames.remove(filename);
+                self.viewed_hunks.remove(filename);
             }
         }
 
         self.file_diffs = file_diffs;
+        let (total_added, total_removed) = compute_total_line_stats(&self.file_diffs);
+        self.total_added = total_added;
+        self.total_removed = total_removed;
         self.sidebar_items = build_file_tree(&self.file_diffs);
 
         // Retain annotations whose file still exists
         let filenames: HashSet<&str> = self.file_diffs.iter().map(|f| f.filename.as_str()).collect();
         self.annotations.retain(|ann| filenames.contains(ann.filename.as_str()));
+        self.viewed_hunks.retain(|fname, _| filenames.contains(fname.as_str()));
 
         // Convert viewed filenames back to indices in the new file_diffs
         self.viewed_files = self

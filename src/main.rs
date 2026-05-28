@@ -72,6 +72,19 @@ async fn run() -> Result<(), LumenError> {
                         let diff = backend.get_range_diff(&from, &to, true)?;
                         GitEntity::Diff(Diff::from_range_diff(diff, from, to)?)
                     }
+                    Some(CommitReference::RangeToWorkingTree { from }) => {
+                        let head_ref = backend.working_copy_parent_ref();
+                        let range_diff = backend
+                            .get_range_diff(&from, head_ref, false)
+                            .unwrap_or_default();
+                        let wt_diff = backend.get_working_tree_diff(false).unwrap_or_default();
+                        let combined = format!("{}{}", range_diff, wt_diff);
+                        GitEntity::Diff(Diff::from_range_diff(
+                            combined,
+                            from,
+                            "working tree".to_string(),
+                        )?)
+                    }
                     None => {
                         // Default: show uncommitted diff
                         let diff = backend.get_working_tree_diff(staged)?;
@@ -117,6 +130,7 @@ async fn run() -> Result<(), LumenError> {
             theme,
             stacked,
             focus,
+            origin,
         } => {
             let options = command::diff::DiffOptions {
                 reference,
@@ -126,6 +140,7 @@ async fn run() -> Result<(), LumenError> {
                 theme: theme.or(config.theme.clone()),
                 stacked,
                 focus,
+                origin,
             };
             command::diff::run_diff_ui(options, backend.as_ref())?;
         }

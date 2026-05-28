@@ -225,5 +225,13 @@ pub static CONFIGS: Lazy<Vec<(&'static str, LanguageConfig)>> = Lazy::new(|| {
         &mut configs,
     );
 
+    load_config(
+        tree_sitter_zig::LANGUAGE.into(),
+        "zig",
+        ZIG_HIGHLIGHTS,
+        "zig",
+        &mut configs,
+    );
+
     configs
 });

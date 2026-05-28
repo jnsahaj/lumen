@@ -239,6 +239,7 @@ mod tests {
         assert!(extensions.contains(&"ex"), "Elixir config should be loaded");
         assert!(extensions.contains(&"exs"), "Elixir script config should be loaded");
         assert!(extensions.contains(&"java"), "Java config should be loaded");
+        assert!(extensions.contains(&"zig"), "Zig config should be loaded");
     }
 
     #[test]
@@ -317,6 +318,71 @@ public class Hello {
         assert!(!result.is_empty(), "Java highlighting should produce output");
         let has_highlights = result.iter().any(|(_, h)| h.is_some());
         assert!(has_highlights, "Java code should have syntax highlights");
+    }
+
+    #[test]
+    fn test_zig_highlighting() {
+        let code = r#"const std = @import("std");
+
+pub fn main() !void {
+    const answer: u32 = 42;
+    std.debug.print("Hello, Zig!\n", .{});
+}
+"#;
+        let result = highlight_code(code, "test.zig");
+        assert!(
+            !result.is_empty(),
+            "Zig highlighting should produce output"
+        );
+        let has_highlights = result.iter().any(|(_, h)| h.is_some());
+        assert!(has_highlights, "Zig code should have syntax highlights");
+    }
+
+    #[test]
+    fn test_zig_file_highlighter_payload_binding() {
+        use config::HIGHLIGHT_NAMES;
+
+        let code = r#"const std = @import("std");
+
+pub fn unwrap(maybe: ?u32) void {
+    if (maybe) |value| {
+        std.debug.print("{}\n", .{value});
+    }
+}
+"#;
+
+        let highlighter = FileHighlighter::new(code, "test.zig");
+        assert!(!highlighter.is_empty(), "Highlighter should have content");
+
+        let parameter_idx = HIGHLIGHT_NAMES
+            .iter()
+            .position(|&n| n == "variable.parameter")
+            .expect("variable.parameter highlight should exist");
+        let parameter_color = highlight_color(parameter_idx);
+
+        let payload_line = highlighter.get_line_spans(4, None);
+        let raw_result = highlight_code(code, "test.zig");
+        let payload_span = payload_line
+            .iter()
+            .find(|span| span.content == "value")
+            .expect("Payload binding should appear on line 4");
+
+        let payload_binding = raw_result
+            .windows(3)
+            .find(|window| window[0].0 == "|" && window[1].0 == "value" && window[2].0 == "|")
+            .expect("Payload binding should be tokenized as |value|");
+
+        assert_eq!(
+            payload_binding[1].1,
+            Some(parameter_idx),
+            "Payload binding should be highlighted as variable.parameter"
+        );
+
+        assert_eq!(
+            payload_span.style.fg,
+            Some(parameter_color),
+            "FileHighlighter should preserve the payload binding highlight"
+        );
     }
 
     #[test]
