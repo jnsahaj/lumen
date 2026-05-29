@@ -46,10 +46,10 @@ feedback as its next prompt.
 Manual trigger (e.g. to re-review or scope to a range):
 
 ```
-/lumen-review
-/lumen-review HEAD~1
-/lumen-review main..-
-/lumen-review --file src/auth.rs
+/lumen-diff
+/lumen-diff HEAD~1
+/lumen-diff main..-
+/lumen-diff --file src/auth.rs
 ```
 
 ## Config
@@ -60,4 +60,4 @@ Manual trigger (e.g. to re-review or scope to a range):
 | `LUMEN_AUTO_REVIEW`  | `1`      | Set to `0` to disable the `agent_end` auto-trigger.              |
 
 With `LUMEN_AUTO_REVIEW=0`, the extension only fires when you run
-`/lumen-review` explicitly.
+`/lumen-diff` explicitly.

@@ -39,7 +39,7 @@ Full install docs (incl. post-npm-publish path) and config knobs in
 | `agent_end`           | Skip if no uncommitted changes. Else suspend Pi's TUI, run `lumen diff`, restart Pi's TUI.  |
 | `lumen diff` exits, stdout non-empty | Call `pi.sendUserMessage(stdout)` → agent runs another turn with the annotations as input.   |
 | `lumen diff` exits, stdout empty     | Do nothing — user pressed `q`, just looked.                                                  |
-| Slash `/lumen-review` | Same flow, on demand. Forwards args to `lumen diff`.                                        |
+| Slash `/lumen-diff` | Same flow, on demand. Forwards args to `lumen diff`.                                        |
 
 The TUI handoff uses the same `ctx.ui.custom` pattern Pi's own
 [`interactive-shell` example](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/examples/extensions/interactive-shell.ts)

@@ -1,7 +1,7 @@
 /**
  * lumen extension for the Pi coding agent.
  *
- * Pops lumen up after every agent turn (and on `/lumen-review`). When the
+ * Pops lumen up after every agent turn (and on `/lumen-diff`). When the
  * user submits annotations, injects them as the next user message so the
  * agent reacts as if the user had typed them. The agent never invokes
  * lumen — Pi does.
@@ -106,7 +106,7 @@ export default function (pi: ExtensionAPI) {
 		});
 	}
 
-	pi.registerCommand("lumen-review", {
+	pi.registerCommand("lumen-diff", {
 		description: "Open lumen on the diff; annotations get sent back to the agent",
 		handler: async (args, ctx) => {
 			const argv = (args ?? "").trim().length > 0 ? (args as string).trim().split(/\s+/) : [];
