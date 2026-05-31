@@ -39,11 +39,9 @@ pi install npm:lumen-pi-extension
 
 ## Usage
 
-Just run Pi. After every agent turn that produced uncommitted changes,
-lumen pops up. Annotate, press `s` → `Enter`. The agent gets your
-feedback as its next prompt.
-
-Manual trigger (e.g. to re-review or scope to a range):
+Run `/lumen-diff` whenever you want to review the working-tree diff.
+Annotate, press `s` → `Enter`. The agent gets your feedback as its next
+prompt.
 
 ```
 /lumen-diff
@@ -52,12 +50,12 @@ Manual trigger (e.g. to re-review or scope to a range):
 /lumen-diff --file src/auth.rs
 ```
 
+To also pop lumen up automatically after every agent turn, set
+`LUMEN_AUTO_REVIEW=1`.
+
 ## Config
 
 | Env var              | Default  | Meaning                                                          |
 |----------------------|----------|------------------------------------------------------------------|
 | `LUMEN_BIN`          | `lumen`  | Path to the lumen binary (use absolute if not on `$PATH`).       |
-| `LUMEN_AUTO_REVIEW`  | `1`      | Set to `0` to disable the `agent_end` auto-trigger.              |
-
-With `LUMEN_AUTO_REVIEW=0`, the extension only fires when you run
-`/lumen-diff` explicitly.
+| `LUMEN_AUTO_REVIEW`  | `0`      | Set to `1` to pop lumen up after every `agent_end`.              |

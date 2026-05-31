@@ -1,19 +1,19 @@
 /**
  * lumen extension for the Pi coding agent.
  *
- * Pops lumen up after every agent turn (and on `/lumen-diff`). When the
+ * Runs on `/lumen-diff`, and optionally after every agent turn. When the
  * user submits annotations, injects them as the next user message so the
  * agent reacts as if the user had typed them. The agent never invokes
  * lumen — Pi does.
  *
- * Disable the auto-trigger by setting LUMEN_AUTO_REVIEW=0 in the env.
+ * Enable the auto-trigger by setting LUMEN_AUTO_REVIEW=1 in the env.
  */
 
 import { spawnSync } from "node:child_process";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 const LUMEN_BIN = process.env.LUMEN_BIN ?? "lumen";
-const AUTO_REVIEW = process.env.LUMEN_AUTO_REVIEW !== "0";
+const AUTO_REVIEW = process.env.LUMEN_AUTO_REVIEW === "1";
 
 function hasUncommittedChanges(cwd: string): boolean {
 	const result = spawnSync("git", ["diff", "--quiet", "HEAD", "--"], {
@@ -89,7 +89,9 @@ async function reviewAndInject(
 		return;
 	}
 
-	pi.sendUserMessage(result.output);
+	// If the agent is still streaming (e.g. another turn kicked off while
+	// lumen was open), queue our feedback as a follow-up instead of throwing.
+	await pi.sendUserMessage(result.output, { deliverAs: "followUp" });
 }
 
 export default function (pi: ExtensionAPI) {
