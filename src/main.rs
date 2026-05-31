@@ -132,6 +132,7 @@ async fn run() -> Result<(), LumenError> {
             focus,
             origin,
             wrap,
+            hook,
         } => {
             let options = command::diff::DiffOptions {
                 reference,
@@ -143,6 +144,7 @@ async fn run() -> Result<(), LumenError> {
                 focus,
                 origin,
                 wrap,
+                hook,
             };
             command::diff::run_diff_ui(options, backend.as_ref())?;
         }

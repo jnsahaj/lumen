@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "lumen diff --hook codex-stop",
+            "timeout": 345600
+          }
+        ]
+      }
+    ]
+  }
+}
