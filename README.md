@@ -101,7 +101,7 @@ lumen diff main..feature --stacked
 # Jump to a specific file on open
 lumen diff --focus src/main.rs
 
-# Soft-wrap long diff lines
+# Soft-wrap long lines instead of scrolling sideways
 lumen diff --wrap
 ```
 
@@ -169,6 +169,7 @@ Annotated lines display a `▍` gutter indicator. Use `I` to view, edit, delete,
 - `{/}`: Jump between hunks
 - `w`: Toggle word wrap
 - `tab`: Toggle sidebar
+- `w`: Toggle word wrap
 - `space`: Mark file as viewed
 - `e`: Open file in editor
 - `y`: Copy selection (or filename)

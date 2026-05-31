@@ -140,7 +140,7 @@ pub enum Commands {
         #[arg(long)]
         origin: Option<String>,
 
-        /// Soft-wrap long diff lines
+        /// Soft-wrap long diff lines instead of scrolling horizontally
         #[arg(long)]
         wrap: bool,
     },
@@ -171,7 +171,7 @@ mod tests {
     }
 
     #[test]
-    fn test_diff_wrap_parses() {
+    fn test_diff_wrap_flag_parses() {
         let cli = Cli::try_parse_from(["lumen", "diff", "--wrap"]).unwrap();
         match cli.command {
             Commands::Diff { wrap, .. } => assert!(wrap),
