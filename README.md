@@ -40,6 +40,7 @@ Review `git diff`, commits, branches, or GitHub PRs side-by-side without leaving
   - [Explain Changes](#explain-changes)
   - [Tips & Tricks](#tips--tricks)
   - [AI Providers](#ai-providers)
+- [Coding Agent Integrations](#coding-agent-integrations-)
 - [Advanced Configuration](#advanced-configuration-)
   - [Configuration File](#configuration-file)
   - [Configuration Precedence](#configuration-precedence)
@@ -268,6 +269,28 @@ export LUMEN_AI_MODEL="gpt-5-mini"
 | [Ollama](https://github.com/ollama/ollama) `ollama` | No (local) | [see list](https://ollama.com/library) (default: `llama3.2`) |
 | [OpenRouter](https://openrouter.ai/) `openrouter` | Yes | [see list](https://openrouter.ai/models) (default: `anthropic/claude-sonnet-4.5`) |
 | [Vercel AI Gateway](https://vercel.com/docs/ai-gateway) `vercel` | Yes | [see list](https://vercel.com/docs/ai-gateway/supported-models) (default: `anthropic/claude-sonnet-4.5`) |
+
+## Coding Agent Integrations 🔅
+
+Hook lumen into the review loop of your coding agent: when the agent finishes a turn, lumen pops up on the diff. Annotate inline, press `s`, and your notes are injected as the agent's next user message — so it picks up your feedback as if you typed it.
+
+```
+agent stops → lumen opens on the diff → annotate inline → press `s`
+→ agent receives your feedback as the next user message → agent fixes it
+```
+
+Two primitives make this one-config-file per agent:
+
+- `s` in the diff TUI confirms and writes the formatted annotations to stdout.
+- `lumen diff --hook <protocol>` wraps that stdout in the JSON envelope the agent's stop hook expects, drains the event payload off stdin, and skips the TUI when there's nothing to review.
+
+| Agent  | Status | Install |
+|--------|--------|---------|
+| [Codex](./integrations/codex/) | ✅ | `curl -fsSL https://raw.githubusercontent.com/jnsahaj/lumen/main/integrations/install.sh \| bash` |
+| [Pi](./integrations/pi/)       | ✅ | `pi install npm:@jnsahaj/pi-lumen-diff` |
+| Claude Code | ⏳ | Same Stop-hook pattern as Codex — [open an issue](https://github.com/jnsahaj/lumen/issues) |
+
+See [`integrations/`](./integrations/) for per-agent setup and instructions for adding a new agent.
 
 ## Advanced Configuration 🔅
 
