@@ -272,25 +272,27 @@ export LUMEN_AI_MODEL="gpt-5-mini"
 
 ## Coding Agent Integrations 🔅
 
-Hook lumen into the review loop of your coding agent: when the agent finishes a turn, lumen pops up on the diff. Annotate inline, press `s`, and your notes are injected as the agent's next user message — so it picks up your feedback as if you typed it.
+Use lumen as the review surface for your coding agent. When the agent finishes a turn, shell-escape to lumen, annotate the diff inline, and press `s` to send your annotations back as the agent's next prompt.
 
 ```
-agent stops → lumen opens on the diff → annotate inline → press `s`
-→ agent receives your feedback as the next user message → agent fixes it
+agent finishes turn → !lumen diff → annotate → press `s`
+→ stdout returns to the agent → agent fixes your notes
 ```
 
-Two primitives make this one-config-file per agent:
+The mechanics are just stdin/stdout — no plugins, no extensions:
 
-- `s` in the diff TUI confirms and writes the formatted annotations to stdout.
-- `lumen diff --hook <protocol>` wraps that stdout in the JSON envelope the agent's stop hook expects, drains the event payload off stdin, and skips the TUI when there's nothing to review.
+- `s` in the diff TUI opens a confirmation modal. On `Enter`, lumen exits and writes the formatted annotations to stdout (the same text `y` copies to your clipboard).
+- The TUI auto-routes to `/dev/tty` when stdout is captured, so the agent receives clean text — no escape codes.
 
-| Agent  | Status | Install |
-|--------|--------|---------|
-| [Codex](./integrations/codex/) | ✅ | `curl -fsSL https://raw.githubusercontent.com/jnsahaj/lumen/main/integrations/install.sh \| bash` |
-| [Pi](./integrations/pi/)       | ✅ | `pi install npm:@jnsahaj/pi-lumen-diff` |
-| Claude Code | ⏳ | Same Stop-hook pattern as Codex — [open an issue](https://github.com/jnsahaj/lumen/issues) |
+Works with anything that has a shell-escape:
 
-See [`integrations/`](./integrations/) for per-agent setup and instructions for adding a new agent.
+| Agent | How to trigger |
+|-------|----------------|
+| Claude Code | `!lumen diff` |
+| Codex | `!lumen diff` |
+| Any agent with shell access | `lumen diff` from a tool/bash call |
+
+Annotate with `i` (selection / hunk / file), press `s` → `Enter` to send. Press `q` to dismiss without sending.
 
 ## Advanced Configuration 🔅
 

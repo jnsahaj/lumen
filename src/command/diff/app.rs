@@ -310,18 +310,6 @@ fn run_app_internal(
     stacked_commits: Option<Vec<StackedCommitInfo>>,
     backend: &dyn VcsBackend,
 ) -> io::Result<()> {
-    // Hook mode: drain the event JSON the agent piped to us, and if there's
-    // nothing to review, emit the protocol's no-op response and exit before
-    // we touch the terminal.
-    let hook = options.hook;
-    if hook.is_some() {
-        let _ = io::copy(&mut io::stdin().lock(), &mut io::sink());
-        if file_diffs.is_empty() {
-            emit_hook_response(hook, None)?;
-            return Ok(());
-        }
-    }
-
     theme::init(options.theme.as_deref());
     highlight::init();
 
@@ -2007,47 +1995,14 @@ fn run_app_internal(
     )?;
     disable_raw_mode()?;
 
-    let payload = if send_annotations_on_exit {
-        Some(state.format_annotations_for_export())
-    } else {
-        None
-    };
-
-    if hook.is_some() {
-        emit_hook_response(hook, payload.as_deref())?;
-    } else if let Some(formatted) = payload {
+    if send_annotations_on_exit {
+        let formatted = state.format_annotations_for_export();
         let stdout = io::stdout();
         let mut handle = stdout.lock();
         handle.write_all(formatted.as_bytes())?;
         handle.write_all(b"\n")?;
     }
 
-    Ok(())
-}
-
-/// Emit a hook-protocol-specific JSON response on stdout. `payload` is
-/// `Some(annotations)` when the user sent feedback with `s`, `None` when
-/// they dismissed or there was nothing to review.
-fn emit_hook_response(
-    hook: Option<crate::config::cli::HookFormat>,
-    payload: Option<&str>,
-) -> io::Result<()> {
-    use crate::config::cli::HookFormat;
-    let json = match hook {
-        Some(HookFormat::CodexStop) => match payload {
-            Some(text) => serde_json::json!({
-                "decision": "block",
-                "reason": text,
-            })
-            .to_string(),
-            None => "{}".to_string(),
-        },
-        None => return Ok(()),
-    };
-    let stdout = io::stdout();
-    let mut handle = stdout.lock();
-    handle.write_all(json.as_bytes())?;
-    handle.write_all(b"\n")?;
     Ok(())
 }
 
