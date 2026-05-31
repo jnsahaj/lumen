@@ -1,4 +1,4 @@
-# lumen-pi-extension
+# @jnsahaj/lumen-pi-extension
 
 A [Pi coding agent](https://github.com/earendil-works/pi) extension that
 hooks lumen into the review loop:
@@ -34,7 +34,7 @@ pi -e $(pwd)/lumen/integrations/pi/extension/index.ts
 **From npm (post-publish):**
 
 ```bash
-pi install npm:lumen-pi-extension
+pi install npm:@jnsahaj/lumen-pi-extension
 ```
 
 ## Usage

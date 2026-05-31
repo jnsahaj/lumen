@@ -1,5 +1,5 @@
 {
-  "name": "lumen-pi-extension",
+  "name": "@jnsahaj/lumen-pi-extension",
   "version": "0.3.0",
   "description": "Pi extension that opens lumen on the diff after each agent turn and feeds annotations back as the next user message",
   "type": "module",

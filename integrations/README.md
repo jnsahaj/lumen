@@ -30,7 +30,7 @@ the alternate-screen escapes never pollute the JSON the agent reads.
 | Agent  | Status | Install |
 |--------|--------|---------|
 | [Codex](./codex/) | ✅ Works | `curl …/install.sh \| bash` (or manual) |
-| [Pi](./pi/)       | ✅ Works | `pi install npm:lumen-pi-extension` |
+| [Pi](./pi/)       | ✅ Works | `pi install npm:@jnsahaj/lumen-pi-extension` |
 | Claude Code | ⏳ Not yet | Same Stop-hook pattern as Codex, easy to add |
 
 ## Adding a new agent
