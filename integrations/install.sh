@@ -10,7 +10,7 @@
 #   - Codex Stop hook (requires Codex's experimental hooks feature flag)
 #
 # Pi integration is published as an npm package; install it with:
-#   pi install npm:@jnsahaj/lumen-pi-extension
+#   pi install npm:@jnsahaj/pi-lumen-diff
 #
 # This script does NOT install the `lumen` binary itself — use cargo or brew
 # (`cargo install lumen` / `brew install jnsahaj/lumen/lumen`) first.
