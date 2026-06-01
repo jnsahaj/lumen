@@ -6,7 +6,8 @@ use std::time::Duration;
 use crossterm::{
     event::{
         self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
-        MouseEventKind,
+        KeyboardEnhancementFlags, MouseEventKind, PopKeyboardEnhancementFlags,
+        PushKeyboardEnhancementFlags,
     },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
@@ -352,6 +353,14 @@ fn run_app_internal(
     enable_raw_mode()?;
     let mut tui_writer = open_tui_writer()?;
     execute!(tui_writer, EnterAlternateScreen, EnableMouseCapture)?;
+    // Opt into the kitty keyboard protocol so terminals that support it
+    // (iTerm2 ≥3.5, kitty, wezterm, alacritty) deliver disambiguated key
+    // events — Shift+Enter as KeyCode::Enter+SHIFT, etc. Older terminals
+    // ignore this sequence silently, so we tolerate failure.
+    let _ = execute!(
+        tui_writer,
+        PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+    );
 
     let mut terminal = Terminal::new(CrosstermBackend::new(tui_writer))?;
 
@@ -433,8 +442,10 @@ fn run_app_internal(
                 .unwrap_or(&branch_fallback);
             let row_offset = std::cell::Cell::new(0usize);
             let gaps_cell = std::cell::RefCell::new(Vec::new());
+            let rects_cell = std::cell::RefCell::new(Vec::new());
+            let editor_rect_cell: std::cell::Cell<Option<ratatui::layout::Rect>> = std::cell::Cell::new(None);
             terminal.draw(|frame| {
-                let (offset, gaps) = render_diff(
+                let (offset, gaps, rects, er) = render_diff(
                     frame,
                     diff,
                     &state.file_diffs,
@@ -472,8 +483,11 @@ fn run_app_internal(
                     viewed_hunks_for_file,
                     state.total_added,
                     state.total_removed,
+                    annotation_editor.as_ref(),
                 );
                 row_offset.set(offset);
+                *rects_cell.borrow_mut() = rects;
+                editor_rect_cell.set(er);
 
                 // Selection action tooltip (shown after drag completes)
                 if state.show_selection_tooltip
@@ -552,16 +566,16 @@ fn run_app_internal(
                 }
 
                 *gaps_cell.borrow_mut() = gaps;
-                // Render annotation editor (on top of everything except modal)
-                if let Some(ref editor) = annotation_editor {
-                    editor.render(frame);
-                }
+                // Editor is rendered inline by render_diff above; only the modal
+                // (annotations list, file picker, etc.) sits on top of everything.
                 if let Some(ref modal) = active_modal {
                     modal.render(frame);
                 }
             })?;
             state.content_row_offset = row_offset.get();
             state.annotation_overlay_gaps = gaps_cell.into_inner();
+            state.annotation_rects = rects_cell.into_inner();
+            state.editor_rect = editor_rect_cell.get();
         }
 
         // Poll for new events if no pending events
@@ -790,6 +804,66 @@ fn run_app_internal(
 
                     match mouse.kind {
                         MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
+                            // Inline annotation editor: click-outside saves (or cancels if empty).
+                            // Click-inside is ignored (textarea cursor placement could be wired later).
+                            if annotation_editor.is_some() {
+                                let inside = state
+                                    .editor_rect
+                                    .map(|r| {
+                                        mouse.column >= r.x
+                                            && mouse.column < r.x + r.width
+                                            && mouse.row >= r.y
+                                            && mouse.row < r.y + r.height
+                                    })
+                                    .unwrap_or(false);
+                                if !inside {
+                                    if let Some(editor) = annotation_editor.as_ref() {
+                                        if editor.is_empty() {
+                                            if let Some(id) = editor.id {
+                                                state.remove_annotation(id);
+                                            }
+                                        } else {
+                                            let content = editor.content();
+                                            if let Some(id) = editor.id {
+                                                state.update_annotation(id, content);
+                                            } else {
+                                                state.add_annotation(
+                                                    editor.filename.clone(),
+                                                    editor.target.clone(),
+                                                    content,
+                                                    editor.created_at(),
+                                                );
+                                            }
+                                        }
+                                    }
+                                    annotation_editor = None;
+                                }
+                                continue;
+                            }
+                            // Click on an existing annotation overlay → open inline editor for it.
+                            let hit_annotation =
+                                state.annotation_rects.iter().find_map(|(id, r)| {
+                                    if mouse.column >= r.x
+                                        && mouse.column < r.x + r.width
+                                        && mouse.row >= r.y
+                                        && mouse.row < r.y + r.height
+                                    {
+                                        Some(*id)
+                                    } else {
+                                        None
+                                    }
+                                });
+                            if let Some(id) = hit_annotation {
+                                if let Some(ann) = state.get_annotation_by_id(id) {
+                                    let new_editor = AnnotationEditor::new(
+                                        ann.filename.clone(),
+                                        ann.target.clone(),
+                                    )
+                                    .with_existing(ann.id, &ann.content, ann.created_at);
+                                    annotation_editor = Some(new_editor);
+                                }
+                                continue;
+                            }
                             // Check for stacked mode header arrow clicks
                             if state.stacked_mode && mouse.row < header_height {
                                 // Left arrow click (first 4 columns to cover " < ")
@@ -1711,6 +1785,10 @@ fn run_app_internal(
                         }
                         KeyCode::Char('e') => {
                             if !state.file_diffs.is_empty() {
+                                let _ = execute!(
+                                    terminal.backend_mut(),
+                                    PopKeyboardEnhancementFlags
+                                );
                                 execute!(
                                     terminal.backend_mut(),
                                     DisableMouseCapture,
@@ -1756,6 +1834,10 @@ fn run_app_internal(
                                     EnterAlternateScreen,
                                     EnableMouseCapture
                                 )?;
+                                let _ = execute!(
+                                    terminal.backend_mut(),
+                                    PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+                                );
                                 terminal.clear()?;
                             }
                         }
@@ -1988,6 +2070,7 @@ fn run_app_internal(
         }
     }
 
+    let _ = execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags);
     execute!(
         terminal.backend_mut(),
         DisableMouseCapture,

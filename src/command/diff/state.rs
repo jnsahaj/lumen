@@ -203,6 +203,14 @@ pub struct AppState {
     /// visible content line index after which an overlay gap of `gap_height` rows appears.
     /// Used by mouse handlers to correctly map screen rows to side_by_side indices.
     pub annotation_overlay_gaps: Vec<(usize, usize)>,
+    /// Screen rectangles of currently-rendered annotation overlays.
+    /// Set by render_diff each frame; used by mouse handlers to open the inline
+    /// editor when the user clicks an existing annotation.
+    pub annotation_rects: Vec<(u64, ratatui::layout::Rect)>,
+    /// Screen rectangle of the active inline annotation editor, when present.
+    /// Set by render_diff each frame; used by mouse handlers to detect clicks
+    /// outside the editor (save if non-empty, cancel if empty).
+    pub editor_rect: Option<ratatui::layout::Rect>,
     /// Total added lines across all files in the current diff. Recomputed on reload.
     pub total_added: usize,
     /// Total removed lines across all files in the current diff. Recomputed on reload.
@@ -304,6 +312,8 @@ impl AppState {
             search_dirty: true,
             content_row_offset: 0,
             annotation_overlay_gaps: Vec::new(),
+            annotation_rects: Vec::new(),
+            editor_rect: None,
             total_added,
             total_removed,
         }
@@ -462,6 +472,8 @@ impl AppState {
         self.search_dirty = true;
         self.content_row_offset = 0;
         self.annotation_overlay_gaps.clear();
+        self.annotation_rects.clear();
+        self.editor_rect = None;
     }
 
     /// Adjust a screen-relative content row for annotation overlay gaps.
