@@ -21,7 +21,6 @@ use std::thread;
 use spinoff::{spinners, Color, Spinner};
 
 use crate::commit_reference::CommitReference;
-use crate::config::cli::HookFormat;
 use crate::vcs::VcsBackend;
 
 pub struct DiffOptions {
@@ -34,7 +33,6 @@ pub struct DiffOptions {
     pub focus: Option<String>,
     pub origin: Option<String>,
     pub wrap: bool,
-    pub hook: Option<HookFormat>,
 }
 
 #[derive(Clone)]

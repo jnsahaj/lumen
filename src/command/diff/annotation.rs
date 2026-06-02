@@ -3,13 +3,12 @@ use std::time::SystemTime;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, Clear, Paragraph},
+    widgets::{Clear, Paragraph},
 };
 use tui_textarea::TextArea;
 
 use super::state::AnnotationTarget;
 use super::theme;
-use crate::command::diff::types::DiffPanelFocus;
 
 /// Result of handling input in the annotation editor
 pub enum AnnotationEditorResult {
@@ -23,7 +22,11 @@ pub enum AnnotationEditorResult {
     Delete,
 }
 
-/// A modal editor for creating/editing annotations
+const MIN_INNER_LINES: usize = 3;
+
+/// Inline annotation editor: a bordered textbox rendered in the same slot
+/// where the saved annotation overlay would live (below a line range, or
+/// at the top of the file for file-level annotations).
 pub struct AnnotationEditor<'a> {
     textarea: TextArea<'a>,
     pub filename: String,
@@ -42,7 +45,6 @@ impl<'a> AnnotationEditor<'a> {
 
         textarea.set_cursor_line_style(Style::default());
         textarea.set_cursor_style(Style::default().bg(t.ui.text_primary).fg(t.ui.bg));
-        textarea.set_block(Block::default());
 
         Self {
             textarea,
@@ -63,7 +65,6 @@ impl<'a> AnnotationEditor<'a> {
         let t = theme::get();
         self.textarea.set_cursor_line_style(Style::default());
         self.textarea.set_cursor_style(Style::default().bg(t.ui.text_primary).fg(t.ui.bg));
-        self.textarea.set_block(Block::default());
 
         self.textarea.move_cursor(tui_textarea::CursorMove::Bottom);
         self.textarea.move_cursor(tui_textarea::CursorMove::End);
@@ -71,17 +72,25 @@ impl<'a> AnnotationEditor<'a> {
         self
     }
 
-    /// Get the annotation content
     pub fn content(&self) -> String {
         self.textarea.lines().join("\n")
     }
 
-    /// Get the creation time (original if editing, now if new)
+    pub fn is_empty(&self) -> bool {
+        self.content().trim().is_empty()
+    }
+
     pub fn created_at(&self) -> SystemTime {
         self.original_created_at.unwrap_or_else(SystemTime::now)
     }
 
-    /// Handle a key event. Returns the result of the input handling.
+    /// Rows the editor wants to occupy: top + bottom borders, content padded to
+    /// `MIN_INNER_LINES`, plus a dim hint row floating below the box.
+    pub fn desired_height(&self) -> usize {
+        let content_lines = self.textarea.lines().len().max(1);
+        content_lines.max(MIN_INNER_LINES) + 2 + 1
+    }
+
     pub fn handle_input(&mut self, key: KeyEvent) -> AnnotationEditorResult {
         match key.code {
             KeyCode::Esc => AnnotationEditorResult::Cancel,
@@ -91,8 +100,7 @@ impl<'a> AnnotationEditor<'a> {
             }
 
             KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                let content = self.textarea.lines().join("\n");
-                if content.trim().is_empty() {
+                if self.is_empty() {
                     if self.is_edit {
                         AnnotationEditorResult::Delete
                     } else {
@@ -104,20 +112,20 @@ impl<'a> AnnotationEditor<'a> {
             }
 
             KeyCode::Enter => {
-                if key.modifiers.intersects(KeyModifiers::SHIFT | KeyModifiers::ALT | KeyModifiers::CONTROL) {
+                if key
+                    .modifiers
+                    .intersects(KeyModifiers::SHIFT | KeyModifiers::ALT | KeyModifiers::CONTROL)
+                {
                     self.textarea.insert_char('\n');
                     AnnotationEditorResult::Continue
-                } else {
-                    let content = self.textarea.lines().join("\n");
-                    if content.trim().is_empty() {
-                        if self.is_edit {
-                            AnnotationEditorResult::Delete
-                        } else {
-                            AnnotationEditorResult::Cancel
-                        }
+                } else if self.is_empty() {
+                    if self.is_edit {
+                        AnnotationEditorResult::Delete
                     } else {
-                        AnnotationEditorResult::Save
+                        AnnotationEditorResult::Cancel
                     }
+                } else {
+                    AnnotationEditorResult::Save
                 }
             }
 
@@ -143,72 +151,117 @@ impl<'a> AnnotationEditor<'a> {
         }
     }
 
-    /// Render the annotation editor as a centered modal
-    pub fn render(&self, frame: &mut Frame) {
+    /// Render the editor as an overlay at `area`. `accent` is the border color,
+    /// `bg` the panel background. When `has_gutter` is true a `▍` indicator is
+    /// painted on the leftmost column (matches saved line-range overlays).
+    ///
+    /// The box itself takes `area.height - 1` rows; the final row is a dim
+    /// `enter save · esc cancel` hint floating below the box.
+    pub fn render_inline(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        accent: Color,
+        bg: Color,
+        has_gutter: bool,
+    ) {
+        if area.height < 4 || area.width < 5 {
+            return;
+        }
+
         let t = theme::get();
-        let area = frame.area();
+        let border_style = Style::default().fg(accent);
+        let indicator_style = Style::default().fg(accent);
+        let row_bg = Style::default().bg(bg);
 
-        let width = 60.min(area.width.saturating_sub(4));
-        let height = 10.min(area.height.saturating_sub(4));
-        let x = (area.width.saturating_sub(width)) / 2;
-        let y = (area.height.saturating_sub(height)) / 2;
-        let modal_area = Rect::new(x, y, width, height);
+        frame.render_widget(Clear, area);
 
-        frame.render_widget(Clear, modal_area);
+        // The bordered box occupies all rows except the last (which is the hint).
+        let box_height = area.height - 1;
+        let border_width = area.width.saturating_sub(3) as usize;
 
-        let short_filename = self
-            .filename
-            .rsplit('/')
-            .next()
-            .unwrap_or(&self.filename);
-
-        let title = match &self.target {
-            AnnotationTarget::File => format!(" {} [file] ", short_filename),
-            AnnotationTarget::LineRange { panel, start_line, end_line, .. } => {
-                let panel_label = match panel {
-                    DiffPanelFocus::Old => "old",
-                    DiffPanelFocus::New | DiffPanelFocus::None => "new",
-                };
-                if start_line == end_line {
-                    format!(" {} · L{} [{}] ", short_filename, start_line, panel_label)
-                } else {
-                    format!(" {} · L{}-{} [{}] ", short_filename, start_line, end_line, panel_label)
-                }
-            }
+        // Top border
+        let top = if has_gutter {
+            Line::from(vec![
+                Span::styled("▍", indicator_style),
+                Span::styled(format!("┌{}┐", "─".repeat(border_width)), border_style),
+            ])
+        } else {
+            Line::from(vec![Span::styled(
+                format!(" ┌{}┐", "─".repeat(border_width)),
+                border_style,
+            )])
         };
+        frame.render_widget(
+            Paragraph::new(top).style(row_bg),
+            Rect::new(area.x, area.y, area.width, 1),
+        );
 
-        let block = Block::default()
-            .title(title)
-            .title_style(Style::default().fg(t.ui.text_secondary))
-            .borders(Borders::ALL)
-            .border_type(ratatui::widgets::BorderType::Rounded)
-            .border_style(Style::default().fg(t.ui.border_focused))
-            .style(Style::default().bg(t.ui.bg));
+        // Middle rows: gutter + left bar + (textarea) + right bar
+        let middle_rows = box_height.saturating_sub(2);
+        for row in 0..middle_rows {
+            let y = area.y + 1 + row;
+            let prefix = if has_gutter {
+                Line::from(vec![
+                    Span::styled("▍", indicator_style),
+                    Span::styled("│ ", border_style),
+                ])
+            } else {
+                Line::from(vec![Span::styled(" │ ", border_style)])
+            };
+            frame.render_widget(
+                Paragraph::new(prefix).style(row_bg),
+                Rect::new(area.x, y, 3, 1),
+            );
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled("│", border_style))).style(row_bg),
+                Rect::new(area.x + area.width - 1, y, 1, 1),
+            );
+        }
 
-        let inner = block.inner(modal_area);
-        frame.render_widget(block, modal_area);
+        // Textarea inside the inner area (after gutter + left bar + space)
+        let inner_w = area.width.saturating_sub(4);
+        let inner_h = middle_rows;
+        if inner_w > 0 && inner_h > 0 {
+            let inner = Rect::new(area.x + 3, area.y + 1, inner_w, inner_h);
+            frame.render_widget(Clear, inner);
+            frame.render_widget(Paragraph::new("").style(row_bg), inner);
+            frame.render_widget(&self.textarea, inner);
+        }
 
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(1), Constraint::Length(1)])
-            .split(inner);
+        // Clean bottom border
+        let bottom = if has_gutter {
+            Line::from(vec![
+                Span::styled("▍", indicator_style),
+                Span::styled(format!("└{}┘", "─".repeat(border_width)), border_style),
+            ])
+        } else {
+            Line::from(vec![Span::styled(
+                format!(" └{}┘", "─".repeat(border_width)),
+                border_style,
+            )])
+        };
+        frame.render_widget(
+            Paragraph::new(bottom).style(row_bg),
+            Rect::new(area.x, area.y + box_height - 1, area.width, 1),
+        );
 
-        frame.render_widget(&self.textarea, chunks[0]);
-
-        let footer_text = Line::from(vec![
-            Span::styled("enter", Style::default().fg(t.ui.text_muted)),
-            Span::styled(" save  ", Style::default().fg(t.ui.text_muted)),
-            Span::styled("│  ", Style::default().fg(t.ui.border_unfocused)),
-            Span::styled("esc", Style::default().fg(t.ui.text_muted)),
-            Span::styled(" cancel  ", Style::default().fg(t.ui.text_muted)),
-            Span::styled("│  ", Style::default().fg(t.ui.border_unfocused)),
-            Span::styled("shift+enter", Style::default().fg(t.ui.text_muted)),
-            Span::styled(" newline", Style::default().fg(t.ui.text_muted)),
-        ]);
-
-        let footer = Paragraph::new(footer_text)
-            .style(Style::default().bg(t.ui.bg))
-            .alignment(Alignment::Center);
-        frame.render_widget(footer, chunks[1]);
+        // Hint row floating below the box, right-aligned with a soft tone.
+        let key_style = Style::default().fg(t.ui.text_secondary);
+        let label_style = Style::default().fg(t.ui.border_unfocused);
+        let sep_style = Style::default().fg(t.ui.border_unfocused);
+        let hint_spans = vec![
+            Span::styled("Enter", key_style),
+            Span::styled(" save", label_style),
+            Span::styled(" . ", sep_style),
+            Span::styled("Esc", key_style),
+            Span::styled(" cancel", label_style),
+            Span::styled(" ", row_bg),
+        ];
+        let hint = Line::from(hint_spans).alignment(Alignment::Right);
+        frame.render_widget(
+            Paragraph::new(hint).style(row_bg),
+            Rect::new(area.x, area.y + area.height - 1, area.width, 1),
+        );
     }
 }

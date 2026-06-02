@@ -40,6 +40,7 @@ Review `git diff`, commits, branches, or GitHub PRs side-by-side without leaving
   - [Explain Changes](#explain-changes)
   - [Tips & Tricks](#tips--tricks)
   - [AI Providers](#ai-providers)
+- [Coding Agent Integrations](#coding-agent-integrations-)
 - [Advanced Configuration](#advanced-configuration-)
   - [Configuration File](#configuration-file)
   - [Configuration Precedence](#configuration-precedence)
@@ -273,6 +274,30 @@ export LUMEN_AI_MODEL="gpt-5-mini"
 | [Ollama](https://github.com/ollama/ollama) `ollama` | No (local) | [see list](https://ollama.com/library) (default: `llama3.2`) |
 | [OpenRouter](https://openrouter.ai/) `openrouter` | Yes | [see list](https://openrouter.ai/models) (default: `anthropic/claude-sonnet-4.5`) |
 | [Vercel AI Gateway](https://vercel.com/docs/ai-gateway) `vercel` | Yes | [see list](https://vercel.com/docs/ai-gateway/supported-models) (default: `anthropic/claude-sonnet-4.5`) |
+
+## Coding Agent Integrations 🔅
+
+Use lumen as the review surface for your coding agent. When the agent finishes a turn, shell-escape to lumen, annotate the diff inline, and press `s` to send your annotations back as the agent's next prompt.
+
+```
+agent finishes turn → !lumen diff → annotate → press `s`
+→ stdout returns to the agent → agent fixes your notes
+```
+
+The mechanics are just stdin/stdout — no plugins, no extensions:
+
+- `s` in the diff TUI opens a confirmation modal. On `Enter`, lumen exits and writes the formatted annotations to stdout (the same text `y` copies to your clipboard).
+- The TUI auto-routes to `/dev/tty` when stdout is captured, so the agent receives clean text — no escape codes.
+
+Works with anything that has a shell-escape:
+
+| Agent | How to trigger |
+|-------|----------------|
+| Claude Code | `!lumen diff` |
+| Codex | `!lumen diff` |
+| Any agent with shell access | `lumen diff` from a tool/bash call |
+
+Annotate with `i` (selection / hunk / file), press `s` → `Enter` to send. Press `q` to dismiss without sending.
 
 ## Advanced Configuration 🔅
 

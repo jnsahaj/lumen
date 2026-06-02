@@ -5,11 +5,83 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 
+use crate::command::diff::annotation::AnnotationEditor;
 use crate::command::diff::context::{compute_context_lines, ContextLine};
 use crate::command::diff::highlight::{highlight_line_spans, FileHighlighter};
 use crate::command::diff::search::{MatchPanel, SearchState};
 use crate::command::diff::state::{Annotation, AnnotationTarget};
 use crate::command::diff::theme;
+
+/// One overlay slot in the rendered diff: either a saved annotation or the
+/// active inline editor (new or editing an existing annotation).
+enum OverlaySlot<'a, 'e> {
+    Saved(&'a Annotation),
+    Editor(&'e AnnotationEditor<'e>),
+}
+
+impl<'a, 'e> OverlaySlot<'a, 'e> {
+    fn height(&self) -> usize {
+        match self {
+            OverlaySlot::Saved(a) => a.content.lines().count() + 2,
+            OverlaySlot::Editor(e) => e.desired_height(),
+        }
+    }
+
+    fn target(&self) -> &AnnotationTarget {
+        match self {
+            OverlaySlot::Saved(a) => &a.target,
+            OverlaySlot::Editor(e) => &e.target,
+        }
+    }
+}
+
+/// Build the file-level overlay slot list for a given file, weaving in the
+/// active editor when it targets this file (replacing the existing annotation
+/// when editing, appended at the end when creating).
+fn build_file_slots<'a, 'e>(
+    saved: &[&'a Annotation],
+    editor: Option<&'e AnnotationEditor<'e>>,
+    filename: &str,
+) -> Vec<OverlaySlot<'a, 'e>> {
+    let edit_id = editor
+        .filter(|e| e.filename == filename && matches!(e.target, AnnotationTarget::File))
+        .and_then(|e| e.id);
+    let mut slots: Vec<OverlaySlot<'a, 'e>> = saved
+        .iter()
+        .filter(|a| Some(a.id) != edit_id)
+        .map(|a| OverlaySlot::Saved(*a))
+        .collect();
+    if let Some(e) = editor {
+        if e.filename == filename && matches!(e.target, AnnotationTarget::File) {
+            slots.push(OverlaySlot::Editor(e));
+        }
+    }
+    slots
+}
+
+/// Build the line-range overlay slot list for a given file.
+fn build_line_slots<'a, 'e>(
+    saved: &[&'a Annotation],
+    editor: Option<&'e AnnotationEditor<'e>>,
+    filename: &str,
+) -> Vec<OverlaySlot<'a, 'e>> {
+    let edit_id = editor
+        .filter(|e| {
+            e.filename == filename && matches!(e.target, AnnotationTarget::LineRange { .. })
+        })
+        .and_then(|e| e.id);
+    let mut slots: Vec<OverlaySlot<'a, 'e>> = saved
+        .iter()
+        .filter(|a| Some(a.id) != edit_id)
+        .map(|a| OverlaySlot::Saved(*a))
+        .collect();
+    if let Some(e) = editor {
+        if e.filename == filename && matches!(e.target, AnnotationTarget::LineRange { .. }) {
+            slots.push(OverlaySlot::Editor(e));
+        }
+    }
+    slots
+}
 use crate::command::diff::types::{
     ChangeType, DiffFullscreen, DiffLine, DiffPanelFocus, DiffViewSettings, FileDiff, FocusedPanel,
     InlineSegment, Selection, SelectionMode, SidebarItem,
@@ -914,21 +986,15 @@ fn render_context_lines(
 
 use crate::vcs::StackedCommitInfo;
 
-/// Compute side_by_side index ranges for line-range annotations.
-/// Returns `(first_sbs_idx, last_sbs_idx, panel)` for each annotation that has matching lines.
-fn compute_ann_index_ranges(
-    line_annotations: &[&Annotation],
+/// Compute side_by_side index ranges for line-range targets.
+/// Returns `(first_sbs_idx, last_sbs_idx, panel)` for each target that has matching lines.
+fn compute_target_index_ranges(
+    targets: &[AnnotationTarget],
     side_by_side: &[DiffLine],
 ) -> Vec<(usize, usize, DiffPanelFocus)> {
     let mut ranges = Vec::new();
-    for ann in line_annotations {
-        if let AnnotationTarget::LineRange {
-            panel,
-            start_line,
-            end_line,
-            ..
-        } = &ann.target
-        {
+    for target in targets {
+        if let AnnotationTarget::LineRange { panel, start_line, end_line, .. } = target {
             let mut first_idx: Option<usize> = None;
             let mut last_idx: Option<usize> = None;
             for (idx, dl) in side_by_side.iter().enumerate() {
@@ -947,6 +1013,11 @@ fn compute_ann_index_ranges(
         }
     }
     ranges
+}
+
+/// Collect line-range targets from a slot list.
+fn slot_targets(slots: &[OverlaySlot]) -> Vec<AnnotationTarget> {
+    slots.iter().map(|s| s.target().clone()).collect()
 }
 
 /// Check if a side_by_side index falls within any annotation range, optionally filtering by panel.
@@ -987,12 +1058,9 @@ fn make_indicator_span(
     }
 }
 
-/// Total rendered height of file-level annotation overlays.
-fn file_annotation_height(annotations: &[&Annotation]) -> usize {
-    annotations
-        .iter()
-        .map(|a| a.content.lines().count() + 2)
-        .sum()
+/// Total rendered height of file-level overlay slots.
+fn file_slots_height(slots: &[OverlaySlot]) -> usize {
+    slots.iter().map(|s| s.height()).sum()
 }
 
 /// Render annotation overlays at specified positions.
@@ -1000,6 +1068,10 @@ fn file_annotation_height(annotations: &[&Annotation]) -> usize {
 /// This function renders annotation boxes that can span single or multiple panels.
 /// The `content_x`, `content_start_y`, `content_width`, and `max_area` parameters
 /// allow flexible positioning for both single-panel and side-by-side views.
+///
+/// Each overlay's screen rect is appended to `annotation_rects` so mouse handlers
+/// can hit-test clicks against existing annotations.
+#[allow(clippy::too_many_arguments)]
 fn render_annotation_overlays(
     frame: &mut Frame,
     overlays: &[(usize, &Annotation)],
@@ -1010,6 +1082,7 @@ fn render_annotation_overlays(
     bg: Color,
     t: &crate::command::diff::theme::Theme,
     suppress_gutter: bool,
+    annotation_rects: &mut Vec<(u64, Rect)>,
 ) {
     // Annotation accent color — a subtle but visible tint
     let ann_accent = t.ui.highlight;
@@ -1108,6 +1181,61 @@ fn render_annotation_overlays(
 
         let ann_para = Paragraph::new(ann_lines).style(Style::default().bg(bg));
         frame.render_widget(ann_para, overlay_area);
+
+        annotation_rects.push((annotation.id, overlay_area));
+    }
+}
+
+/// Render a single overlay slot (saved annotation or editor) at a given position.
+/// Append the resulting rect to `annotation_rects` if the slot is a saved annotation.
+#[allow(clippy::too_many_arguments)]
+fn render_overlay_slot(
+    frame: &mut Frame,
+    line_pos: usize,
+    slot: &OverlaySlot,
+    content_x: u16,
+    content_start_y: u16,
+    content_width: u16,
+    max_area: Rect,
+    bg: Color,
+    t: &crate::command::diff::theme::Theme,
+    suppress_gutter: bool,
+    annotation_rects: &mut Vec<(u64, Rect)>,
+    editor_rect: &mut Option<Rect>,
+) {
+    match slot {
+        OverlaySlot::Saved(a) => render_annotation_overlays(
+            frame,
+            &[(line_pos, a)],
+            content_x,
+            content_start_y,
+            content_width,
+            max_area,
+            bg,
+            t,
+            suppress_gutter,
+            annotation_rects,
+        ),
+        OverlaySlot::Editor(editor) => {
+            let screen_y = content_start_y + line_pos as u16;
+            if screen_y >= max_area.y + max_area.height {
+                return;
+            }
+            let available = (max_area.y + max_area.height).saturating_sub(screen_y) as usize;
+            if available == 0 {
+                return;
+            }
+            let height = editor.desired_height().min(available) as u16;
+            let area = Rect::new(content_x, screen_y, content_width, height);
+            editor.render_inline(
+                frame,
+                area,
+                t.ui.highlight,
+                bg,
+                !suppress_gutter && matches!(editor.target, AnnotationTarget::LineRange { .. }),
+            );
+            *editor_rect = Some(area);
+        }
     }
 }
 
@@ -1155,7 +1283,8 @@ pub fn render_diff(
     viewed_hunks: &HashSet<usize>,
     total_added: usize,
     total_removed: usize,
-) -> (usize, Vec<(usize, usize)>) {
+    editor: Option<&AnnotationEditor>,
+) -> (usize, Vec<(usize, usize)>, Vec<(u64, Rect)>, Option<Rect>) {
     let area = frame.area();
     let t = theme::get();
     let bg = t.ui.bg;
@@ -1261,7 +1390,7 @@ pub fn render_diff(
                 area_width: area.width,
             },
         );
-        return (0, Vec::new());
+        return (0, Vec::new(), Vec::new(), None);
     }
 
     // side_by_side is now passed as a parameter (pre-computed and cached)
@@ -1274,6 +1403,10 @@ pub fn render_diff(
     let content_row_offset: usize;
     // Track inline annotation overlay gaps for mouse coordinate mapping
     let mut overlay_gaps: Vec<(usize, usize)> = Vec::new();
+    // Track rendered annotation screen rects for click hit-testing
+    let mut annotation_rects: Vec<(u64, Rect)> = Vec::new();
+    // Tracks the screen rect of the inline editor, when one is rendered this frame.
+    let mut editor_rect: Option<Rect> = None;
 
     let border_style = Style::default().fg(t.ui.border_unfocused);
     let title_style = if focused_panel == FocusedPanel::DiffView {
@@ -1309,7 +1442,10 @@ pub fn render_diff(
             })
             .collect();
 
-        let annotation_height = file_annotation_height(&file_annotations);
+        let file_slots = build_file_slots(&file_annotations, editor, &diff.filename);
+        let line_slots = build_line_slots(&line_annotations, editor, &diff.filename);
+
+        let annotation_height = file_slots_height(&file_slots);
         content_row_offset = context_count + annotation_height;
 
         let base_content_height = visible_height.saturating_sub(context_count);
@@ -1322,7 +1458,7 @@ pub fn render_diff(
             .collect();
 
         let mut new_lines: Vec<Line> = Vec::new();
-        let mut annotation_overlays: Vec<(usize, &Annotation)> = Vec::new();
+        let mut slot_overlays: Vec<(usize, &OverlaySlot)> = Vec::new();
 
         if settings.context.enabled && context_count > 0 {
             render_context_lines(
@@ -1335,18 +1471,18 @@ pub fn render_diff(
             );
         }
 
-        // Show file-level annotations at top
-        for annotation in &file_annotations {
-            let content_lines: Vec<&str> = annotation.content.lines().collect();
-            let num_lines = content_lines.len() + 2;
-            let annotation_start = new_lines.len();
+        // Show file-level slots at top (annotations + editor when file-targeted)
+        for slot in &file_slots {
+            let num_lines = slot.height();
+            let slot_start = new_lines.len();
             for _ in 0..num_lines {
                 new_lines.push(Line::from(vec![Span::raw("")]));
             }
-            annotation_overlays.push((annotation_start, annotation));
+            slot_overlays.push((slot_start, slot));
         }
 
-        let ann_index_ranges = compute_ann_index_ranges(&line_annotations, side_by_side);
+        let line_targets = slot_targets(&line_slots);
+        let ann_index_ranges = compute_target_index_ranges(&line_targets, side_by_side);
         let annotation_indicator_style = Style::default().fg(t.ui.highlight);
         let focus_style = Style::default().fg(t.ui.border_focused);
 
@@ -1410,20 +1546,17 @@ pub fn render_diff(
                 );
             }
 
-            // Check if this line is the end_line for any line-range annotation
-            for annotation in &line_annotations {
-                if let AnnotationTarget::LineRange {
-                    panel, end_line, ..
-                } = &annotation.target
-                {
+            // Check if this line is the end_line for any line-range slot
+            for slot in &line_slots {
+                if let AnnotationTarget::LineRange { panel, end_line, .. } = slot.target() {
                     if diff_line.line_number(*panel) == Some(*end_line) {
-                        let num_ann_lines = annotation.content.lines().count() + 2;
+                        let num_ann_lines = slot.height();
                         let line_pos = new_lines.len();
                         overlay_gaps.push((i, num_ann_lines));
                         for _ in 0..num_ann_lines {
                             new_lines.push(Line::from(vec![Span::raw("")]));
                         }
-                        annotation_overlays.push((line_pos, annotation));
+                        slot_overlays.push((line_pos, slot));
                     }
                 }
             }
@@ -1437,21 +1570,26 @@ pub fn render_diff(
         );
         frame.render_widget(new_para, main_area);
 
-        // Render annotation overlays
+        // Render overlay slots (saved annotations + active editor)
         let content_x = main_area.x + 1;
         let content_start_y = main_area.y + 1;
         let content_width = main_area.width.saturating_sub(2);
-        render_annotation_overlays(
-            frame,
-            &annotation_overlays,
-            content_x,
-            content_start_y,
-            content_width,
-            main_area,
-            bg,
-            t,
-            false,
-        );
+        for &(line_pos, slot) in &slot_overlays {
+            render_overlay_slot(
+                frame,
+                line_pos,
+                slot,
+                content_x,
+                content_start_y,
+                content_width,
+                main_area,
+                bg,
+                t,
+                false,
+                &mut annotation_rects,
+                &mut editor_rect,
+            );
+        }
     } else if is_deleted_file {
         let visible_height = main_area.height.saturating_sub(2) as usize;
         let old_context = compute_context_lines(
@@ -1479,7 +1617,10 @@ pub fn render_diff(
             })
             .collect();
 
-        let annotation_height = file_annotation_height(&file_annotations);
+        let file_slots = build_file_slots(&file_annotations, editor, &diff.filename);
+        let line_slots = build_line_slots(&line_annotations, editor, &diff.filename);
+
+        let annotation_height = file_slots_height(&file_slots);
         content_row_offset = context_count + annotation_height;
 
         let base_content_height = visible_height.saturating_sub(context_count);
@@ -1492,7 +1633,7 @@ pub fn render_diff(
             .collect();
 
         let mut old_lines: Vec<Line> = Vec::new();
-        let mut annotation_overlays: Vec<(usize, &Annotation)> = Vec::new();
+        let mut slot_overlays: Vec<(usize, &OverlaySlot)> = Vec::new();
 
         if settings.context.enabled && context_count > 0 {
             render_context_lines(
@@ -1505,18 +1646,18 @@ pub fn render_diff(
             );
         }
 
-        // Show file-level annotations at top
-        for annotation in &file_annotations {
-            let content_lines: Vec<&str> = annotation.content.lines().collect();
-            let num_lines = content_lines.len() + 2;
-            let annotation_start = old_lines.len();
+        // Show file-level slots at top (annotations + editor when file-targeted)
+        for slot in &file_slots {
+            let num_lines = slot.height();
+            let slot_start = old_lines.len();
             for _ in 0..num_lines {
                 old_lines.push(Line::from(vec![Span::raw("")]));
             }
-            annotation_overlays.push((annotation_start, annotation));
+            slot_overlays.push((slot_start, slot));
         }
 
-        let ann_index_ranges = compute_ann_index_ranges(&line_annotations, side_by_side);
+        let line_targets = slot_targets(&line_slots);
+        let ann_index_ranges = compute_target_index_ranges(&line_targets, side_by_side);
         let annotation_indicator_style = Style::default().fg(t.ui.highlight);
         let focus_style = Style::default().fg(t.ui.border_focused);
 
@@ -1580,20 +1721,17 @@ pub fn render_diff(
                 );
             }
 
-            // Check if this line is the end_line for any line-range annotation
-            for annotation in &line_annotations {
-                if let AnnotationTarget::LineRange {
-                    panel, end_line, ..
-                } = &annotation.target
-                {
+            // Check if this line is the end_line for any line-range slot
+            for slot in &line_slots {
+                if let AnnotationTarget::LineRange { panel, end_line, .. } = slot.target() {
                     if diff_line.line_number(*panel) == Some(*end_line) {
-                        let num_ann_lines = annotation.content.lines().count() + 2;
+                        let num_ann_lines = slot.height();
                         let line_pos = old_lines.len();
                         overlay_gaps.push((i, num_ann_lines));
                         for _ in 0..num_ann_lines {
                             old_lines.push(Line::from(vec![Span::raw("")]));
                         }
-                        annotation_overlays.push((line_pos, annotation));
+                        slot_overlays.push((line_pos, slot));
                     }
                 }
             }
@@ -1607,21 +1745,26 @@ pub fn render_diff(
         );
         frame.render_widget(old_para, main_area);
 
-        // Render annotation overlays
+        // Render overlay slots (saved annotations + active editor)
         let content_x = main_area.x + 1;
         let content_start_y = main_area.y + 1;
         let content_width = main_area.width.saturating_sub(2);
-        render_annotation_overlays(
-            frame,
-            &annotation_overlays,
-            content_x,
-            content_start_y,
-            content_width,
-            main_area,
-            bg,
-            t,
-            false,
-        );
+        for &(line_pos, slot) in &slot_overlays {
+            render_overlay_slot(
+                frame,
+                line_pos,
+                slot,
+                content_x,
+                content_start_y,
+                content_width,
+                main_area,
+                bg,
+                t,
+                false,
+                &mut annotation_rects,
+                &mut editor_rect,
+            );
+        }
     } else {
         let (old_area, new_area) = match diff_fullscreen {
             DiffFullscreen::OldOnly => (Some(main_area), None),
@@ -1664,7 +1807,7 @@ pub fn render_diff(
 
         let mut old_lines: Vec<Line> = Vec::new();
         let mut new_lines: Vec<Line> = Vec::new();
-        let mut annotation_overlays: Vec<(usize, &Annotation)> = Vec::new();
+        let mut slot_overlays: Vec<(usize, &OverlaySlot)> = Vec::new();
 
         // Collect file-level annotations
         let file_annotations: Vec<&Annotation> = annotations
@@ -1681,7 +1824,10 @@ pub fn render_diff(
             })
             .collect();
 
-        let file_ann_height = file_annotation_height(&file_annotations);
+        let file_slots = build_file_slots(&file_annotations, editor, &diff.filename);
+        let line_slots = build_line_slots(&line_annotations, editor, &diff.filename);
+
+        let file_ann_height = file_slots_height(&file_slots);
         content_row_offset = context_count + file_ann_height;
 
         if settings.context.enabled && context_count > 0 {
@@ -1732,11 +1878,10 @@ pub fn render_diff(
             false
         };
 
-        // Add file-level annotations at the top (after context lines)
-        for annotation in &file_annotations {
-            let content_lines_count = annotation.content.lines().count();
-            let num_lines = content_lines_count + 2;
-            let annotation_start = old_lines.len(); // same position in both panels
+        // Add file-level slots at the top (after context lines)
+        for slot in &file_slots {
+            let num_lines = slot.height();
+            let slot_start = old_lines.len(); // same position in both panels
             for _ in 0..num_lines {
                 if old_area.is_some() {
                     old_lines.push(Line::from(vec![Span::raw("")]));
@@ -1745,10 +1890,11 @@ pub fn render_diff(
                     new_lines.push(Line::from(vec![Span::raw("")]));
                 }
             }
-            annotation_overlays.push((annotation_start, annotation));
+            slot_overlays.push((slot_start, slot));
         }
 
-        let ann_index_ranges = compute_ann_index_ranges(&line_annotations, side_by_side);
+        let line_targets = slot_targets(&line_slots);
+        let ann_index_ranges = compute_target_index_ranges(&line_targets, side_by_side);
 
         // Track rendered rows for new-panel border annotation markers (paragraph-relative)
         let mut border_marker_rows: Vec<usize> = Vec::new();
@@ -2042,14 +2188,11 @@ pub fn render_diff(
                 }
             }
 
-            // Check if this line is the end_line for any line-range annotation
-            for annotation in &line_annotations {
-                if let AnnotationTarget::LineRange {
-                    panel, end_line, ..
-                } = &annotation.target
-                {
+            // Check if this line is the end_line for any line-range slot
+            for slot in &line_slots {
+                if let AnnotationTarget::LineRange { panel, end_line, .. } = slot.target() {
                     if diff_line.line_number(*panel) == Some(*end_line) {
-                        let num_lines = annotation.content.lines().count() + 2;
+                        let num_lines = slot.height();
 
                         let line_pos = if old_area.is_some() {
                             old_lines.len()
@@ -2072,7 +2215,7 @@ pub fn render_diff(
                             rendered_row += 1;
                         }
 
-                        annotation_overlays.push((line_pos, annotation));
+                        slot_overlays.push((line_pos, slot));
                     }
                 }
             }
@@ -2130,13 +2273,11 @@ pub fn render_diff(
             }
         }
 
-        // Render annotation overlays per-panel for line-range annotations,
-        // spanning both panels for file-level annotations
+        // Render overlay slots (saved annotations + active editor) per-panel for line-range,
+        // spanning both panels for file-level.
         let is_side_by_side = old_area.is_some() && new_area.is_some();
-        for &(line_pos, annotation) in &annotation_overlays {
-            let (overlay_x, overlay_width, overlay_start_y, suppress_gutter) = match &annotation
-                .target
-            {
+        for &(line_pos, slot) in &slot_overlays {
+            let (overlay_x, overlay_width, overlay_start_y, suppress_gutter) = match slot.target() {
                 AnnotationTarget::File => {
                     // File-level: span both panels
                     let render_area = old_area.or(new_area).unwrap_or(main_area);
@@ -2167,9 +2308,10 @@ pub fn render_diff(
                     )
                 }
             };
-            render_annotation_overlays(
+            render_overlay_slot(
                 frame,
-                &[(line_pos, annotation)],
+                line_pos,
+                slot,
                 overlay_x,
                 overlay_start_y,
                 overlay_width,
@@ -2177,20 +2319,21 @@ pub fn render_diff(
                 bg,
                 t,
                 suppress_gutter,
+                &mut annotation_rects,
+                &mut editor_rect,
             );
         }
 
-        // Extend border markers through new-panel annotation overlay rows on the shared border
+        // Extend border markers through new-panel slot overlay rows on the shared border
         if let (Some(old_a), Some(_)) = (old_area, new_area) {
             let border_x = old_a.x + old_a.width - 1;
             let content_start = old_a.y + 1;
             let buf = frame.buffer_mut();
 
-            for &(line_pos, annotation) in &annotation_overlays {
-                if let AnnotationTarget::LineRange { panel, .. } = &annotation.target {
+            for &(line_pos, slot) in &slot_overlays {
+                if let AnnotationTarget::LineRange { panel, .. } = slot.target() {
                     if matches!(panel, DiffPanelFocus::New | DiffPanelFocus::None) {
-                        let content_lines_count = annotation.content.lines().count();
-                        let num_rows = content_lines_count + 2;
+                        let num_rows = slot.height();
                         for row_offset in 0..num_rows {
                             let screen_row = content_start + line_pos as u16 + row_offset as u16;
                             if screen_row < old_a.y + old_a.height - 1 {
@@ -2247,6 +2390,6 @@ pub fn render_diff(
         },
     );
 
-    (content_row_offset, overlay_gaps)
+    (content_row_offset, overlay_gaps, annotation_rects, editor_rect)
 }
 
