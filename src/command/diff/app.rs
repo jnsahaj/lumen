@@ -371,7 +371,8 @@ fn run_app_internal(
 
     let mut terminal = Terminal::new(CrosstermBackend::new(tui_writer))?;
 
-    let watch_rx = if options.watch && pr_info.is_none() {
+    state.watching = options.watch;
+    let mut watch_rx = if state.watching && pr_info.is_none() {
         setup_watcher()
     } else {
         None
@@ -421,7 +422,7 @@ fn run_app_internal(
 
         if state.file_diffs.is_empty() {
             terminal.draw(|frame| {
-                render_empty_state(frame, options.watch);
+                render_empty_state(frame, state.watching);
                 if let Some(ref modal) = active_modal {
                     modal.render(frame);
                 }
@@ -463,7 +464,7 @@ fn run_app_internal(
                     } else {
                         state.h_scroll
                     },
-                    options.watch,
+                    state.watching,
                     state.show_sidebar,
                     state.focused_panel,
                     state.sidebar_selected,
@@ -1408,9 +1409,11 @@ fn run_app_internal(
                             }
                         }
                         KeyCode::Char('w') => {
-                            if state.focused_panel == FocusedPanel::DiffView {
-                                state.settings.wrap = !state.settings.wrap;
-                                state.h_scroll = 0;
+                            state.watching = !state.watching;
+                            if state.watching && pr_info.is_none() {
+                                watch_rx = setup_watcher();
+                            } else {
+                                watch_rx = None;
                             }
                         }
                         KeyCode::Char('h') | KeyCode::Left => {
@@ -2047,10 +2050,10 @@ fn run_app_internal(
                                                 key: "h/l or left/right",
                                                 description: "Scroll horizontally",
                                             },
-                                            KeyBind {
-                                                key: "w",
-                                                description: "Toggle word wrap",
-                                            },
+                                        KeyBind {
+                                            key: "w",
+                                            description: "Toggle watch mode",
+                                        },
                                             KeyBind {
                                                 key: "gg / G",
                                                 description: "Scroll to top / bottom",

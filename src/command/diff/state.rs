@@ -161,6 +161,7 @@ pub struct AppState {
     pub search_state: SearchState,
     pub pending_key: PendingKey,
     pub needs_reload: bool,
+    pub watching: bool,
     pub focused_hunk: Option<usize>,
     // Annotation fields
     pub annotations: Vec<Annotation>,
@@ -292,6 +293,7 @@ impl AppState {
             search_state: SearchState::default(),
             pending_key: PendingKey::default(),
             needs_reload: false,
+            watching: false,
             focused_hunk,
             annotations: Vec::new(),
             annotation_next_id: 0,
