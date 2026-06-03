@@ -53,6 +53,13 @@ pub const ALL_PROVIDERS: &[ProviderInfo] = &[
         env_key: "OPENCODE_API_KEY",
     },
     ProviderInfo {
+        id: "opencode-go",
+        provider_type: ProviderType::OpencodeGo,
+        display_name: "OpenCode Go",
+        default_model: "kimi-k2.6",
+        env_key: "OPENCODE_API_KEY",
+    },
+    ProviderInfo {
         id: "openrouter",
         provider_type: ProviderType::Openrouter,
         display_name: "OpenRouter",
