@@ -1,3 +1,4 @@
+use super::text_edit::erase_word_backward;
 use super::types::{DiffFullscreen, DiffLine};
 
 #[derive(Default, Clone, Copy, PartialEq)]
@@ -60,6 +61,12 @@ impl SearchState {
 
     pub fn pop_char(&mut self) {
         self.query.pop();
+    }
+
+    /// Drop the trailing word from the query (macOS `opt+backspace` /
+    /// readline `ctrl+w` semantics — respects punctuation boundaries).
+    pub fn erase_word(&mut self) {
+        erase_word_backward(&mut self.query);
     }
 
     pub fn is_active(&self) -> bool {

@@ -631,11 +631,27 @@ fn run_app_internal(
                                 }
                             }
                         }
+                        // Word-erase: opt+backspace (macOS) / ctrl+w (readline).
+                        // Listed BEFORE plain Backspace so the modified variant
+                        // matches first.
+                        KeyCode::Backspace if key.modifiers.contains(KeyModifiers::ALT) => {
+                            state.search_state.erase_word();
+                            state.mark_search_dirty();
+                        }
+                        KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            state.search_state.erase_word();
+                            state.mark_search_dirty();
+                        }
                         KeyCode::Backspace => {
                             state.search_state.pop_char();
                             state.mark_search_dirty();
                         }
-                        KeyCode::Char(c) => {
+                        // Exclude modified char keys so combos like opt+letter
+                        // don't insert the letter into the query.
+                        KeyCode::Char(c)
+                            if !key.modifiers.contains(KeyModifiers::ALT)
+                                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
                             state.search_state.push_char(c);
                             state.mark_search_dirty();
                         }

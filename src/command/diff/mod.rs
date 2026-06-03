@@ -10,6 +10,7 @@ mod render;
 mod search;
 mod state;
 mod sticky_lines;
+mod text_edit;
 pub mod theme;
 mod types;
 mod watcher;

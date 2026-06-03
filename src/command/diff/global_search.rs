@@ -12,6 +12,7 @@ use nucleo_matcher::{Config, Matcher};
 use super::diff_algo::compute_side_by_side;
 use super::highlight::FileHighlighter;
 use super::search::MatchPanel;
+use super::text_edit::erase_word_backward;
 use super::types::{ChangeType, DiffLine, DiffViewSettings, FileDiff};
 
 /// Maximum number of results shown in the list. Above this, the user should narrow the query.
@@ -315,18 +316,12 @@ impl GlobalSearchState {
         self.refilter();
     }
 
-    /// Drop trailing whitespace and then the last word from the query.
-    /// Used by both `ctrl+w` and `opt+backspace`. Re-filters once after
-    /// the edit, instead of paying for one refilter per removed char.
+    /// Drop the trailing "word" from the query, macOS `opt+backspace`
+    /// semantics. Word boundaries respect punctuation, so e.g.
+    /// "something/another" → "something/". Re-filters once after the edit
+    /// instead of paying for one refilter per removed char.
     pub fn erase_query_word(&mut self) {
-        // Walk back from the end: skip trailing whitespace, then keep dropping
-        // chars until the next char is whitespace (or we run out).
-        while matches!(self.query.chars().last(), Some(c) if c.is_whitespace()) {
-            self.query.pop();
-        }
-        while matches!(self.query.chars().last(), Some(c) if !c.is_whitespace()) {
-            self.query.pop();
-        }
+        erase_word_backward(&mut self.query);
         self.refilter();
     }
 

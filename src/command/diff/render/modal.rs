@@ -1151,12 +1151,30 @@ impl Modal {
                         Some(ModalResult::Dismissed)
                     }
                 }
+                // Word-erase: opt+backspace (macOS) / ctrl+w (readline). Must
+                // sit BEFORE the plain Backspace arm so the modified variant
+                // matches first.
+                KeyCode::Backspace if key.modifiers.contains(KeyModifiers::ALT) => {
+                    crate::command::diff::text_edit::erase_word_backward(query);
+                    Self::update_filtered_indices(items, query, filtered_indices, selected);
+                    None
+                }
+                KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    crate::command::diff::text_edit::erase_word_backward(query);
+                    Self::update_filtered_indices(items, query, filtered_indices, selected);
+                    None
+                }
                 KeyCode::Backspace => {
                     query.pop();
                     Self::update_filtered_indices(items, query, filtered_indices, selected);
                     None
                 }
-                KeyCode::Char(c) => {
+                // Skip modified char keys so combos like opt+letter don't
+                // insert the letter into the query.
+                KeyCode::Char(c)
+                    if !key.modifiers.contains(KeyModifiers::ALT)
+                        && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                {
                     query.push(c);
                     Self::update_filtered_indices(items, query, filtered_indices, selected);
                     None
@@ -1194,12 +1212,30 @@ impl Modal {
                             *error_message = None;
                             Some(ModalResult::AnnotationExport(filename.to_string()))
                         }
+                        // Word-erase: opt+backspace (macOS) / ctrl+w
+                        // (readline). Goes BEFORE plain Backspace so the
+                        // modified variant matches first.
+                        KeyCode::Backspace if key.modifiers.contains(KeyModifiers::ALT) => {
+                            crate::command::diff::text_edit::erase_word_backward(input);
+                            *error_message = None;
+                            None
+                        }
+                        KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            crate::command::diff::text_edit::erase_word_backward(input);
+                            *error_message = None;
+                            None
+                        }
                         KeyCode::Backspace => {
                             input.pop();
                             *error_message = None; // Clear error on edit
                             None
                         }
-                        KeyCode::Char(c) => {
+                        // Skip modified char keys so combos like opt+letter
+                        // don't insert the letter into the path.
+                        KeyCode::Char(c)
+                            if !key.modifiers.contains(KeyModifiers::ALT)
+                                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
                             input.push(c);
                             *error_message = None; // Clear error on edit
                             None
