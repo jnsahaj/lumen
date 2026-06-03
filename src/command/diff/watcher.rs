@@ -10,7 +10,11 @@ pub struct WatchEvent {
     pub changed_files: HashSet<String>,
 }
 
-pub fn setup_watcher() -> Option<Receiver<WatchEvent>> {
+/// Owns the debouncer; dropping it shuts down the watcher thread.
+#[allow(dead_code)]
+pub struct WatchHandle(notify_debouncer_mini::Debouncer<notify::RecommendedWatcher>);
+
+pub fn setup_watcher() -> Option<(WatchHandle, Receiver<WatchEvent>)> {
     let (tx, rx) = mpsc::channel();
 
     // Get current directory for making paths relative
@@ -53,7 +57,5 @@ pub fn setup_watcher() -> Option<Receiver<WatchEvent>> {
         .watch(Path::new("."), notify::RecursiveMode::Recursive)
         .ok()?;
 
-    std::mem::forget(debouncer);
-
-    Some(rx)
+    Some((WatchHandle(debouncer), rx))
 }

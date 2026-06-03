@@ -358,6 +358,7 @@ mod tests {
             stacked: false,
             focus: None,
             origin: None,
+            wrap: false,
         };
 
         let diffs = load_file_diffs(&options, &backend);
@@ -428,6 +429,7 @@ mod tests {
             stacked: false,
             focus: None,
             origin: None,
+            wrap: false,
         };
 
         let diffs = load_file_diffs(&options, &backend);

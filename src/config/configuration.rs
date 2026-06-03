@@ -29,6 +29,9 @@ pub struct LumenConfig {
 
     #[serde(default)]
     pub theme: Option<String>,
+
+    #[serde(default)]
+    pub wrap: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -126,6 +129,7 @@ impl LumenConfig {
             api_key,
             draft: config.draft,
             theme: config.theme,
+            wrap: config.wrap,
         })
     }
 
@@ -151,6 +155,7 @@ impl Default for LumenConfig {
             api_key: default_api_key(),
             draft: default_draft_config(),
             theme: None,
+            wrap: None,
         }
     }
 }
