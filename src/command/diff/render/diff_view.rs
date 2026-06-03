@@ -231,7 +231,7 @@ pub struct LineStats {
     pub removed: usize,
 }
 
-fn expand_tabs_in_spans<'a>(spans: Vec<Span<'a>>, tab_width: usize) -> Vec<Span<'a>> {
+pub(super) fn expand_tabs_in_spans<'a>(spans: Vec<Span<'a>>, tab_width: usize) -> Vec<Span<'a>> {
     if tab_width == 0 {
         let mut col = 0;
         return spans
