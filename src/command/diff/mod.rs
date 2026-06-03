@@ -4,6 +4,7 @@ mod context;
 mod coordinates;
 mod diff_algo;
 pub mod git;
+mod global_search;
 pub mod highlight;
 mod render;
 mod search;

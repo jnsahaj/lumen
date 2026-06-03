@@ -2555,6 +2555,7 @@ dependencies = [
  "jj-lib",
  "notify",
  "notify-debouncer-mini",
+ "nucleo-matcher",
  "once_cell",
  "pollster",
  "ratatui",
@@ -2748,6 +2749,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "585d3cb5e12e01aed9e8a1f70d5c6b5e86fe2a6e48fc8cd0b3e0b8df6f6eb174"
 dependencies = [
  "instant",
+]
+
+[[package]]
+name = "nucleo-matcher"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf33f538733d1a5a3494b836ba913207f14d9d4a1d3cd67030c5061bdd2cac85"
+dependencies = [
+ "memchr",
+ "unicode-segmentation",
 ]
 
 [[package]]

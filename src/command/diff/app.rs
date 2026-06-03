@@ -764,6 +764,47 @@ fn run_app_internal(
                                     send_annotations_on_exit = true;
                                     break 'main;
                                 }
+                                ModalResult::JumpToLine {
+                                    file_index,
+                                    sbs_line_index,
+                                    panel: _panel,
+                                    query,
+                                } => {
+                                    // Reveal + switch to the target file and scroll the
+                                    // matched sbs line into view.
+                                    state.reveal_file(file_index);
+                                    state.select_file(file_index);
+                                    if let Some(idx) =
+                                        state.sidebar_visible_index_for_file(state.current_file)
+                                    {
+                                        state.sidebar_selected = idx;
+                                        let visible_height =
+                                            terminal.size()?.height.saturating_sub(5) as usize;
+                                        ensure_sidebar_visible(&mut state, visible_height);
+                                    }
+                                    // Compute max_scroll for the just-switched file
+                                    // before adjusting scroll.
+                                    state.ensure_cache();
+                                    let sbs_len = state.side_by_side_ref().len();
+                                    let vh = terminal.size()?.height.saturating_sub(5) as usize;
+                                    let max_scroll = sbs_len.saturating_sub(vh);
+                                    state.scroll = adjust_scroll_to_line(
+                                        sbs_line_index,
+                                        state.scroll,
+                                        vh,
+                                        max_scroll,
+                                    );
+                                    // Seed the inline `/` search with the same query so
+                                    // matches stay highlighted in-context after jumping.
+                                    if !query.is_empty() {
+                                        state.search_state.clear();
+                                        for ch in query.chars() {
+                                            state.search_state.push_char(ch);
+                                        }
+                                        state.mark_search_dirty();
+                                    }
+                                    active_modal = None;
+                                }
                                 ModalResult::Dismissed | ModalResult::Selected(_, _) => {
                                     active_modal = None;
                                 }
@@ -773,8 +814,8 @@ fn run_app_internal(
                 }
                 Event::Mouse(mouse) if active_modal.is_some() => {
                     if let Some(ref mut modal) = active_modal {
-                        let term_height = terminal.size()?.height;
-                        modal.handle_mouse(mouse, term_height);
+                        let term_size = terminal.size()?;
+                        modal.handle_mouse(mouse, term_size.width, term_size.height);
                     }
                 }
                 Event::Mouse(mouse) if active_modal.is_none() => {
@@ -1867,12 +1908,18 @@ fn run_app_internal(
                         KeyCode::Char('G') => {
                             state.scroll = max_scroll as u16;
                         }
-                        KeyCode::Char('/') | KeyCode::Char('f')
-                            if key.code == KeyCode::Char('/')
-                                || key.modifiers.contains(KeyModifiers::CONTROL) =>
-                        {
+                        KeyCode::Char('/') => {
+                            // In-file incremental search (existing behavior).
                             state.search_state.start_forward();
                             state.mark_search_dirty();
+                        }
+                        KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            // Global telescope-style search across all files.
+                            let gs = crate::command::diff::render::GlobalSearchState::build(
+                                &state.file_diffs,
+                                &state.settings,
+                            );
+                            active_modal = Some(Modal::global_search("Search", gs));
                         }
                         KeyCode::Char('n') if state.search_state.has_query() => {
                             if let Some(line) = state.search_state.find_next() {
@@ -2021,16 +2068,20 @@ fn run_app_internal(
                                         title: "Search",
                                         bindings: vec![
                                             KeyBind {
-                                                key: "/ or ctrl+f",
-                                                description: "Start search",
+                                                key: "/",
+                                                description: "In-file incremental search",
+                                            },
+                                            KeyBind {
+                                                key: "ctrl+f",
+                                                description: "Global fuzzy search (all files, with preview)",
                                             },
                                             KeyBind {
                                                 key: "n or down",
-                                                description: "Next match",
+                                                description: "Next match (in-file)",
                                             },
                                             KeyBind {
                                                 key: "N or up",
-                                                description: "Previous match",
+                                                description: "Previous match (in-file)",
                                             },
                                             KeyBind {
                                                 key: "ctrl+c or esc",
