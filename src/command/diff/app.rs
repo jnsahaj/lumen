@@ -372,10 +372,15 @@ fn run_app_internal(
     let mut terminal = Terminal::new(CrosstermBackend::new(tui_writer))?;
 
     state.watching = options.watch;
-    let mut watch_rx = if state.watching && pr_info.is_none() {
-        setup_watcher()
+    let (mut _watch_handle, mut watch_rx) = if state.watching && pr_info.is_none() {
+        if let Some((handle, rx)) = setup_watcher() {
+            (Some(handle), Some(rx))
+        } else {
+            state.watching = false;
+            (None, None)
+        }
     } else {
-        None
+        (None, None)
     };
 
     let mut active_modal: Option<Modal> = None;
@@ -1409,11 +1414,21 @@ fn run_app_internal(
                             }
                         }
                         KeyCode::Char('w') => {
-                            state.watching = !state.watching;
-                            if state.watching && pr_info.is_none() {
-                                watch_rx = setup_watcher();
+                            if pr_info.is_some() {
+                                // PR mode doesn't support watching
                             } else {
-                                watch_rx = None;
+                                state.watching = !state.watching;
+                                if state.watching {
+                                    if let Some((handle, rx)) = setup_watcher() {
+                                        _watch_handle = Some(handle);
+                                        watch_rx = Some(rx);
+                                    } else {
+                                        state.watching = false;
+                                    }
+                                } else {
+                                    _watch_handle = None;
+                                    watch_rx = None;
+                                }
                             }
                         }
                         KeyCode::Char('h') | KeyCode::Left => {
