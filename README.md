@@ -102,7 +102,7 @@ lumen diff main..feature --stacked
 # Jump to a specific file on open
 lumen diff --focus src/main.rs
 
-# Soft-wrap long lines instead of scrolling sideways
+# Soft-wrap long lines (also settable in lumen.config.json)
 lumen diff --wrap
 ```
 
@@ -168,9 +168,8 @@ Annotated lines display a `▍` gutter indicator. Use `I` to view, edit, delete,
 
 - `j/k` or arrow keys: Navigate
 - `{/}`: Jump between hunks
-- `w`: Toggle word wrap
+- `w`: Toggle watch mode
 - `tab`: Toggle sidebar
-- `w`: Toggle word wrap
 - `space`: Mark file as viewed
 - `e`: Open file in editor
 - `y`: Copy selection (or filename)
@@ -323,6 +322,7 @@ Lumen will load configurations in the following order of priority:
   "model": "gpt-5-mini",
   "api_key": "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
   "theme": "catppuccin-mocha",
+  "wrap": true,
   "draft": {
     "commit_types": {
       "docs": "Documentation only changes",

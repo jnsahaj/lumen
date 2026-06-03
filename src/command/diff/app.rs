@@ -371,7 +371,7 @@ fn run_app_internal(
 
     let mut terminal = Terminal::new(CrosstermBackend::new(tui_writer))?;
 
-    state.watching = options.watch;
+    state.watching = options.watch && pr_info.is_none();
     let (mut _watch_handle, mut watch_rx) = if state.watching && pr_info.is_none() {
         if let Some((handle, rx)) = setup_watcher() {
             (Some(handle), Some(rx))
