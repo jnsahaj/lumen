@@ -813,10 +813,14 @@ fn run_app_internal(
                                     file_index,
                                     sbs_line_index,
                                     panel: _panel,
-                                    query,
                                 } => {
-                                    // Reveal + switch to the target file and scroll the
-                                    // matched sbs line into view.
+                                    // Reveal + switch to the target file, then pin the
+                                    // matched sbs line to the top of the content area.
+                                    // The diff view renders sticky-context rows and any
+                                    // file-level annotation slots ABOVE scroll=0, so
+                                    // setting scroll = sbs_line_index lands the line
+                                    // right beneath those — exactly where the user
+                                    // expects "pinned to the top" to be.
                                     state.reveal_file(file_index);
                                     state.select_file(file_index);
                                     if let Some(idx) =
@@ -828,26 +832,13 @@ fn run_app_internal(
                                         ensure_sidebar_visible(&mut state, visible_height);
                                     }
                                     // Compute max_scroll for the just-switched file
-                                    // before adjusting scroll.
+                                    // before pinning scroll, so we don't overscroll
+                                    // past the last visible row.
                                     state.ensure_cache();
                                     let sbs_len = state.side_by_side_ref().len();
                                     let vh = terminal.size()?.height.saturating_sub(5) as usize;
-                                    let max_scroll = sbs_len.saturating_sub(vh);
-                                    state.scroll = adjust_scroll_to_line(
-                                        sbs_line_index,
-                                        state.scroll,
-                                        vh,
-                                        max_scroll,
-                                    );
-                                    // Seed the inline `/` search with the same query so
-                                    // matches stay highlighted in-context after jumping.
-                                    if !query.is_empty() {
-                                        state.search_state.clear();
-                                        for ch in query.chars() {
-                                            state.search_state.push_char(ch);
-                                        }
-                                        state.mark_search_dirty();
-                                    }
+                                    let max_scroll = sbs_len.saturating_sub(vh) as u16;
+                                    state.scroll = (sbs_line_index as u16).min(max_scroll);
                                     active_modal = None;
                                 }
                                 ModalResult::Dismissed | ModalResult::Selected(_, _) => {

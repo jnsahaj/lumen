@@ -87,13 +87,12 @@ pub enum ModalResult {
     #[allow(dead_code)]
     Selected(usize, String),
     FileSelected(usize),
-    /// User picked a result in the global search; jump to that file + line.
+    /// User picked a result in the global search; jump to that file + line
+    /// and pin the line to the top of the content area.
     JumpToLine {
         file_index: usize,
         sbs_line_index: usize,
         panel: MatchPanel,
-        /// The query at the time of selection — used to seed the inline search highlight.
-        query: String,
     },
     AnnotationJump { annotation_id: u64 },
     AnnotationEdit { annotation_id: u64 },
@@ -1295,7 +1294,6 @@ impl Modal {
                         file_index: e.file_index,
                         sbs_line_index: e.sbs_line_index,
                         panel: e.panel,
-                        query: state.query.clone(),
                     }),
                     KeyCode::PageUp => {
                         state.page_up(page_step);
