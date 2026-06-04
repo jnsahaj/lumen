@@ -90,6 +90,9 @@ lumen diff main..feature/A
 lumen diff --pr 123 # (--pr is optional)
 lumen diff https://github.com/owner/repo/pull/123
 
+# Open the PR associated with the current branch
+lumen diff --detect-pr
+
 # Filter to specific files
 lumen diff --file src/main.rs --file src/lib.rs
 
