@@ -1,11 +1,22 @@
 use std::fs;
 use std::path::Path;
 use std::process::Command;
+use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
+use std::thread;
+
+use spinoff::{spinners, Color, Spinner};
 
 use super::types::{is_binary_content, FileDiff, FileStatus};
 use super::{DiffOptions, PrInfo};
 use crate::commit_reference::CommitReference;
 use crate::vcs::VcsBackend;
+
+/// Max concurrent `gh api` requests when fetching PR file contents.
+/// GitHub's documented secondary rate limit caps concurrent requests at 100
+/// (shared across REST+GraphQL); 8 keeps us comfortably under that while
+/// still giving a large speedup over serial fetching.
+const PR_FETCH_CONCURRENCY: usize = 8;
 
 pub fn get_current_branch(backend: &dyn VcsBackend) -> String {
     backend
@@ -160,6 +171,15 @@ pub fn load_file_diffs(options: &DiffOptions, backend: &dyn VcsBackend) -> Vec<F
 pub fn load_pr_file_diffs(pr_info: &PrInfo) -> Result<Vec<FileDiff>, String> {
     let repo_arg = format!("{}/{}", pr_info.repo_owner, pr_info.repo_name);
 
+    let mut spinner = Spinner::new(
+        spinners::Dots,
+        format!(
+            "Fetching file list for {}/{}#{}",
+            pr_info.repo_owner, pr_info.repo_name, pr_info.number
+        ),
+        Color::Cyan,
+    );
+
     // Get PR diff to find changed files
     let output = Command::new("gh")
         .args([
@@ -169,18 +189,33 @@ pub fn load_pr_file_diffs(pr_info: &PrInfo) -> Result<Vec<FileDiff>, String> {
             "--repo",
             &repo_arg,
         ])
-        .output()
-        .map_err(|e| format!("Failed to run gh pr diff: {}", e))?;
+        .output();
+
+    let output = match output {
+        Ok(o) => o,
+        Err(e) => {
+            let msg = format!("Failed to run gh pr diff: {}", e);
+            spinner.fail(&msg);
+            return Err(msg);
+        }
+    };
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("gh pr diff failed: {}", stderr.trim()));
+        let msg = format!("gh pr diff failed: {}", stderr.trim());
+        spinner.fail(&msg);
+        return Err(msg);
     }
 
     let diff_output = String::from_utf8_lossy(&output.stdout);
     let changed_files = parse_changed_files_from_diff(&diff_output);
+    let n = changed_files.len();
 
-    // Fetch full file contents for each changed file
+    if n == 0 {
+        spinner.success("PR has no changed files");
+        return Ok(Vec::new());
+    }
+
     let base_repo = format!("{}/{}", pr_info.base_repo_owner, pr_info.repo_name);
     let head_repo = pr_info
         .head_repo_owner
@@ -188,14 +223,19 @@ pub fn load_pr_file_diffs(pr_info: &PrInfo) -> Result<Vec<FileDiff>, String> {
         .map(|owner| format!("{}/{}", owner, pr_info.repo_name))
         .unwrap_or_else(|| base_repo.clone());
 
+    let contents = fetch_pr_file_contents_parallel(
+        &changed_files,
+        &base_repo,
+        &pr_info.base_ref,
+        &head_repo,
+        &pr_info.head_ref,
+        &mut spinner,
+    );
+
     let file_diffs: Vec<FileDiff> = changed_files
         .into_iter()
-        .map(|filename| {
-            let old_content =
-                fetch_file_content_from_github(&base_repo, &pr_info.base_ref, &filename);
-            let new_content =
-                fetch_file_content_from_github(&head_repo, &pr_info.head_ref, &filename);
-
+        .zip(contents.into_iter())
+        .map(|(filename, (old_content, new_content))| {
             let status = if old_content.is_empty() && !new_content.is_empty() {
                 FileStatus::Added
             } else if !old_content.is_empty() && new_content.is_empty() {
@@ -216,7 +256,144 @@ pub fn load_pr_file_diffs(pr_info: &PrInfo) -> Result<Vec<FileDiff>, String> {
         })
         .collect();
 
+    spinner.success(&format!("Fetched {} files", n));
     Ok(file_diffs)
+}
+
+#[derive(Clone, Copy)]
+enum Side {
+    Old,
+    New,
+}
+
+struct FetchTask {
+    idx: usize,
+    filename: String,
+    repo: String,
+    git_ref: String,
+    side: Side,
+}
+
+enum FetchEvent {
+    Started(String),
+    Finished {
+        idx: usize,
+        side: Side,
+        filename: String,
+        content: String,
+    },
+}
+
+/// Fetch (old, new) contents for every changed file using a bounded worker
+/// pool, updating `spinner` with live progress.
+fn fetch_pr_file_contents_parallel(
+    files: &[String],
+    base_repo: &str,
+    base_ref: &str,
+    head_repo: &str,
+    head_ref: &str,
+    spinner: &mut Spinner,
+) -> Vec<(String, String)> {
+    let n = files.len();
+    let mut tasks: Vec<FetchTask> = Vec::with_capacity(2 * n);
+    for (idx, filename) in files.iter().enumerate() {
+        tasks.push(FetchTask {
+            idx,
+            filename: filename.clone(),
+            repo: base_repo.to_string(),
+            git_ref: base_ref.to_string(),
+            side: Side::Old,
+        });
+        tasks.push(FetchTask {
+            idx,
+            filename: filename.clone(),
+            repo: head_repo.to_string(),
+            git_ref: head_ref.to_string(),
+            side: Side::New,
+        });
+    }
+    // Pop from the back, so process files in listed order.
+    tasks.reverse();
+
+    let total = tasks.len();
+    let queue = Arc::new(Mutex::new(tasks));
+    let (tx, rx) = mpsc::channel::<FetchEvent>();
+
+    let worker_count = PR_FETCH_CONCURRENCY.min(total);
+    let mut handles = Vec::with_capacity(worker_count);
+    for _ in 0..worker_count {
+        let queue = Arc::clone(&queue);
+        let tx = tx.clone();
+        handles.push(thread::spawn(move || loop {
+            let task = { queue.lock().unwrap().pop() };
+            let Some(task) = task else { break };
+            let _ = tx.send(FetchEvent::Started(task.filename.clone()));
+            let content = fetch_file_content_from_github(&task.repo, &task.git_ref, &task.filename);
+            let _ = tx.send(FetchEvent::Finished {
+                idx: task.idx,
+                side: task.side,
+                filename: task.filename,
+                content,
+            });
+        }));
+    }
+    drop(tx);
+
+    let mut contents: Vec<(String, String)> = vec![(String::new(), String::new()); n];
+    let mut done = 0usize;
+    let mut in_flight: Vec<String> = Vec::new();
+    let mut last_finished: Option<String> = None;
+
+    while let Ok(ev) = rx.recv() {
+        match ev {
+            FetchEvent::Started(name) => {
+                in_flight.push(name);
+            }
+            FetchEvent::Finished {
+                idx,
+                side,
+                filename,
+                content,
+            } => {
+                if let Some(pos) = in_flight.iter().position(|f| f == &filename) {
+                    in_flight.swap_remove(pos);
+                }
+                match side {
+                    Side::Old => contents[idx].0 = content,
+                    Side::New => contents[idx].1 = content,
+                }
+                done += 1;
+                last_finished = Some(filename);
+            }
+        }
+        spinner.update_text(format_fetch_progress(done, total, &in_flight, last_finished.as_deref()));
+    }
+
+    for h in handles {
+        let _ = h.join();
+    }
+
+    contents
+}
+
+fn format_fetch_progress(
+    done: usize,
+    total: usize,
+    in_flight: &[String],
+    last_finished: Option<&str>,
+) -> String {
+    let current = if let Some(name) = in_flight.last() {
+        name.as_str()
+    } else if let Some(name) = last_finished {
+        name
+    } else {
+        ""
+    };
+    if current.is_empty() {
+        format!("Fetching files [{}/{}]", done, total)
+    } else {
+        format!("Fetching files [{}/{}] · {}", done, total, current)
+    }
 }
 
 fn fetch_file_content_from_github(repo: &str, git_ref: &str, path: &str) -> String {

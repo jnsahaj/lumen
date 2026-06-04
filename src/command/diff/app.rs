@@ -255,23 +255,9 @@ pub fn run_app_with_pr(
     pr_info: PrInfo,
     backend: &dyn VcsBackend,
 ) -> io::Result<()> {
-    let mut spinner = Spinner::new(
-        spinners::Dots,
-        format!(
-            "Fetching diff for {}/{}#{}",
-            pr_info.repo_owner, pr_info.repo_name, pr_info.number
-        ),
-        Color::Cyan,
-    );
     match load_pr_file_diffs(&pr_info) {
-        Ok(file_diffs) => {
-            spinner.success(&format!("Fetched {} files", file_diffs.len()));
-            run_app_internal(options, Some(pr_info), file_diffs, None, backend)
-        }
-        Err(e) => {
-            spinner.fail(&e);
-            std::process::exit(1);
-        }
+        Ok(file_diffs) => run_app_internal(options, Some(pr_info), file_diffs, None, backend),
+        Err(_) => std::process::exit(1),
     }
 }
 
