@@ -271,8 +271,8 @@ create_github_release() {
         git tag -d "$tag"
     fi
     
-    # Create and push tag
-    git tag "$tag"
+    # Create and push tag (use -m to avoid the editor opening for annotated tags)
+    git tag -a "$tag" -m "Release $tag"
     git push origin "$tag"
     
     # Generate release notes
