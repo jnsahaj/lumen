@@ -1804,11 +1804,13 @@ fn make_preview_row<'a>(
     // For RGB bgs (added/deleted/explicit page bg), brighten in place so the
     // green-on-green / red-on-red palette is preserved. For non-RGB bgs
     // (Color::Reset on themes that defer to the terminal default), brighten
-    // returns the color unchanged — fall back to selection_bg so the cursor
-    // row stays visible on those themes too.
+    // returns the color unchanged — fall back to a subtle theme-mode-aware
+    // gray rather than `selection_bg`, which is a saturated accent (cyan /
+    // blue) and clashes with the syntax-highlighted body.
     let (row_bg, gutter_bg) = if is_cursor {
-        let row = brighten_bg(row_bg, 18).unwrap_or(t.ui.selection_bg);
-        let gut = brighten_bg(gutter_bg, 18).unwrap_or(t.ui.selection_bg);
+        let fallback = cursor_row_fallback_bg(t);
+        let row = brighten_bg(row_bg, 18).unwrap_or(fallback);
+        let gut = brighten_bg(gutter_bg, 18).unwrap_or(fallback);
         (row, gut)
     } else {
         (row_bg, gutter_bg)
@@ -1926,6 +1928,18 @@ fn brighten_bg(c: ratatui::style::Color, amount: u8) -> Option<ratatui::style::C
             b.saturating_add(amount),
         )),
         _ => None,
+    }
+}
+
+/// Subtle neutral gray used to highlight the cursor row when the underlying
+/// row bg is the terminal default (Color::Reset). Picked to read as "slightly
+/// raised" without competing with the syntax-highlighted body.
+fn cursor_row_fallback_bg(t: &crate::command::diff::theme::Theme) -> ratatui::style::Color {
+    use crate::command::diff::theme::ThemeMode;
+    use ratatui::style::Color;
+    match t.mode {
+        ThemeMode::Dark => Color::Rgb(55, 58, 68),
+        ThemeMode::Light => Color::Rgb(225, 228, 232),
     }
 }
 
