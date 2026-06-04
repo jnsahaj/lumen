@@ -116,6 +116,10 @@ pub enum Commands {
         #[arg(long)]
         pr: Option<String>,
 
+        /// Detect the PR associated with the current branch and view it
+        #[arg(long = "detect-pr", conflicts_with = "pr")]
+        detect_pr: bool,
+
         /// Filter to specific files
         #[arg(short, long)]
         file: Option<Vec<String>>,

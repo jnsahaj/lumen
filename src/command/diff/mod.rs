@@ -28,6 +28,7 @@ use crate::vcs::VcsBackend;
 pub struct DiffOptions {
     pub reference: Option<CommitReference>,
     pub pr: Option<String>,
+    pub detect_pr: bool,
     pub file: Option<Vec<String>>,
     pub watch: bool,
     pub theme: Option<String>,
@@ -317,7 +318,46 @@ fn unmark_file_as_viewed_sync(node_id: &str, file_path: &str) -> Result<(), Stri
     Ok(())
 }
 
-pub fn run_diff_ui(options: DiffOptions, backend: &dyn VcsBackend) -> io::Result<()> {
+fn detect_current_branch_pr() -> Result<String, String> {
+    let output = Command::new("gh")
+        .args(["pr", "view", "--json", "number", "-q", ".number"])
+        .output()
+        .map_err(|e| format!("Failed to run gh: {}", e))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let msg = stderr.trim();
+        if msg.is_empty() {
+            return Err("No PR found for the current branch".to_string());
+        }
+        return Err(msg.to_string());
+    }
+    let number = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if number.is_empty() {
+        return Err("No PR found for the current branch".to_string());
+    }
+    Ok(number)
+}
+
+pub fn run_diff_ui(mut options: DiffOptions, backend: &dyn VcsBackend) -> io::Result<()> {
+    // Resolve --detect-pr into options.pr
+    if options.detect_pr && options.pr.is_none() {
+        let mut spinner = Spinner::new(
+            spinners::Dots,
+            "Detecting PR for current branch",
+            Color::Cyan,
+        );
+        match detect_current_branch_pr() {
+            Ok(number) => {
+                spinner.success(&format!("Detected PR #{}", number));
+                options.pr = Some(number);
+            }
+            Err(e) => {
+                spinner.fail(&e);
+                process::exit(1);
+            }
+        }
+    }
+
     // Handle PR mode
     if let Some(ref pr_input) = options.pr {
         let spinner_msg = match parse_pr_input(pr_input) {

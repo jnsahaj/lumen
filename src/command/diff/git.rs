@@ -529,6 +529,7 @@ mod tests {
         let options = super::super::DiffOptions {
             reference: None,
             pr: None,
+            detect_pr: false,
             file: None,
             watch: false,
             theme: None,
@@ -600,6 +601,7 @@ mod tests {
                 from: "HEAD~1".to_string(),
             }),
             pr: None,
+            detect_pr: false,
             file: None,
             watch: false,
             theme: None,

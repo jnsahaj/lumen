@@ -125,6 +125,7 @@ async fn run() -> Result<(), LumenError> {
         Commands::Diff {
             reference,
             pr,
+            detect_pr,
             file,
             watch,
             theme,
@@ -136,6 +137,7 @@ async fn run() -> Result<(), LumenError> {
             let options = command::diff::DiffOptions {
                 reference,
                 pr,
+                detect_pr,
                 file,
                 watch,
                 theme: theme.or(config.theme.clone()),
