@@ -129,7 +129,10 @@ fn resolve_origin_repo() -> Result<String, String> {
     if parts.len() >= 2 {
         Ok(format!("{}/{}", parts[0], parts[1]))
     } else {
-        Err(format!("Could not parse owner/repo from origin URL: {}", url))
+        Err(format!(
+            "Could not parse owner/repo from origin URL: {}",
+            url
+        ))
     }
 }
 
@@ -150,7 +153,10 @@ fn fetch_pr_info(pr_input: &str, repo_override: Option<&str>) -> Result<PrInfo, 
     let (repo_owner, repo_name) = {
         let parts: Vec<&str> = repo_full.split('/').collect();
         if parts.len() != 2 {
-            return Err(PrError::InvalidRef(format!("Invalid repo format: {}", repo_full)));
+            return Err(PrError::InvalidRef(format!(
+                "Invalid repo format: {}",
+                repo_full
+            )));
         }
         (
             owner.unwrap_or_else(|| parts[0].to_string()),
@@ -171,7 +177,10 @@ fn fetch_pr_info(pr_input: &str, repo_override: Option<&str>) -> Result<PrInfo, 
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(PrError::Other(format!("gh api graphql failed: {}", stderr.trim())));
+        return Err(PrError::Other(format!(
+            "gh api graphql failed: {}",
+            stderr.trim()
+        )));
     }
 
     let json_str = String::from_utf8_lossy(&output.stdout);
@@ -244,13 +253,17 @@ fn detect_current_branch_pr() -> Result<String, PrError> {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let msg = stderr.trim();
         if msg.is_empty() {
-            return Err(PrError::NotFound("No PR found for the current branch".to_string()));
+            return Err(PrError::NotFound(
+                "No PR found for the current branch".to_string(),
+            ));
         }
         return Err(PrError::Other(msg.to_string()));
     }
     let number = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if number.is_empty() {
-        return Err(PrError::NotFound("No PR found for the current branch".to_string()));
+        return Err(PrError::NotFound(
+            "No PR found for the current branch".to_string(),
+        ));
     }
     Ok(number)
 }
@@ -282,7 +295,10 @@ fn fetch_viewed_files(pr_info: &PrInfo) -> Result<HashSet<String>, PrError> {
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(PrError::Other(format!("gh api graphql failed: {}", stderr.trim())));
+        return Err(PrError::Other(format!(
+            "gh api graphql failed: {}",
+            stderr.trim()
+        )));
     }
 
     let json_str = String::from_utf8_lossy(&output.stdout);
@@ -547,7 +563,12 @@ fn fetch_pr_file_contents_parallel(
                 last_finished = Some(filename);
             }
         }
-        spinner.update_text(format_fetch_progress(done, total, &in_flight, last_finished.as_deref()));
+        spinner.update_text(format_fetch_progress(
+            done,
+            total,
+            &in_flight,
+            last_finished.as_deref(),
+        ));
     }
 
     for h in handles {

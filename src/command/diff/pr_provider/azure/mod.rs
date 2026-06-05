@@ -33,9 +33,9 @@ impl AzureProvider {
         }
         // Bare PR number: take the coordinates from --origin (if it's an Azure
         // URL) or from the git `origin` remote.
-        let id = input
-            .parse::<u64>()
-            .map_err(|_| PrError::InvalidRef(format!("Invalid Azure DevOps PR reference: {}", input)))?;
+        let id = input.parse::<u64>().map_err(|_| {
+            PrError::InvalidRef(format!("Invalid Azure DevOps PR reference: {}", input))
+        })?;
         let remote = repo_override
             .filter(|o| self.matches_origin(o))
             .map(|s| s.to_string())
@@ -44,8 +44,9 @@ impl AzureProvider {
                 "Could not determine Azure DevOps repository. Run inside the repo or pass a PR URL."
                     .to_string()
             })?;
-        let mut parsed = parse_azure_remote(&remote)
-            .ok_or_else(|| PrError::InvalidRef(format!("Could not parse Azure DevOps remote: {}", remote)))?;
+        let mut parsed = parse_azure_remote(&remote).ok_or_else(|| {
+            PrError::InvalidRef(format!("Could not parse Azure DevOps remote: {}", remote))
+        })?;
         parsed.id = Some(id);
         Ok(parsed)
     }
@@ -96,16 +97,21 @@ impl PrProvider for AzureProvider {
             .map(|s| s.to_string())
             .or_else(read_origin_url)
             .ok_or_else(|| "Could not determine Azure DevOps repository.".to_string())?;
-        let az = parse_azure_remote(&remote)
-            .ok_or_else(|| PrError::InvalidRef(format!("Could not parse Azure DevOps remote: {}", remote)))?;
+        let az = parse_azure_remote(&remote).ok_or_else(|| {
+            PrError::InvalidRef(format!("Could not parse Azure DevOps remote: {}", remote))
+        })?;
 
         let branch_out = Command::new("git")
             .args(["rev-parse", "--abbrev-ref", "HEAD"])
             .output()
             .map_err(|e| format!("Failed to run git: {}", e))?;
-        let branch = String::from_utf8_lossy(&branch_out.stdout).trim().to_string();
+        let branch = String::from_utf8_lossy(&branch_out.stdout)
+            .trim()
+            .to_string();
         if branch.is_empty() {
-            return Err(PrError::Other("Could not determine the current branch".to_string()));
+            return Err(PrError::Other(
+                "Could not determine the current branch".to_string(),
+            ));
         }
 
         let id = client::detect_active_pr(&az.org_url, &az.project, &az.repo, &branch)?;
@@ -269,8 +275,9 @@ mod tests {
 
     #[test]
     fn parse_azure_visualstudio_url() {
-        let r = parse_azure_url("https://myorg.visualstudio.com/MyProject/_git/myrepo/pullrequest/9")
-            .expect("should parse");
+        let r =
+            parse_azure_url("https://myorg.visualstudio.com/MyProject/_git/myrepo/pullrequest/9")
+                .expect("should parse");
         assert_eq!(r.org_url, "https://myorg.visualstudio.com");
         assert_eq!(r.project, "MyProject");
         assert_eq!(r.repo, "myrepo");

@@ -23,8 +23,8 @@ use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
 use crate::command::diff::git::{build_file_diff, percent_encode};
-use crate::command::diff::types::FileDiff;
 use crate::command::diff::pr_provider::{PrError, ProviderData};
+use crate::command::diff::types::FileDiff;
 use crate::command::diff::PrInfo;
 
 const API_VERSION: &str = "7.1";
@@ -100,7 +100,8 @@ impl AdoClient {
         if !status.is_success() {
             return Err(auth_hint(status, &body));
         }
-        serde_json::from_str(&body).map_err(|e| PrError::Other(format!("invalid JSON from Azure: {}", e)))
+        serde_json::from_str(&body)
+            .map_err(|e| PrError::Other(format!("invalid JSON from Azure: {}", e)))
     }
 
     /// Fetch a blob's text content. An absent `blob_id` (the missing side of an
@@ -112,7 +113,11 @@ impl AdoClient {
         };
         let url = format!(
             "{}?$format=text&api-version={}",
-            self.git_url(&format!("repositories/{}/blobs/{}", percent_encode(&self.repo), blob_id)),
+            self.git_url(&format!(
+                "repositories/{}/blobs/{}",
+                percent_encode(&self.repo),
+                blob_id
+            )),
             API_VERSION
         );
         let resp = self
@@ -203,7 +208,10 @@ impl AdoClient {
             let client = self.clone();
             let sem = Arc::clone(&sem);
             set.spawn(async move {
-                let _permit = sem.acquire_owned().await.expect("blob semaphore not closed");
+                let _permit = sem
+                    .acquire_owned()
+                    .await
+                    .expect("blob semaphore not closed");
                 let old = client.blob_text(change.old_blob.as_deref()).await?;
                 let new = client.blob_text(change.new_blob.as_deref()).await?;
                 Ok((idx, build_file_diff(change.path, old, new)))
@@ -319,7 +327,10 @@ pub fn detect_active_pr(
     block_on(async move {
         let url = format!(
             "{}?searchCriteria.status=active&searchCriteria.sourceRefName={}&api-version={}",
-            client.git_url(&format!("repositories/{}/pullrequests", percent_encode(repo))),
+            client.git_url(&format!(
+                "repositories/{}/pullrequests",
+                percent_encode(repo)
+            )),
             percent_encode(&format!("refs/heads/{}", branch)),
             API_VERSION
         );
@@ -404,9 +415,9 @@ fn auth_hint(status: reqwest::StatusCode, body: &str) -> PrError {
         StatusCode::FORBIDDEN => PrError::Auth(
             "Azure DevOps returned 403. The token lacks access to this repository.".to_string(),
         ),
-        StatusCode::NOT_FOUND => PrError::NotFound(
-            "Azure DevOps returned 404 (PR or repository not found).".to_string(),
-        ),
+        StatusCode::NOT_FOUND => {
+            PrError::NotFound("Azure DevOps returned 404 (PR or repository not found).".to_string())
+        }
         _ => {
             let snippet: String = body.chars().take(200).collect();
             PrError::Other(format!(
@@ -473,7 +484,10 @@ mod tests {
     #[test]
     fn encodes_segments() {
         assert_eq!(percent_encode("My Project"), "My%20Project");
-        assert_eq!(percent_encode("refs/heads/feature/x"), "refs%2Fheads%2Ffeature%2Fx");
+        assert_eq!(
+            percent_encode("refs/heads/feature/x"),
+            "refs%2Fheads%2Ffeature%2Fx"
+        );
         assert_eq!(percent_encode("simple-repo.git"), "simple-repo.git");
     }
 }

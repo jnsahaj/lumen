@@ -150,7 +150,11 @@ fn read_origin_url() -> Option<String> {
 fn provider_for_origin(repo_override: Option<&str>) -> &'static dyn PrProvider {
     let candidates = [repo_override.map(|s| s.to_string()), read_origin_url()];
     for candidate in candidates.into_iter().flatten() {
-        if let Some(p) = PROVIDERS.iter().copied().find(|p| p.matches_origin(&candidate)) {
+        if let Some(p) = PROVIDERS
+            .iter()
+            .copied()
+            .find(|p| p.matches_origin(&candidate))
+        {
             return p;
         }
     }
@@ -221,7 +225,9 @@ mod tests {
     fn is_pr_reference_detects_forms() {
         assert!(is_pr_reference("123"));
         assert!(is_pr_reference("https://github.com/o/r/pull/1"));
-        assert!(is_pr_reference("https://dev.azure.com/o/p/_git/r/pullrequest/1"));
+        assert!(is_pr_reference(
+            "https://dev.azure.com/o/p/_git/r/pullrequest/1"
+        ));
         assert!(!is_pr_reference("main..feature"));
     }
 }
