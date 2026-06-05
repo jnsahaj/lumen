@@ -108,11 +108,13 @@ pub enum Commands {
     /// Launch interactive side-by-side diff viewer
     Diff {
         /// Commit reference: SHA, HEAD, HEAD~3..HEAD, main..feature, main...feature
-        /// Can also be a PR number or URL (e.g., 123 or https://github.com/owner/repo/pull/123)
+        /// Can also be a PR number or URL (GitHub: 123 or
+        /// https://github.com/owner/repo/pull/123; Azure DevOps:
+        /// https://dev.azure.com/org/project/_git/repo/pullrequest/123)
         #[arg(value_parser = clap::value_parser!(CommitReference))]
         reference: Option<CommitReference>,
 
-        /// View a GitHub pull request (number or URL)
+        /// View a pull request (number or URL; GitHub via `gh`, Azure DevOps via its REST API)
         #[arg(long)]
         pr: Option<String>,
 

@@ -12,7 +12,7 @@ A fast terminal diff viewer and code review TUI, written in Rust.
 Review `git diff`, commits, branches, or GitHub PRs side-by-side without leaving your terminal. Ships as a single static Rust binary and stays snappy on multi-thousand-line diffs.
 
 - Side-by-side diff viewer with tree-sitter syntax highlighting
-- Review GitHub Pull Requests with `lumen diff --pr 123`
+- Review GitHub and Azure DevOps Pull Requests with `lumen diff --pr 123`
 - Annotate selections, hunks, or whole files
 - Watch mode and stacked-commit review
 - Optional AI commit messages and change explanations (10+ providers)
@@ -52,6 +52,8 @@ Before you begin, ensure you have:
 1. `git` installed on your system
 2. [fzf](https://github.com/junegunn/fzf) (optional) - Required for `lumen explain --list` command
 3. [mdcat](https://github.com/swsnr/mdcat) (optional) - Required for pretty output formatting
+4. [GitHub CLI (`gh`)](https://cli.github.com/) (optional) - Required for reviewing GitHub Pull Requests
+5. Azure DevOps Pull Requests (optional) - Authenticate with either a Personal Access Token (`ADO_PAT`, scope: *Code → Read*) or the [Azure CLI (`az`)](https://learn.microsoft.com/cli/azure/) signed in via `az login`. The `azure-devops` extension is **not** required.
 
 ### Installation
 
@@ -86,9 +88,10 @@ lumen diff HEAD~1
 # View changes between branches
 lumen diff main..feature/A
 
-# View changes in a GitHub Pull Request
+# View changes in a Pull Request (GitHub or Azure DevOps)
 lumen diff --pr 123 # (--pr is optional)
 lumen diff https://github.com/owner/repo/pull/123
+lumen diff https://dev.azure.com/org/project/_git/repo/pullrequest/123
 
 # Open the PR associated with the current branch
 lumen diff --detect-pr

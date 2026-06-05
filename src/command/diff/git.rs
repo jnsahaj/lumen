@@ -141,6 +141,26 @@ pub fn get_new_content(filename: &str, refs: &DiffRefs, backend: &dyn VcsBackend
     }
 }
 
+/// Assemble a `FileDiff` from a filename and its two sides, deriving the file
+/// status and binary flag from the contents.
+pub fn build_file_diff(filename: String, old_content: String, new_content: String) -> FileDiff {
+    let status = if old_content.is_empty() && !new_content.is_empty() {
+        FileStatus::Added
+    } else if !old_content.is_empty() && new_content.is_empty() {
+        FileStatus::Deleted
+    } else {
+        FileStatus::Modified
+    };
+    let is_binary = is_binary_content(&old_content) || is_binary_content(&new_content);
+    FileDiff {
+        filename,
+        old_content,
+        new_content,
+        status,
+        is_binary,
+    }
+}
+
 pub fn load_file_diffs(options: &DiffOptions, backend: &dyn VcsBackend) -> Vec<FileDiff> {
     let refs = DiffRefs::from_options(options, backend);
     get_changed_files(options, backend)
@@ -148,27 +168,14 @@ pub fn load_file_diffs(options: &DiffOptions, backend: &dyn VcsBackend) -> Vec<F
         .map(|filename| {
             let old_content = get_old_content(&filename, &refs, backend);
             let new_content = get_new_content(&filename, &refs, backend);
-            let status = if old_content.is_empty() && !new_content.is_empty() {
-                FileStatus::Added
-            } else if !old_content.is_empty() && new_content.is_empty() {
-                FileStatus::Deleted
-            } else {
-                FileStatus::Modified
-            };
-            let is_binary =
-                is_binary_content(&old_content) || is_binary_content(&new_content);
-            FileDiff {
-                filename,
-                old_content,
-                new_content,
-                status,
-                is_binary,
-            }
+            build_file_diff(filename, old_content, new_content)
         })
         .collect()
 }
 
-pub fn load_pr_file_diffs(pr_info: &PrInfo) -> Result<Vec<FileDiff>, String> {
+/// GitHub implementation of PR diff loading: list changed files via `gh pr
+/// diff`, then fetch each file's base/head content via the GitHub contents API.
+pub fn github_load_pr_file_diffs(pr_info: &PrInfo) -> Result<Vec<FileDiff>, String> {
     let repo_arg = format!("{}/{}", pr_info.repo_owner, pr_info.repo_name);
 
     let mut spinner = Spinner::new(
@@ -236,23 +243,7 @@ pub fn load_pr_file_diffs(pr_info: &PrInfo) -> Result<Vec<FileDiff>, String> {
         .into_iter()
         .zip(contents.into_iter())
         .map(|(filename, (old_content, new_content))| {
-            let status = if old_content.is_empty() && !new_content.is_empty() {
-                FileStatus::Added
-            } else if !old_content.is_empty() && new_content.is_empty() {
-                FileStatus::Deleted
-            } else {
-                FileStatus::Modified
-            };
-
-            let is_binary =
-                is_binary_content(&old_content) || is_binary_content(&new_content);
-            FileDiff {
-                filename,
-                old_content,
-                new_content,
-                status,
-                is_binary,
-            }
+            build_file_diff(filename, old_content, new_content)
         })
         .collect();
 
@@ -473,23 +464,7 @@ pub fn load_single_commit_diffs(
                 .get_file_content_at_ref(commit_id, path)
                 .unwrap_or_default();
 
-            let status = if old_content.is_empty() && !new_content.is_empty() {
-                FileStatus::Added
-            } else if !old_content.is_empty() && new_content.is_empty() {
-                FileStatus::Deleted
-            } else {
-                FileStatus::Modified
-            };
-
-            let is_binary =
-                is_binary_content(&old_content) || is_binary_content(&new_content);
-            FileDiff {
-                filename,
-                old_content,
-                new_content,
-                status,
-                is_binary,
-            }
+            build_file_diff(filename, old_content, new_content)
         })
         .collect()
 }

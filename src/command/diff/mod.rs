@@ -1,11 +1,13 @@
 mod annotation;
 mod app;
+mod azure;
 mod context;
 mod coordinates;
 mod diff_algo;
 pub mod git;
 mod global_search;
 pub mod highlight;
+pub mod pr_provider;
 mod render;
 mod search;
 mod state;
@@ -18,12 +20,15 @@ mod watcher;
 use std::collections::HashSet;
 use std::io;
 use std::process::{self, Command};
-use std::thread;
 
 use spinoff::{spinners, Color, Spinner};
 
 use crate::commit_reference::CommitReference;
 use crate::vcs::VcsBackend;
+
+pub use pr_provider::{
+    fetch_viewed_files, mark_file_as_viewed_async, unmark_file_as_viewed_async, ProviderKind,
+};
 
 pub struct DiffOptions {
     pub reference: Option<CommitReference>,
@@ -40,6 +45,7 @@ pub struct DiffOptions {
 
 #[derive(Clone)]
 pub struct PrInfo {
+    pub provider: ProviderKind,
     pub number: u64,
     pub node_id: String,
     pub repo_owner: String,
@@ -48,9 +54,13 @@ pub struct PrInfo {
     pub head_ref: String,
     pub base_repo_owner: String,
     pub head_repo_owner: Option<String>, // None if head repo was deleted (fork deleted)
+    /// Azure DevOps project (None for GitHub).
+    pub project: Option<String>,
+    /// Azure DevOps organisation base URL, e.g. `https://dev.azure.com/org`.
+    pub org_url: Option<String>,
 }
 
-fn parse_pr_input(input: &str) -> Option<(Option<String>, Option<String>, u64)> {
+fn github_parse_pr_input(input: &str) -> Option<(Option<String>, Option<String>, u64)> {
     // Try to parse as a URL first
     if input.starts_with("http://") || input.starts_with("https://") {
         // Extract PR number and repo info from URL
@@ -78,7 +88,7 @@ fn parse_pr_input(input: &str) -> Option<(Option<String>, Option<String>, u64)> 
     }
 }
 
-fn resolve_origin_repo() -> Result<String, String> {
+fn github_resolve_origin_repo() -> Result<String, String> {
     let output = Command::new("git")
         .args(["remote", "get-url", "origin"])
         .output()
@@ -104,8 +114,11 @@ fn resolve_origin_repo() -> Result<String, String> {
     }
 }
 
-fn fetch_pr_info(pr_input: &str, repo_override: Option<&str>) -> Result<PrInfo, String> {
-    let (owner, repo, number) = parse_pr_input(pr_input).ok_or_else(|| {
+pub(crate) fn github_fetch_pr_info(
+    pr_input: &str,
+    repo_override: Option<&str>,
+) -> Result<PrInfo, String> {
+    let (owner, repo, number) = github_parse_pr_input(pr_input).ok_or_else(|| {
         format!(
             "Invalid PR reference: {}. Use a PR number or URL.",
             pr_input
@@ -115,7 +128,7 @@ fn fetch_pr_info(pr_input: &str, repo_override: Option<&str>) -> Result<PrInfo, 
     let repo_full = match (&owner, &repo, repo_override) {
         (Some(o), Some(r), _) => format!("{}/{}", o, r),
         (_, _, Some(r)) => r.to_string(),
-        _ => resolve_origin_repo()?,
+        _ => github_resolve_origin_repo()?,
     };
 
     let (repo_owner, repo_name) = {
@@ -161,6 +174,7 @@ fn fetch_pr_info(pr_input: &str, repo_override: Option<&str>) -> Result<PrInfo, 
     let head_repo_owner = extract_nested_login(&json_str, "headRepository");
 
     Ok(PrInfo {
+        provider: ProviderKind::GitHub,
         number,
         node_id,
         repo_owner,
@@ -169,6 +183,8 @@ fn fetch_pr_info(pr_input: &str, repo_override: Option<&str>) -> Result<PrInfo, 
         head_ref,
         base_repo_owner,
         head_repo_owner,
+        project: None,
+        org_url: None,
     })
 }
 
@@ -206,7 +222,7 @@ fn extract_nested_login(json: &str, parent_key: &str) -> Option<String> {
 }
 
 /// Fetch the list of files that are marked as viewed on GitHub
-pub fn fetch_viewed_files(pr_info: &PrInfo) -> Result<HashSet<String>, String> {
+pub(crate) fn github_fetch_viewed_files(pr_info: &PrInfo) -> Result<HashSet<String>, String> {
     let query = format!(
         r#"query {{ repository(owner: "{}", name: "{}") {{ pullRequest(number: {}) {{ files(first: 100) {{ nodes {{ path viewerViewedState }} }} }} }} }}"#,
         pr_info.repo_owner, pr_info.repo_name, pr_info.number
@@ -258,28 +274,11 @@ pub fn fetch_viewed_files(pr_info: &PrInfo) -> Result<HashSet<String>, String> {
     Ok(viewed_files)
 }
 
-/// Mark a file as viewed on GitHub PR (non-blocking, spawns a thread)
-pub fn mark_file_as_viewed_async(pr_info: &PrInfo, file_path: &str) {
-    let node_id = pr_info.node_id.clone();
-    let path = file_path.to_string();
-
-    thread::spawn(move || {
-        let _ = mark_file_as_viewed_sync(&node_id, &path);
-    });
-}
-
-/// Unmark a file as viewed on GitHub PR (non-blocking, spawns a thread)
-pub fn unmark_file_as_viewed_async(pr_info: &PrInfo, file_path: &str) {
-    let node_id = pr_info.node_id.clone();
-    let path = file_path.to_string();
-
-    thread::spawn(move || {
-        let _ = unmark_file_as_viewed_sync(&node_id, &path);
-    });
-}
-
 /// Mark a file as viewed on GitHub PR (blocking)
-fn mark_file_as_viewed_sync(node_id: &str, file_path: &str) -> Result<(), String> {
+pub(crate) fn github_mark_file_as_viewed_sync(
+    node_id: &str,
+    file_path: &str,
+) -> Result<(), String> {
     let mutation = format!(
         r#"mutation {{ markFileAsViewed(input: {{ pullRequestId: "{}", path: "{}" }}) {{ clientMutationId }} }}"#,
         node_id, file_path
@@ -299,7 +298,10 @@ fn mark_file_as_viewed_sync(node_id: &str, file_path: &str) -> Result<(), String
 }
 
 /// Unmark a file as viewed on GitHub PR (blocking)
-fn unmark_file_as_viewed_sync(node_id: &str, file_path: &str) -> Result<(), String> {
+pub(crate) fn github_unmark_file_as_viewed_sync(
+    node_id: &str,
+    file_path: &str,
+) -> Result<(), String> {
     let mutation = format!(
         r#"mutation {{ unmarkFileAsViewed(input: {{ pullRequestId: "{}", path: "{}" }}) {{ clientMutationId }} }}"#,
         node_id, file_path
@@ -318,7 +320,7 @@ fn unmark_file_as_viewed_sync(node_id: &str, file_path: &str) -> Result<(), Stri
     Ok(())
 }
 
-fn detect_current_branch_pr() -> Result<String, String> {
+pub(crate) fn github_detect_current_branch_pr() -> Result<String, String> {
     let output = Command::new("gh")
         .args(["pr", "view", "--json", "number", "-q", ".number"])
         .output()
@@ -346,7 +348,7 @@ pub fn run_diff_ui(mut options: DiffOptions, backend: &dyn VcsBackend) -> io::Re
             "Detecting PR for current branch",
             Color::Cyan,
         );
-        match detect_current_branch_pr() {
+        match pr_provider::detect_current_branch_pr(options.origin.as_deref()) {
             Ok(number) => {
                 spinner.success(&format!("Detected PR #{}", number));
                 options.pr = Some(number);
@@ -360,17 +362,8 @@ pub fn run_diff_ui(mut options: DiffOptions, backend: &dyn VcsBackend) -> io::Re
 
     // Handle PR mode
     if let Some(ref pr_input) = options.pr {
-        let spinner_msg = match parse_pr_input(pr_input) {
-            Some((Some(owner), Some(repo), number)) => {
-                format!("Fetching PR {}/{}#{}", owner, repo, number)
-            }
-            Some((_, _, number)) => {
-                format!("Fetching PR #{}", number)
-            }
-            None => "Fetching PR".to_string(),
-        };
-        let mut spinner = Spinner::new(spinners::Dots, spinner_msg, Color::Cyan);
-        match fetch_pr_info(pr_input, options.origin.as_deref()) {
+        let mut spinner = Spinner::new(spinners::Dots, "Fetching PR metadata", Color::Cyan);
+        match pr_provider::fetch_pr_info(pr_input, options.origin.as_deref()) {
             Ok(pr_info) => {
                 spinner.success("Fetched PR metadata");
                 return app::run_app_with_pr(options, pr_info, backend);
@@ -384,18 +377,9 @@ pub fn run_diff_ui(mut options: DiffOptions, backend: &dyn VcsBackend) -> io::Re
 
     // Also check if the reference looks like a PR (number or URL)
     if let Some(CommitReference::Single(ref input)) = options.reference {
-        if input.contains("/pull/") || input.parse::<u64>().is_ok() {
-            let spinner_msg = match parse_pr_input(input) {
-                Some((Some(owner), Some(repo), number)) => {
-                    format!("Fetching PR {}/{}#{}", owner, repo, number)
-                }
-                Some((_, _, number)) => {
-                    format!("Fetching PR #{}", number)
-                }
-                None => "Fetching PR".to_string(),
-            };
-            let mut spinner = Spinner::new(spinners::Dots, spinner_msg, Color::Cyan);
-            match fetch_pr_info(input, options.origin.as_deref()) {
+        if pr_provider::is_pr_reference(input) {
+            let mut spinner = Spinner::new(spinners::Dots, "Fetching PR metadata", Color::Cyan);
+            match pr_provider::fetch_pr_info(input, options.origin.as_deref()) {
                 Ok(pr_info) => {
                     spinner.success("Fetched PR metadata");
                     return app::run_app_with_pr(options, pr_info, backend);

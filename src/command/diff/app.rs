@@ -37,10 +37,9 @@ fn open_tui_writer() -> io::Result<Box<dyn Write + Send>> {
 
 use super::annotation::{AnnotationEditor, AnnotationEditorResult};
 use super::coordinates::{extract_selected_text, PanelLayout};
-use super::git::{
-    get_current_branch, load_file_diffs, load_pr_file_diffs, load_single_commit_diffs,
-};
+use super::git::{get_current_branch, load_file_diffs, load_single_commit_diffs};
 use super::highlight;
+use super::pr_provider::{load_pr_file_diffs, pr_file_web_url};
 use super::render::{
     render_diff, render_empty_state, truncate_path, FilePickerItem, KeyBind, KeyBindSection, Modal,
     ModalContent, ModalFileStatus, ModalResult,
@@ -281,8 +280,9 @@ pub fn run_app_stacked(
     run_app_internal(options, None, file_diffs, Some(commits), backend)
 }
 
-/// Sync viewed files from GitHub to local state
-fn sync_viewed_files_from_github(pr_info: &PrInfo, state: &mut AppState) {
+/// Sync per-file viewed state from the hosting provider into local state.
+/// No-op for providers without viewed-file support (e.g. Azure DevOps).
+fn sync_viewed_files_from_provider(pr_info: &PrInfo, state: &mut AppState) {
     if let Ok(viewed_paths) = fetch_viewed_files(pr_info) {
         state.viewed_files.clear();
         for (idx, diff) in state.file_diffs.iter().enumerate() {
@@ -329,14 +329,14 @@ fn run_app_internal(
         state.init_stacked_mode(commits);
     }
 
-    // Load viewed files from GitHub on startup in PR mode (before TUI starts)
+    // Load viewed files from the provider on startup in PR mode (before TUI starts)
     if let Some(ref pr) = pr_info {
         let mut spinner = Spinner::new(
             spinners::Dots,
             format!("Syncing viewed status for {} files", state.file_diffs.len()),
             Color::Cyan,
         );
-        sync_viewed_files_from_github(pr, &mut state);
+        sync_viewed_files_from_provider(pr, &mut state);
         let viewed_count = state.viewed_files.len();
         spinner.success(&format!("{} files marked as viewed", viewed_count));
     }
@@ -389,7 +389,7 @@ fn run_app_internal(
 
         if state.needs_reload {
             let file_diffs = if let Some(ref pr) = pr_info {
-                // In PR mode, reload from GitHub
+                // In PR mode, reload from the hosting provider
                 match load_pr_file_diffs(pr) {
                     Ok(diffs) => diffs,
                     Err(e) => {
@@ -407,7 +407,7 @@ fn run_app_internal(
 
             // Re-sync viewed files from GitHub in PR mode
             if let Some(ref pr) = pr_info {
-                sync_viewed_files_from_github(pr, &mut state);
+                sync_viewed_files_from_provider(pr, &mut state);
             }
         }
 
@@ -1960,14 +1960,9 @@ fn run_app_internal(
                             if let Some(ref pr) = pr_info {
                                 if !state.file_diffs.is_empty() {
                                     let filename = &state.file_diffs[state.current_file].filename;
-                                    let file_url = format!(
-                                        "https://github.com/{}/{}/pull/{}/files#diff-{}",
-                                        pr.repo_owner,
-                                        pr.repo_name,
-                                        pr.number,
-                                        generate_file_anchor(filename)
-                                    );
-                                    let _ = open_url(&file_url);
+                                    if let Some(file_url) = pr_file_web_url(pr, filename) {
+                                        let _ = open_url(&file_url);
+                                    }
                                 }
                             }
                         }
@@ -2235,12 +2230,4 @@ fn open_url(url: &str) -> io::Result<()> {
             .spawn()?;
     }
     Ok(())
-}
-
-fn generate_file_anchor(filename: &str) -> String {
-    use sha2::{Digest, Sha256};
-
-    let mut hasher = Sha256::new();
-    hasher.update(filename.as_bytes());
-    format!("{:x}", hasher.finalize())
 }
