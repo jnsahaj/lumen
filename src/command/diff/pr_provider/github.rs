@@ -6,6 +6,7 @@ use std::process::Command;
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 
+use serde::Deserialize;
 use spinoff::{spinners, Color, Spinner};
 
 use crate::command::diff::git::build_file_diff;
@@ -136,6 +137,43 @@ fn resolve_origin_repo() -> Result<String, String> {
     }
 }
 
+/// The `gh api graphql` response envelope: `{ "data": { ... } }`.
+#[derive(Deserialize)]
+struct GraphQl<T> {
+    data: Option<T>,
+}
+
+#[derive(Deserialize)]
+struct RepoNode<T> {
+    repository: Option<PullRequestNode<T>>,
+}
+
+#[derive(Deserialize)]
+struct PullRequestNode<T> {
+    #[serde(rename = "pullRequest")]
+    pull_request: Option<T>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PrNode {
+    id: String,
+    base_ref_name: Option<String>,
+    head_ref_name: Option<String>,
+    base_repository: Option<RepoOwner>,
+    head_repository: Option<RepoOwner>,
+}
+
+#[derive(Deserialize)]
+struct RepoOwner {
+    owner: Owner,
+}
+
+#[derive(Deserialize)]
+struct Owner {
+    login: String,
+}
+
 fn fetch_pr_info(pr_input: &str, repo_override: Option<&str>) -> Result<PrInfo, PrError> {
     let (owner, repo, number) = parse_pr_input(pr_input).ok_or_else(|| {
         PrError::InvalidRef(format!(
@@ -183,65 +221,28 @@ fn fetch_pr_info(pr_input: &str, repo_override: Option<&str>) -> Result<PrInfo, 
         )));
     }
 
-    let json_str = String::from_utf8_lossy(&output.stdout);
-
-    // Parse the GraphQL response
-    let node_id = extract_json_string(&json_str, "id")
-        .ok_or_else(|| "Could not parse PR node ID from GraphQL response".to_string())?;
-    let base_ref =
-        extract_json_string(&json_str, "baseRefName").unwrap_or_else(|| "base".to_string());
-    let head_ref =
-        extract_json_string(&json_str, "headRefName").unwrap_or_else(|| "head".to_string());
-
-    // Extract repo owners from nested structure
-    let base_repo_owner =
-        extract_nested_login(&json_str, "baseRepository").unwrap_or_else(|| repo_owner.clone());
-    let head_repo_owner = extract_nested_login(&json_str, "headRepository");
+    let resp: GraphQl<RepoNode<PrNode>> = serde_json::from_slice(&output.stdout)
+        .map_err(|e| PrError::Other(format!("could not parse gh graphql response: {}", e)))?;
+    let pr = resp
+        .data
+        .and_then(|d| d.repository)
+        .and_then(|r| r.pull_request)
+        .ok_or_else(|| PrError::NotFound(format!("PR #{} not found", number)))?;
 
     Ok(PrInfo {
         provider: &GitHubProvider,
         number,
-        repo_owner,
+        repo_owner: repo_owner.clone(),
         repo_name,
-        base_ref,
-        head_ref,
-        base_repo_owner,
-        head_repo_owner,
-        data: ProviderData::GitHub { node_id },
+        base_ref: pr.base_ref_name.unwrap_or_else(|| "base".to_string()),
+        head_ref: pr.head_ref_name.unwrap_or_else(|| "head".to_string()),
+        base_repo_owner: pr
+            .base_repository
+            .map(|r| r.owner.login)
+            .unwrap_or(repo_owner),
+        head_repo_owner: pr.head_repository.map(|r| r.owner.login),
+        data: ProviderData::GitHub { node_id: pr.id },
     })
-}
-
-fn extract_json_string(json: &str, key: &str) -> Option<String> {
-    let pattern = format!("\"{}\":\"", key);
-    if let Some(start) = json.find(&pattern) {
-        let value_start = start + pattern.len();
-        if let Some(end) = json[value_start..].find('"') {
-            return Some(json[value_start..value_start + end].to_string());
-        }
-    }
-    None
-}
-
-fn extract_nested_login(json: &str, parent_key: &str) -> Option<String> {
-    // Look for pattern like "baseRepository":{"owner":{"login":"username"}}
-    // or handle null case like "headRepository":null
-    let pattern = format!("\"{}\":", parent_key);
-    if let Some(start) = json.find(&pattern) {
-        let after_key = &json[start + pattern.len()..];
-        // Check if it's null
-        if after_key.trim_start().starts_with("null") {
-            return None;
-        }
-        // Look for login within this section
-        if let Some(login_start) = after_key.find("\"login\":\"") {
-            let value_start = login_start + 9;
-            let after_login = &after_key[value_start..];
-            if let Some(end) = after_login.find('"') {
-                return Some(after_login[..end].to_string());
-            }
-        }
-    }
-    None
 }
 
 fn detect_current_branch_pr() -> Result<String, PrError> {
@@ -281,6 +282,23 @@ fn file_anchor(filename: &str) -> String {
 // Viewed-file state
 // ---------------------------------------------------------------------------
 
+#[derive(Deserialize)]
+struct PrFiles {
+    files: FileConnection,
+}
+
+#[derive(Deserialize)]
+struct FileConnection {
+    nodes: Vec<FileNode>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FileNode {
+    path: String,
+    viewer_viewed_state: String,
+}
+
 /// Fetch the list of files that are marked as viewed on GitHub
 fn fetch_viewed_files(pr_info: &PrInfo) -> Result<HashSet<String>, PrError> {
     let query = format!(
@@ -301,40 +319,20 @@ fn fetch_viewed_files(pr_info: &PrInfo) -> Result<HashSet<String>, PrError> {
         )));
     }
 
-    let json_str = String::from_utf8_lossy(&output.stdout);
+    let resp: GraphQl<RepoNode<PrFiles>> = serde_json::from_slice(&output.stdout)
+        .map_err(|e| PrError::Other(format!("could not parse gh graphql response: {}", e)))?;
+    let nodes = resp
+        .data
+        .and_then(|d| d.repository)
+        .and_then(|r| r.pull_request)
+        .map(|p| p.files.nodes)
+        .unwrap_or_default();
 
-    // Parse the response to find viewed files
-    // Look for patterns like: "path":"filename","viewerViewedState":"VIEWED"
-    let mut viewed_files = HashSet::new();
-
-    // Simple parsing: find all path/viewerViewedState pairs
-    let mut remaining = json_str.as_ref();
-    while let Some(path_start) = remaining.find("\"path\":\"") {
-        let path_value_start = path_start + 8;
-        let after_path = &remaining[path_value_start..];
-        if let Some(path_end) = after_path.find('"') {
-            let path = &after_path[..path_end];
-
-            // Look for viewerViewedState after this path
-            let after_path_str = &after_path[path_end..];
-            if let Some(state_start) = after_path_str.find("\"viewerViewedState\":\"") {
-                let state_value_start = state_start + 21;
-                let after_state = &after_path_str[state_value_start..];
-                if let Some(state_end) = after_state.find('"') {
-                    let state = &after_state[..state_end];
-                    if state == "VIEWED" {
-                        viewed_files.insert(path.to_string());
-                    }
-                }
-            }
-
-            remaining = &remaining[path_value_start + path_end..];
-        } else {
-            break;
-        }
-    }
-
-    Ok(viewed_files)
+    Ok(nodes
+        .into_iter()
+        .filter(|n| n.viewer_viewed_state == "VIEWED")
+        .map(|n| n.path)
+        .collect())
 }
 
 /// Mark a file as viewed on GitHub PR (blocking)
@@ -644,5 +642,44 @@ mod tests {
         assert!(GitHubProvider.matches_url("https://github.com/owner/repo/pull/123"));
         assert!(!GitHubProvider.matches_url("https://dev.azure.com/o/p/_git/r/pullrequest/1"));
         assert!(GitHubProvider.matches_origin("git@github.com:owner/repo.git"));
+    }
+
+    #[test]
+    fn parses_pr_info_graphql_with_deleted_head_fork() {
+        let body = serde_json::json!({
+            "data": { "repository": { "pullRequest": {
+                "id": "PR_node1", "url": "https://github.com/o/r/pull/1",
+                "baseRefName": "main", "headRefName": "feature",
+                "baseRepository": { "owner": { "login": "base-owner" } },
+                "headRepository": null
+            }}}
+        });
+        let resp: GraphQl<RepoNode<PrNode>> = serde_json::from_value(body).unwrap();
+        let pr = resp.data.unwrap().repository.unwrap().pull_request.unwrap();
+        assert_eq!(pr.id, "PR_node1");
+        assert_eq!(pr.base_ref_name.as_deref(), Some("main"));
+        assert_eq!(pr.base_repository.unwrap().owner.login, "base-owner");
+        assert!(pr.head_repository.is_none());
+    }
+
+    #[test]
+    fn parses_viewed_state_graphql() {
+        let body = serde_json::json!({
+            "data": { "repository": { "pullRequest": { "files": { "nodes": [
+                { "path": "a.rs", "viewerViewedState": "VIEWED" },
+                { "path": "b.rs", "viewerViewedState": "UNVIEWED" }
+            ]}}}}
+        });
+        let resp: GraphQl<RepoNode<PrFiles>> = serde_json::from_value(body).unwrap();
+        let nodes = resp
+            .data
+            .unwrap()
+            .repository
+            .unwrap()
+            .pull_request
+            .unwrap()
+            .files
+            .nodes;
+        assert_eq!(nodes[0].viewer_viewed_state, "VIEWED");
     }
 }

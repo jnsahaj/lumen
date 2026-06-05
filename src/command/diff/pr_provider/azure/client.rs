@@ -18,7 +18,7 @@ use std::process::Command;
 use std::sync::Arc;
 
 use reqwest::header::ACCEPT;
-use serde_json::Value;
+use serde::Deserialize;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
@@ -88,7 +88,9 @@ impl AdoClient {
         )
     }
 
-    async fn get_json(&self, url: &str) -> Result<Value, PrError> {
+    /// GET `url` and deserialize the JSON body into `T`. Unknown fields are
+    /// ignored, so each caller's struct declares only the fields it needs.
+    async fn get<T: serde::de::DeserializeOwned>(&self, url: &str) -> Result<T, PrError> {
         let resp = self
             .authed(self.http.get(url))
             .header(ACCEPT, "application/json")
@@ -150,10 +152,11 @@ impl AdoClient {
             )),
             API_VERSION
         );
-        let json = self.get_json(&url).await?;
-        json.get("value")
-            .and_then(|v| v.as_array())
-            .and_then(|arr| arr.iter().filter_map(|i| i.get("id")?.as_u64()).max())
+        let list: IterationList = self.get(&url).await?;
+        list.value
+            .iter()
+            .map(|i| i.id)
+            .max()
             .ok_or_else(|| PrError::Other("PR has no iterations".to_string()))
     }
 
@@ -175,25 +178,19 @@ impl AdoClient {
                 skip,
                 API_VERSION
             );
-            let json = self.get_json(&url).await?;
-            let page = json
-                .get("changeEntries")
-                .and_then(|v| v.as_array())
-                .cloned()
-                .unwrap_or_default();
-            let page_len = page.len();
-            for entry in page {
-                if let Some(change) = ChangeEntry::from_json(&entry) {
-                    entries.push(change);
-                }
-            }
+            let page: ChangesPage = self.get(&url).await?;
+            let page_len = page.change_entries.len();
+            entries.extend(
+                page.change_entries
+                    .into_iter()
+                    .filter_map(RawChange::into_change),
+            );
             // `nextSkip` is the canonical "more pages" signal; fall back to a
             // short page meaning we're done.
-            let next_skip = json.get("nextSkip").and_then(|v| v.as_u64()).unwrap_or(0);
-            if next_skip == 0 || page_len < CHANGES_PAGE {
+            if page.next_skip == 0 || page_len < CHANGES_PAGE {
                 break;
             }
-            skip = next_skip as usize;
+            skip = page.next_skip as usize;
         }
         Ok(entries)
     }
@@ -232,6 +229,46 @@ impl AdoClient {
     }
 }
 
+/// The PR iterations list; we only need each iteration's numeric id.
+#[derive(Deserialize)]
+struct IterationList {
+    value: Vec<Iteration>,
+}
+
+#[derive(Deserialize)]
+struct Iteration {
+    id: u64,
+}
+
+/// A page of the iteration-changes endpoint.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ChangesPage {
+    #[serde(default)]
+    change_entries: Vec<RawChange>,
+    /// Canonical "more pages" cursor; `0`/absent means we're done.
+    #[serde(default)]
+    next_skip: u64,
+}
+
+/// A `changeEntries[]` entry exactly as Azure returns it.
+#[derive(Deserialize)]
+struct RawChange {
+    item: Option<RawItem>,
+    #[serde(rename = "originalPath")]
+    original_path: Option<String>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct RawItem {
+    path: Option<String>,
+    object_id: Option<String>,
+    original_object_id: Option<String>,
+    #[serde(default)]
+    is_folder: bool,
+}
+
 /// One PR file change reduced to what the diff UI needs.
 struct ChangeEntry {
     /// Repo-relative path without a leading slash.
@@ -242,35 +279,19 @@ struct ChangeEntry {
     old_blob: Option<String>,
 }
 
-impl ChangeEntry {
-    fn from_json(entry: &Value) -> Option<Self> {
-        let item = entry.get("item");
-        // Skip folders.
-        if item
-            .and_then(|i| i.get("isFolder"))
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false)
-        {
+impl RawChange {
+    /// Reduce a wire entry to a [`ChangeEntry`], skipping folders and entries
+    /// with no path. The rename case falls back to `originalPath`.
+    fn into_change(self) -> Option<ChangeEntry> {
+        let item = self.item.unwrap_or_default();
+        if item.is_folder {
             return None;
         }
-        let raw_path = item
-            .and_then(|i| i.get("path"))
-            .and_then(|v| v.as_str())
-            .or_else(|| entry.get("originalPath").and_then(|v| v.as_str()))?;
-        let new_blob = item
-            .and_then(|i| i.get("objectId"))
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-        let old_blob = item
-            .and_then(|i| i.get("originalObjectId"))
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-        Some(Self {
+        let raw_path = item.path.or(self.original_path)?;
+        Some(ChangeEntry {
             path: raw_path.trim_start_matches('/').to_string(),
-            new_blob,
-            old_blob,
+            new_blob: item.object_id.filter(|s| !s.is_empty()),
+            old_blob: item.original_object_id.filter(|s| !s.is_empty()),
         })
     }
 }
@@ -278,6 +299,22 @@ impl ChangeEntry {
 // ---------------------------------------------------------------------------
 // Public sync entry points (bridge the async client onto the sync diff path)
 // ---------------------------------------------------------------------------
+
+/// The PR detail endpoint, reduced to the refs and repo name we display.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PrDetail {
+    #[serde(default)]
+    source_ref_name: String,
+    #[serde(default)]
+    target_ref_name: String,
+    repository: Option<RepoRef>,
+}
+
+#[derive(Deserialize)]
+struct RepoRef {
+    name: Option<String>,
+}
 
 pub fn fetch_pr_metadata(
     org_url: &str,
@@ -293,28 +330,28 @@ pub fn fetch_pr_metadata(
             client.git_url(&format!("pullrequests/{}", pr_id)),
             API_VERSION
         );
-        let json = client.get_json(&url).await?;
-        let source_ref = json
-            .get("sourceRefName")
-            .and_then(|v| v.as_str())
-            .unwrap_or_default()
-            .to_string();
-        let target_ref = json
-            .get("targetRefName")
-            .and_then(|v| v.as_str())
-            .unwrap_or_default()
-            .to_string();
-        let repo_name = json
-            .pointer("/repository/name")
-            .and_then(|v| v.as_str())
-            .unwrap_or(repo)
-            .to_string();
+        let detail: PrDetail = client.get(&url).await?;
         Ok(AzurePrMeta {
-            source_ref,
-            target_ref,
-            repo_name,
+            source_ref: detail.source_ref_name,
+            target_ref: detail.target_ref_name,
+            repo_name: detail
+                .repository
+                .and_then(|r| r.name)
+                .unwrap_or_else(|| repo.to_string()),
         })
     })
+}
+
+/// The active-PR search result; we take the first match's id.
+#[derive(Deserialize)]
+struct PrList {
+    value: Vec<PrId>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PrId {
+    pull_request_id: u64,
 }
 
 pub fn detect_active_pr(
@@ -334,12 +371,10 @@ pub fn detect_active_pr(
             percent_encode(&format!("refs/heads/{}", branch)),
             API_VERSION
         );
-        let json = client.get_json(&url).await?;
-        json.get("value")
-            .and_then(|v| v.as_array())
-            .and_then(|arr| arr.first())
-            .and_then(|pr| pr.get("pullRequestId"))
-            .and_then(|v| v.as_u64())
+        let list: PrList = client.get(&url).await?;
+        list.value
+            .first()
+            .map(|pr| pr.pull_request_id)
             .ok_or_else(|| PrError::NotFound(format!("No active PR found for branch {}", branch)))
     })
 }
@@ -397,12 +432,19 @@ fn resolve_auth() -> Result<AdoAuth, PrError> {
                 .to_string(),
         ));
     }
-    let json: Value = serde_json::from_slice(&output.stdout)
-        .map_err(|e| format!("Could not parse az token output: {}", e))?;
-    json.get("accessToken")
-        .and_then(|v| v.as_str())
-        .map(|t| AdoAuth::Bearer(t.to_string()))
+    let token: TokenResponse = serde_json::from_slice(&output.stdout)
+        .map_err(|e| PrError::Other(format!("Could not parse az token output: {}", e)))?;
+    token
+        .access_token
+        .map(AdoAuth::Bearer)
         .ok_or_else(|| PrError::Auth("az returned no access token".to_string()))
+}
+
+/// The `az account get-access-token --output json` response.
+#[derive(Deserialize)]
+struct TokenResponse {
+    #[serde(rename = "accessToken")]
+    access_token: Option<String>,
 }
 
 fn auth_hint(status: reqwest::StatusCode, body: &str) -> PrError {
@@ -433,9 +475,16 @@ fn auth_hint(status: reqwest::StatusCode, body: &str) -> PrError {
 mod tests {
     use super::*;
 
+    /// Deserialize a wire change entry and reduce it the way `changes()` does.
+    fn change(v: serde_json::Value) -> Option<ChangeEntry> {
+        serde_json::from_value::<RawChange>(v)
+            .unwrap()
+            .into_change()
+    }
+
     #[test]
     fn parses_add_edit_delete_changes() {
-        let add = ChangeEntry::from_json(&serde_json::json!({
+        let add = change(serde_json::json!({
             "changeType": "add",
             "item": { "path": "/src/new.rs", "objectId": "newsha" }
         }))
@@ -444,7 +493,7 @@ mod tests {
         assert_eq!(add.new_blob.as_deref(), Some("newsha"));
         assert_eq!(add.old_blob, None);
 
-        let edit = ChangeEntry::from_json(&serde_json::json!({
+        let edit = change(serde_json::json!({
             "changeType": "edit",
             "item": { "path": "/a.txt", "objectId": "n", "originalObjectId": "o" }
         }))
@@ -452,7 +501,7 @@ mod tests {
         assert_eq!(edit.new_blob.as_deref(), Some("n"));
         assert_eq!(edit.old_blob.as_deref(), Some("o"));
 
-        let del = ChangeEntry::from_json(&serde_json::json!({
+        let del = change(serde_json::json!({
             "changeType": "delete",
             "item": { "path": "/gone.rs", "originalObjectId": "o" }
         }))
@@ -463,7 +512,7 @@ mod tests {
 
     #[test]
     fn skips_folders() {
-        assert!(ChangeEntry::from_json(&serde_json::json!({
+        assert!(change(serde_json::json!({
             "changeType": "add",
             "item": { "path": "/dir", "isFolder": true }
         }))
@@ -472,7 +521,7 @@ mod tests {
 
     #[test]
     fn falls_back_to_original_path_on_rename() {
-        let renamed = ChangeEntry::from_json(&serde_json::json!({
+        let renamed = change(serde_json::json!({
             "changeType": "rename",
             "item": { "objectId": "n", "originalObjectId": "o" },
             "originalPath": "/old/name.rs"
