@@ -22,9 +22,9 @@ use serde_json::Value;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
-use super::git::{build_file_diff, percent_encode};
-use super::types::FileDiff;
-use super::PrInfo;
+use crate::command::diff::git::{build_file_diff, percent_encode};
+use crate::command::diff::types::FileDiff;
+use crate::command::diff::PrInfo;
 
 const API_VERSION: &str = "7.1";
 /// Azure DevOps OAuth resource id, used with `az account get-access-token`.
