@@ -12,7 +12,7 @@ use crate::command::diff::git::build_file_diff;
 use crate::command::diff::types::FileDiff;
 use crate::command::diff::PrInfo;
 
-use super::{PrError, PrProvider};
+use super::{PrError, PrProvider, ProviderData};
 
 /// Max concurrent `gh api` requests when fetching PR file contents.
 /// GitHub's documented secondary rate limit caps concurrent requests at 100
@@ -52,10 +52,13 @@ impl PrProvider for GitHubProvider {
     }
 
     fn set_file_viewed(&self, pr: &PrInfo, path: &str, viewed: bool) -> Result<(), PrError> {
+        let ProviderData::GitHub { node_id } = &pr.data else {
+            return Ok(()); // not a GitHub PR; nothing to sync
+        };
         if viewed {
-            mark_file_as_viewed_sync(&pr.node_id, path)
+            mark_file_as_viewed_sync(node_id, path)
         } else {
-            unmark_file_as_viewed_sync(&pr.node_id, path)
+            unmark_file_as_viewed_sync(node_id, path)
         }
     }
 
@@ -187,15 +190,13 @@ fn fetch_pr_info(pr_input: &str, repo_override: Option<&str>) -> Result<PrInfo, 
     Ok(PrInfo {
         provider: &GitHubProvider,
         number,
-        node_id,
         repo_owner,
         repo_name,
         base_ref,
         head_ref,
         base_repo_owner,
         head_repo_owner,
-        project: None,
-        org_url: None,
+        data: ProviderData::GitHub { node_id },
     })
 }
 

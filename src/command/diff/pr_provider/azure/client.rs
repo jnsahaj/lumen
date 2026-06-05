@@ -24,7 +24,7 @@ use tokio::task::JoinSet;
 
 use crate::command::diff::git::{build_file_diff, percent_encode};
 use crate::command::diff::types::FileDiff;
-use crate::command::diff::pr_provider::PrError;
+use crate::command::diff::pr_provider::{PrError, ProviderData};
 use crate::command::diff::PrInfo;
 
 const API_VERSION: &str = "7.1";
@@ -334,14 +334,11 @@ pub fn detect_active_pr(
 }
 
 pub fn load_pr_file_diffs(pr: &PrInfo) -> Result<Vec<FileDiff>, PrError> {
-    let org_url = pr
-        .org_url
-        .as_deref()
-        .ok_or("Azure PR missing organisation URL")?;
-    let project = pr
-        .project
-        .as_deref()
-        .ok_or("Azure PR missing project")?;
+    let ProviderData::Azure { org_url, project } = &pr.data else {
+        return Err(PrError::Other(
+            "Azure PR missing organisation/project data".to_string(),
+        ));
+    };
     let client = AdoClient::new(org_url, project, &pr.repo_name)?;
     let pr_id = pr.number;
     block_on(async move { client.load_file_diffs(pr_id).await })

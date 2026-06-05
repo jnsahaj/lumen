@@ -51,6 +51,22 @@ impl From<&str> for PrError {
     }
 }
 
+/// Provider-specific data carried on [`PrInfo`]. Each variant holds exactly the
+/// fields its forge needs, so adding a forge is a new variant rather than more
+/// `Option`s smeared across a shared struct.
+#[derive(Clone, Debug)]
+pub enum ProviderData {
+    GitHub {
+        /// PR node id, used by the viewed-file GraphQL mutations.
+        node_id: String,
+    },
+    Azure {
+        /// Organisation base URL, e.g. `https://dev.azure.com/org`.
+        org_url: String,
+        project: String,
+    },
+}
+
 /// A pull-request hosting provider. Each method maps to one capability the diff
 /// UI needs; the viewed-file sync methods default to no-ops so providers without
 /// that concept (Azure DevOps) don't have to implement them.

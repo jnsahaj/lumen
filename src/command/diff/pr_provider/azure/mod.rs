@@ -9,7 +9,7 @@ use crate::command::diff::git::percent_encode;
 use crate::command::diff::types::FileDiff;
 use crate::command::diff::PrInfo;
 
-use super::{read_origin_url, PrError, PrProvider};
+use super::{read_origin_url, PrError, PrProvider, ProviderData};
 
 pub struct AzureProvider;
 
@@ -72,7 +72,6 @@ impl PrProvider for AzureProvider {
         Ok(PrInfo {
             provider: &AzureProvider,
             number: id,
-            node_id: String::new(),
             repo_owner: az.org.clone(),
             // Prefer the repo name the API reports; fall back to the URL's.
             repo_name: if meta.repo_name.is_empty() {
@@ -84,8 +83,10 @@ impl PrProvider for AzureProvider {
             head_ref: strip_ref_prefix(&meta.source_ref),
             base_repo_owner: az.org.clone(),
             head_repo_owner: Some(az.org),
-            project: Some(az.project),
-            org_url: Some(az.org_url),
+            data: ProviderData::Azure {
+                org_url: az.org_url,
+                project: az.project,
+            },
         })
     }
 
@@ -116,8 +117,9 @@ impl PrProvider for AzureProvider {
     }
 
     fn file_web_url(&self, pr: &PrInfo, filename: &str) -> Option<String> {
-        let org_url = pr.org_url.as_ref()?;
-        let project = pr.project.as_ref()?;
+        let ProviderData::Azure { org_url, project } = &pr.data else {
+            return None;
+        };
         Some(format!(
             "{}/{}/_git/{}/pullrequest/{}?path={}",
             org_url,

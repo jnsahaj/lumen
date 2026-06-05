@@ -26,6 +26,7 @@ use crate::vcs::VcsBackend;
 
 pub use pr_provider::{
     fetch_viewed_files, mark_file_as_viewed_async, unmark_file_as_viewed_async, PrProvider,
+    ProviderData,
 };
 
 pub struct DiffOptions {
@@ -45,17 +46,14 @@ pub struct DiffOptions {
 pub struct PrInfo {
     pub provider: &'static dyn PrProvider,
     pub number: u64,
-    pub node_id: String,
     pub repo_owner: String,
     pub repo_name: String,
     pub base_ref: String,
     pub head_ref: String,
     pub base_repo_owner: String,
     pub head_repo_owner: Option<String>, // None if head repo was deleted (fork deleted)
-    /// Azure DevOps project (None for GitHub).
-    pub project: Option<String>,
-    /// Azure DevOps organisation base URL, e.g. `https://dev.azure.com/org`.
-    pub org_url: Option<String>,
+    /// Provider-specific data (GitHub node id, or Azure org URL + project).
+    pub data: ProviderData,
 }
 
 pub fn run_diff_ui(mut options: DiffOptions, backend: &dyn VcsBackend) -> io::Result<()> {
