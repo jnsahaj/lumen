@@ -14,6 +14,8 @@ pub enum ThemeMode {
 pub enum ThemePreset {
     DefaultDark,
     DefaultLight,
+    ZeroGithubDark,
+    ZeroGithubLight,
     CatppuccinMocha,
     CatppuccinLatte,
     Dracula,
@@ -32,6 +34,8 @@ impl FromStr for ThemePreset {
         match s.to_lowercase().replace('_', "-").as_str() {
             "default-dark" | "dark" => Ok(Self::DefaultDark),
             "default-light" | "light" => Ok(Self::DefaultLight),
+            "0github-dark" => Ok(Self::ZeroGithubDark),
+            "0github-light" => Ok(Self::ZeroGithubLight),
             "catppuccin-mocha" | "mocha" => Ok(Self::CatppuccinMocha),
             "catppuccin-latte" | "latte" => Ok(Self::CatppuccinLatte),
             "dracula" => Ok(Self::Dracula),
@@ -42,7 +46,7 @@ impl FromStr for ThemePreset {
             "solarized-dark" => Ok(Self::SolarizedDark),
             "solarized-light" => Ok(Self::SolarizedLight),
             _ => Err(format!(
-                "Unknown theme '{}'. Valid: default-dark, default-light, catppuccin-mocha, catppuccin-latte, dracula, nord, gruvbox-dark, gruvbox-light, one-dark, solarized-dark, solarized-light",
+                "Unknown theme '{}'. Valid: default-dark, default-light, 0github-dark, 0github-light, catppuccin-mocha, catppuccin-latte, dracula, nord, gruvbox-dark, gruvbox-light, one-dark, solarized-dark, solarized-light",
                 s
             )),
         }
@@ -264,6 +268,8 @@ impl Theme {
         match preset {
             ThemePreset::DefaultDark => Self::dark(),
             ThemePreset::DefaultLight => Self::light(),
+            ThemePreset::ZeroGithubDark => Self::zero_github_dark(),
+            ThemePreset::ZeroGithubLight => Self::zero_github_light(),
             ThemePreset::CatppuccinMocha => Self::catppuccin_mocha(),
             ThemePreset::CatppuccinLatte => Self::catppuccin_latte(),
             ThemePreset::Dracula => Self::dracula(),
@@ -333,6 +339,128 @@ impl Theme {
                 search_match_fg: Color::Rgb(30, 30, 46),
                 search_current_bg: Color::Rgb(250, 179, 135),
                 search_current_fg: Color::Rgb(30, 30, 46),
+            },
+        }
+    }
+
+    pub fn zero_github_light() -> Self {
+        Self {
+            mode: ThemeMode::Light,
+            syntax: SyntaxColors {
+                comment: Color::Rgb(108, 120, 137),
+                keyword: Color::Rgb(104, 39, 196),
+                string: Color::Rgb(52, 141, 94),
+                number: Color::Rgb(204, 68, 30),
+                function: Color::Rgb(24, 128, 180),
+                function_macro: Color::Rgb(24, 109, 170),
+                r#type: Color::Rgb(198, 110, 16),
+                variable_builtin: Color::Rgb(24, 109, 170),
+                variable_member: Color::Rgb(71, 97, 133),
+                module: Color::Rgb(198, 110, 16),
+                operator: Color::Rgb(15, 79, 230),
+                tag: Color::Rgb(104, 39, 196),
+                attribute: Color::Rgb(71, 97, 133),
+                label: Color::Rgb(198, 110, 16),
+                punctuation: Color::Rgb(73, 78, 90),
+                default_text: Color::Rgb(38, 38, 38),
+            },
+            diff: DiffColors {
+                added_bg: Color::Rgb(240, 253, 244),
+                added_gutter_bg: Color::Rgb(226, 252, 237),
+                added_gutter_fg: Color::Rgb(21, 128, 61),
+                deleted_bg: Color::Rgb(255, 255, 255),
+                deleted_gutter_bg: Color::Rgb(252, 208, 204),
+                deleted_gutter_fg: Color::Rgb(115, 115, 115),
+                context_bg: Color::Rgb(255, 255, 255),
+                empty_placeholder_fg: Color::Rgb(212, 212, 212),
+                added_word_bg: Color::Rgb(220, 252, 231),
+                deleted_word_bg: Color::Rgb(254, 226, 226),
+            },
+            ui: UiColors {
+                border_focused: Color::Rgb(24, 128, 180),
+                border_unfocused: Color::Rgb(229, 229, 229),
+                text_primary: Color::Rgb(38, 38, 38),
+                text_secondary: Color::Rgb(82, 82, 82),
+                text_muted: Color::Rgb(115, 115, 115),
+                line_number: Color::Rgb(115, 115, 115),
+                bg: Color::Rgb(255, 255, 255),
+                footer_branch_bg: Color::Rgb(245, 245, 245),
+                footer_branch_fg: Color::Rgb(24, 128, 180),
+                status_added: Color::Rgb(21, 128, 61),
+                status_modified: Color::Rgb(198, 110, 16),
+                status_deleted: Color::Rgb(208, 37, 48),
+                stats_added: Color::Rgb(21, 128, 61),
+                stats_removed: Color::Rgb(208, 37, 48),
+                selection_bg: Color::Rgb(191, 219, 254),
+                selection_fg: Color::Black,
+                highlight: Color::Rgb(198, 110, 16),
+                viewed: Color::Rgb(21, 128, 61),
+                watching: Color::Rgb(198, 110, 16),
+                search_match_bg: Color::Rgb(254, 240, 138),
+                search_match_fg: Color::Black,
+                search_current_bg: Color::Rgb(245, 158, 11),
+                search_current_fg: Color::Black,
+            },
+        }
+    }
+
+    pub fn zero_github_dark() -> Self {
+        Self {
+            mode: ThemeMode::Dark,
+            syntax: SyntaxColors {
+                comment: Color::Rgb(117, 136, 163),
+                keyword: Color::Rgb(170, 125, 232),
+                string: Color::Rgb(83, 198, 136),
+                number: Color::Rgb(237, 125, 94),
+                function: Color::Rgb(94, 190, 237),
+                function_macro: Color::Rgb(71, 167, 235),
+                r#type: Color::Rgb(245, 156, 61),
+                variable_builtin: Color::Rgb(71, 167, 235),
+                variable_member: Color::Rgb(135, 161, 197),
+                module: Color::Rgb(245, 156, 61),
+                operator: Color::Rgb(117, 154, 240),
+                tag: Color::Rgb(170, 125, 232),
+                attribute: Color::Rgb(135, 161, 197),
+                label: Color::Rgb(245, 156, 61),
+                punctuation: Color::Rgb(138, 147, 168),
+                default_text: Color::Rgb(229, 229, 229),
+            },
+            diff: DiffColors {
+                added_bg: Color::Rgb(18, 18, 18),
+                added_gutter_bg: Color::Rgb(34, 197, 94),
+                added_gutter_fg: Color::Rgb(134, 239, 172),
+                deleted_bg: Color::Rgb(10, 10, 10),
+                deleted_gutter_bg: Color::Rgb(248, 81, 73),
+                deleted_gutter_fg: Color::Rgb(163, 163, 163),
+                context_bg: Color::Rgb(10, 10, 10),
+                empty_placeholder_fg: Color::Rgb(64, 64, 64),
+                added_word_bg: Color::Rgb(20, 83, 45),
+                deleted_word_bg: Color::Rgb(127, 29, 29),
+            },
+            ui: UiColors {
+                border_focused: Color::Rgb(94, 190, 237),
+                border_unfocused: Color::Rgb(64, 64, 64),
+                text_primary: Color::Rgb(229, 229, 229),
+                text_secondary: Color::Rgb(212, 212, 212),
+                text_muted: Color::Rgb(163, 163, 163),
+                line_number: Color::Rgb(163, 163, 163),
+                bg: Color::Rgb(10, 10, 10),
+                footer_branch_bg: Color::Rgb(23, 23, 23),
+                footer_branch_fg: Color::Rgb(94, 190, 237),
+                status_added: Color::Rgb(134, 239, 172),
+                status_modified: Color::Rgb(245, 156, 61),
+                status_deleted: Color::Rgb(233, 99, 108),
+                stats_added: Color::Rgb(134, 239, 172),
+                stats_removed: Color::Rgb(233, 99, 108),
+                selection_bg: Color::Rgb(71, 167, 235),
+                selection_fg: Color::Rgb(10, 10, 10),
+                highlight: Color::Rgb(245, 156, 61),
+                viewed: Color::Rgb(134, 239, 172),
+                watching: Color::Rgb(245, 156, 61),
+                search_match_bg: Color::Rgb(30, 64, 175),
+                search_match_fg: Color::Rgb(229, 229, 229),
+                search_current_bg: Color::Rgb(245, 156, 61),
+                search_current_fg: Color::Rgb(10, 10, 10),
             },
         }
     }
@@ -848,4 +976,52 @@ pub fn init(config_theme: Option<&str>) {
 
 pub fn get() -> &'static Theme {
     THEME.get_or_init(|| Theme::from_mode(ThemeMode::detect()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parsed_theme(name: &str) -> Theme {
+        let preset = ThemePreset::from_str(name).expect("theme should parse");
+        Theme::from_preset(preset)
+    }
+
+    #[test]
+    fn test_0github_theme_parsing() {
+        assert!(ThemePreset::from_str("0github-light").is_ok());
+        assert!(ThemePreset::from_str("0github-dark").is_ok());
+    }
+
+    #[test]
+    fn test_0github_light_palette() {
+        let theme = parsed_theme("0github-light");
+
+        assert_eq!(theme.mode, ThemeMode::Light);
+        assert_eq!(theme.syntax.comment, Color::Rgb(108, 120, 137));
+        assert_eq!(theme.syntax.keyword, Color::Rgb(104, 39, 196));
+        assert_eq!(theme.syntax.string, Color::Rgb(52, 141, 94));
+        assert_eq!(theme.syntax.function, Color::Rgb(24, 128, 180));
+        assert_eq!(theme.syntax.variable_member, Color::Rgb(71, 97, 133));
+        assert_eq!(theme.syntax.attribute, Color::Rgb(71, 97, 133));
+        assert_eq!(theme.diff.added_bg, Color::Rgb(240, 253, 244));
+        assert_eq!(theme.diff.added_gutter_bg, Color::Rgb(226, 252, 237));
+        assert_eq!(theme.diff.deleted_gutter_bg, Color::Rgb(252, 208, 204));
+    }
+
+    #[test]
+    fn test_0github_dark_palette() {
+        let theme = parsed_theme("0github-dark");
+
+        assert_eq!(theme.mode, ThemeMode::Dark);
+        assert_eq!(theme.syntax.comment, Color::Rgb(117, 136, 163));
+        assert_eq!(theme.syntax.keyword, Color::Rgb(170, 125, 232));
+        assert_eq!(theme.syntax.string, Color::Rgb(83, 198, 136));
+        assert_eq!(theme.syntax.function, Color::Rgb(94, 190, 237));
+        assert_eq!(theme.syntax.variable_member, Color::Rgb(135, 161, 197));
+        assert_eq!(theme.syntax.attribute, Color::Rgb(135, 161, 197));
+        assert_eq!(theme.diff.added_gutter_bg, Color::Rgb(34, 197, 94));
+        assert_eq!(theme.diff.added_gutter_fg, Color::Rgb(134, 239, 172));
+        assert_eq!(theme.diff.deleted_gutter_bg, Color::Rgb(248, 81, 73));
+    }
 }
