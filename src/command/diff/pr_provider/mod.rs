@@ -90,23 +90,26 @@ pub trait PrProvider: Sync {
     /// Load the file diffs for a PR.
     fn load_pr_file_diffs(&self, pr: &PrInfo) -> Result<Vec<FileDiff>, PrError>;
 
-    /// Whether this provider supports syncing per-file "viewed" state.
-    fn supports_viewed_sync(&self) -> bool {
-        false
-    }
-
-    /// Fetch the set of paths currently marked as viewed.
-    fn fetch_viewed_files(&self, _pr: &PrInfo) -> Result<HashSet<String>, PrError> {
-        Ok(HashSet::new())
-    }
-
-    /// Mark/unmark a file as viewed (blocking).
-    fn set_file_viewed(&self, _pr: &PrInfo, _path: &str, _viewed: bool) -> Result<(), PrError> {
-        Ok(())
-    }
-
     /// Build a browser URL for `filename` within the PR.
     fn file_web_url(&self, pr: &PrInfo, filename: &str) -> Option<String>;
+
+    /// Per-file "viewed" state sync, if this provider supports it. Returning
+    /// `Some` *is* the capability — there's no separate boolean flag that can
+    /// drift out of step with the implementation.
+    fn viewed_sync(&self) -> Option<&dyn ViewedSync> {
+        None
+    }
+}
+
+/// Syncing per-file "viewed" state with the forge (e.g. GitHub's PR file
+/// checkboxes). Providers without the concept simply don't return one from
+/// [`PrProvider::viewed_sync`].
+pub trait ViewedSync {
+    /// Fetch the set of paths currently marked as viewed.
+    fn fetch(&self, pr: &PrInfo) -> Result<HashSet<String>, PrError>;
+
+    /// Mark/unmark a file as viewed (blocking).
+    fn set(&self, pr: &PrInfo, path: &str, viewed: bool) -> Result<(), PrError>;
 }
 
 // ---------------------------------------------------------------------------
@@ -179,7 +182,10 @@ pub fn load_pr_file_diffs(pr: &PrInfo) -> Result<Vec<FileDiff>, PrError> {
 }
 
 pub fn fetch_viewed_files(pr: &PrInfo) -> Result<HashSet<String>, PrError> {
-    pr.provider.fetch_viewed_files(pr)
+    match pr.provider.viewed_sync() {
+        Some(vs) => vs.fetch(pr),
+        None => Ok(HashSet::new()),
+    }
 }
 
 pub fn pr_file_web_url(pr: &PrInfo, filename: &str) -> Option<String> {
@@ -195,13 +201,15 @@ pub fn unmark_file_as_viewed_async(pr: &PrInfo, file_path: &str) {
 }
 
 fn set_file_viewed_async(pr: &PrInfo, file_path: &str, viewed: bool) {
-    if !pr.provider.supports_viewed_sync() {
+    if pr.provider.viewed_sync().is_none() {
         return;
     }
     let pr = pr.clone();
     let path = file_path.to_string();
     thread::spawn(move || {
-        let _ = pr.provider.set_file_viewed(&pr, &path, viewed);
+        if let Some(vs) = pr.provider.viewed_sync() {
+            let _ = vs.set(&pr, &path, viewed);
+        }
     });
 }
 

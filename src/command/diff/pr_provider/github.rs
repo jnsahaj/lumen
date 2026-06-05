@@ -12,7 +12,7 @@ use crate::command::diff::git::build_file_diff;
 use crate::command::diff::types::FileDiff;
 use crate::command::diff::PrInfo;
 
-use super::{PrError, PrProvider, ProviderData};
+use super::{PrError, PrProvider, ProviderData, ViewedSync};
 
 /// Max concurrent `gh api` requests when fetching PR file contents.
 /// GitHub's documented secondary rate limit caps concurrent requests at 100
@@ -43,25 +43,6 @@ impl PrProvider for GitHubProvider {
         load_pr_file_diffs(pr)
     }
 
-    fn supports_viewed_sync(&self) -> bool {
-        true
-    }
-
-    fn fetch_viewed_files(&self, pr: &PrInfo) -> Result<HashSet<String>, PrError> {
-        fetch_viewed_files(pr)
-    }
-
-    fn set_file_viewed(&self, pr: &PrInfo, path: &str, viewed: bool) -> Result<(), PrError> {
-        let ProviderData::GitHub { node_id } = &pr.data else {
-            return Ok(()); // not a GitHub PR; nothing to sync
-        };
-        if viewed {
-            mark_file_as_viewed_sync(node_id, path)
-        } else {
-            unmark_file_as_viewed_sync(node_id, path)
-        }
-    }
-
     fn file_web_url(&self, pr: &PrInfo, filename: &str) -> Option<String> {
         Some(format!(
             "https://github.com/{}/{}/pull/{}/files#diff-{}",
@@ -70,6 +51,27 @@ impl PrProvider for GitHubProvider {
             pr.number,
             file_anchor(filename)
         ))
+    }
+
+    fn viewed_sync(&self) -> Option<&dyn ViewedSync> {
+        Some(self)
+    }
+}
+
+impl ViewedSync for GitHubProvider {
+    fn fetch(&self, pr: &PrInfo) -> Result<HashSet<String>, PrError> {
+        fetch_viewed_files(pr)
+    }
+
+    fn set(&self, pr: &PrInfo, path: &str, viewed: bool) -> Result<(), PrError> {
+        let ProviderData::GitHub { node_id } = &pr.data else {
+            return Ok(()); // not a GitHub PR; nothing to sync
+        };
+        if viewed {
+            mark_file_as_viewed_sync(node_id, path)
+        } else {
+            unmark_file_as_viewed_sync(node_id, path)
+        }
     }
 }
 
