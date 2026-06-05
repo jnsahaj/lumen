@@ -19,6 +19,38 @@ use super::PrInfo;
 use azure::AzureProvider;
 use github::GitHubProvider;
 
+/// An error from a PR-provider operation. The variant is the kind, so the diff
+/// UI can react to it (e.g. prompt for credentials on [`PrError::Auth`]).
+/// [`PrError::Other`] is the catch-all for CLI/transport failures, and the
+/// `From<String>` impl lets internal string errors fall through to it.
+#[derive(Debug, thiserror::Error)]
+pub enum PrError {
+    /// Authentication or authorization failed (missing/insufficient token).
+    #[error("authentication failed: {0}")]
+    Auth(String),
+    /// The PR (or the current branch's PR) could not be found.
+    #[error("not found: {0}")]
+    NotFound(String),
+    /// The input couldn't be parsed as a PR reference for this provider.
+    #[error("invalid PR reference: {0}")]
+    InvalidRef(String),
+    /// Anything else: CLI invocation failure, transport error, bad output.
+    #[error("{0}")]
+    Other(String),
+}
+
+impl From<String> for PrError {
+    fn from(s: String) -> Self {
+        PrError::Other(s)
+    }
+}
+
+impl From<&str> for PrError {
+    fn from(s: &str) -> Self {
+        PrError::Other(s.to_string())
+    }
+}
+
 /// A pull-request hosting provider. Each method maps to one capability the diff
 /// UI needs; the viewed-file sync methods default to no-ops so providers without
 /// that concept (Azure DevOps) don't have to implement them.
@@ -34,13 +66,13 @@ pub trait PrProvider: Sync {
     fn matches_origin(&self, origin: &str) -> bool;
 
     /// Resolve a PR number/URL into full metadata.
-    fn fetch_pr_info(&self, input: &str, repo_override: Option<&str>) -> Result<PrInfo, String>;
+    fn fetch_pr_info(&self, input: &str, repo_override: Option<&str>) -> Result<PrInfo, PrError>;
 
     /// Find the PR associated with the current branch.
-    fn detect_current_branch_pr(&self, repo_override: Option<&str>) -> Result<String, String>;
+    fn detect_current_branch_pr(&self, repo_override: Option<&str>) -> Result<String, PrError>;
 
     /// Load the file diffs for a PR.
-    fn load_pr_file_diffs(&self, pr: &PrInfo) -> Result<Vec<FileDiff>, String>;
+    fn load_pr_file_diffs(&self, pr: &PrInfo) -> Result<Vec<FileDiff>, PrError>;
 
     /// Whether this provider supports syncing per-file "viewed" state.
     fn supports_viewed_sync(&self) -> bool {
@@ -48,12 +80,12 @@ pub trait PrProvider: Sync {
     }
 
     /// Fetch the set of paths currently marked as viewed.
-    fn fetch_viewed_files(&self, _pr: &PrInfo) -> Result<HashSet<String>, String> {
+    fn fetch_viewed_files(&self, _pr: &PrInfo) -> Result<HashSet<String>, PrError> {
         Ok(HashSet::new())
     }
 
     /// Mark/unmark a file as viewed (blocking).
-    fn set_file_viewed(&self, _pr: &PrInfo, _path: &str, _viewed: bool) -> Result<(), String> {
+    fn set_file_viewed(&self, _pr: &PrInfo, _path: &str, _viewed: bool) -> Result<(), PrError> {
         Ok(())
     }
 
@@ -118,19 +150,19 @@ fn provider_for_input(input: &str, repo_override: Option<&str>) -> &'static dyn 
 // Dispatchers used by the rest of the diff UI
 // ---------------------------------------------------------------------------
 
-pub fn fetch_pr_info(input: &str, repo_override: Option<&str>) -> Result<PrInfo, String> {
+pub fn fetch_pr_info(input: &str, repo_override: Option<&str>) -> Result<PrInfo, PrError> {
     provider_for_input(input, repo_override).fetch_pr_info(input, repo_override)
 }
 
-pub fn detect_current_branch_pr(repo_override: Option<&str>) -> Result<String, String> {
+pub fn detect_current_branch_pr(repo_override: Option<&str>) -> Result<String, PrError> {
     provider_for_origin(repo_override).detect_current_branch_pr(repo_override)
 }
 
-pub fn load_pr_file_diffs(pr: &PrInfo) -> Result<Vec<FileDiff>, String> {
+pub fn load_pr_file_diffs(pr: &PrInfo) -> Result<Vec<FileDiff>, PrError> {
     pr.provider.load_pr_file_diffs(pr)
 }
 
-pub fn fetch_viewed_files(pr: &PrInfo) -> Result<HashSet<String>, String> {
+pub fn fetch_viewed_files(pr: &PrInfo) -> Result<HashSet<String>, PrError> {
     pr.provider.fetch_viewed_files(pr)
 }
 

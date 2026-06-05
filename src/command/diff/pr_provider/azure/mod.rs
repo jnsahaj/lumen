@@ -9,7 +9,7 @@ use crate::command::diff::git::percent_encode;
 use crate::command::diff::types::FileDiff;
 use crate::command::diff::PrInfo;
 
-use super::{read_origin_url, PrProvider};
+use super::{read_origin_url, PrError, PrProvider};
 
 pub struct AzureProvider;
 
@@ -27,7 +27,7 @@ struct AzureRef {
 }
 
 impl AzureProvider {
-    fn resolve_ref(&self, input: &str, repo_override: Option<&str>) -> Result<AzureRef, String> {
+    fn resolve_ref(&self, input: &str, repo_override: Option<&str>) -> Result<AzureRef, PrError> {
         if let Some(parsed) = parse_azure_url(input) {
             return Ok(parsed);
         }
@@ -35,7 +35,7 @@ impl AzureProvider {
         // URL) or from the git `origin` remote.
         let id = input
             .parse::<u64>()
-            .map_err(|_| format!("Invalid Azure DevOps PR reference: {}", input))?;
+            .map_err(|_| PrError::InvalidRef(format!("Invalid Azure DevOps PR reference: {}", input)))?;
         let remote = repo_override
             .filter(|o| self.matches_origin(o))
             .map(|s| s.to_string())
@@ -45,7 +45,7 @@ impl AzureProvider {
                     .to_string()
             })?;
         let mut parsed = parse_azure_remote(&remote)
-            .ok_or_else(|| format!("Could not parse Azure DevOps remote: {}", remote))?;
+            .ok_or_else(|| PrError::InvalidRef(format!("Could not parse Azure DevOps remote: {}", remote)))?;
         parsed.id = Some(id);
         Ok(parsed)
     }
@@ -61,11 +61,11 @@ impl PrProvider for AzureProvider {
         origin.contains("dev.azure.com") || origin.contains(".visualstudio.com")
     }
 
-    fn fetch_pr_info(&self, input: &str, repo_override: Option<&str>) -> Result<PrInfo, String> {
+    fn fetch_pr_info(&self, input: &str, repo_override: Option<&str>) -> Result<PrInfo, PrError> {
         let az = self.resolve_ref(input, repo_override)?;
         let id = az
             .id
-            .ok_or_else(|| format!("No PR id found in: {}", input))?;
+            .ok_or_else(|| PrError::InvalidRef(format!("No PR id found in: {}", input)))?;
 
         let meta = client::fetch_pr_metadata(&az.org_url, &az.project, &az.repo, id)?;
 
@@ -89,14 +89,14 @@ impl PrProvider for AzureProvider {
         })
     }
 
-    fn detect_current_branch_pr(&self, repo_override: Option<&str>) -> Result<String, String> {
+    fn detect_current_branch_pr(&self, repo_override: Option<&str>) -> Result<String, PrError> {
         let remote = repo_override
             .filter(|o| self.matches_origin(o))
             .map(|s| s.to_string())
             .or_else(read_origin_url)
             .ok_or_else(|| "Could not determine Azure DevOps repository.".to_string())?;
         let az = parse_azure_remote(&remote)
-            .ok_or_else(|| format!("Could not parse Azure DevOps remote: {}", remote))?;
+            .ok_or_else(|| PrError::InvalidRef(format!("Could not parse Azure DevOps remote: {}", remote)))?;
 
         let branch_out = Command::new("git")
             .args(["rev-parse", "--abbrev-ref", "HEAD"])
@@ -104,14 +104,14 @@ impl PrProvider for AzureProvider {
             .map_err(|e| format!("Failed to run git: {}", e))?;
         let branch = String::from_utf8_lossy(&branch_out.stdout).trim().to_string();
         if branch.is_empty() {
-            return Err("Could not determine the current branch".to_string());
+            return Err(PrError::Other("Could not determine the current branch".to_string()));
         }
 
         let id = client::detect_active_pr(&az.org_url, &az.project, &az.repo, &branch)?;
         Ok(id.to_string())
     }
 
-    fn load_pr_file_diffs(&self, pr: &PrInfo) -> Result<Vec<FileDiff>, String> {
+    fn load_pr_file_diffs(&self, pr: &PrInfo) -> Result<Vec<FileDiff>, PrError> {
         client::load_pr_file_diffs(pr)
     }
 

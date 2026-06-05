@@ -12,7 +12,7 @@ use crate::command::diff::git::build_file_diff;
 use crate::command::diff::types::FileDiff;
 use crate::command::diff::PrInfo;
 
-use super::PrProvider;
+use super::{PrError, PrProvider};
 
 /// Max concurrent `gh api` requests when fetching PR file contents.
 /// GitHub's documented secondary rate limit caps concurrent requests at 100
@@ -31,15 +31,15 @@ impl PrProvider for GitHubProvider {
         origin.contains("github.com")
     }
 
-    fn fetch_pr_info(&self, input: &str, repo_override: Option<&str>) -> Result<PrInfo, String> {
+    fn fetch_pr_info(&self, input: &str, repo_override: Option<&str>) -> Result<PrInfo, PrError> {
         fetch_pr_info(input, repo_override)
     }
 
-    fn detect_current_branch_pr(&self, _repo_override: Option<&str>) -> Result<String, String> {
+    fn detect_current_branch_pr(&self, _repo_override: Option<&str>) -> Result<String, PrError> {
         detect_current_branch_pr()
     }
 
-    fn load_pr_file_diffs(&self, pr: &PrInfo) -> Result<Vec<FileDiff>, String> {
+    fn load_pr_file_diffs(&self, pr: &PrInfo) -> Result<Vec<FileDiff>, PrError> {
         load_pr_file_diffs(pr)
     }
 
@@ -47,11 +47,11 @@ impl PrProvider for GitHubProvider {
         true
     }
 
-    fn fetch_viewed_files(&self, pr: &PrInfo) -> Result<HashSet<String>, String> {
+    fn fetch_viewed_files(&self, pr: &PrInfo) -> Result<HashSet<String>, PrError> {
         fetch_viewed_files(pr)
     }
 
-    fn set_file_viewed(&self, pr: &PrInfo, path: &str, viewed: bool) -> Result<(), String> {
+    fn set_file_viewed(&self, pr: &PrInfo, path: &str, viewed: bool) -> Result<(), PrError> {
         if viewed {
             mark_file_as_viewed_sync(&pr.node_id, path)
         } else {
@@ -128,12 +128,12 @@ fn resolve_origin_repo() -> Result<String, String> {
     }
 }
 
-fn fetch_pr_info(pr_input: &str, repo_override: Option<&str>) -> Result<PrInfo, String> {
+fn fetch_pr_info(pr_input: &str, repo_override: Option<&str>) -> Result<PrInfo, PrError> {
     let (owner, repo, number) = parse_pr_input(pr_input).ok_or_else(|| {
-        format!(
+        PrError::InvalidRef(format!(
             "Invalid PR reference: {}. Use a PR number or URL.",
             pr_input
-        )
+        ))
     })?;
 
     let repo_full = match (&owner, &repo, repo_override) {
@@ -145,7 +145,7 @@ fn fetch_pr_info(pr_input: &str, repo_override: Option<&str>) -> Result<PrInfo, 
     let (repo_owner, repo_name) = {
         let parts: Vec<&str> = repo_full.split('/').collect();
         if parts.len() != 2 {
-            return Err(format!("Invalid repo format: {}", repo_full));
+            return Err(PrError::InvalidRef(format!("Invalid repo format: {}", repo_full)));
         }
         (
             owner.unwrap_or_else(|| parts[0].to_string()),
@@ -166,7 +166,7 @@ fn fetch_pr_info(pr_input: &str, repo_override: Option<&str>) -> Result<PrInfo, 
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("gh api graphql failed: {}", stderr.trim()));
+        return Err(PrError::Other(format!("gh api graphql failed: {}", stderr.trim())));
     }
 
     let json_str = String::from_utf8_lossy(&output.stdout);
@@ -232,7 +232,7 @@ fn extract_nested_login(json: &str, parent_key: &str) -> Option<String> {
     None
 }
 
-fn detect_current_branch_pr() -> Result<String, String> {
+fn detect_current_branch_pr() -> Result<String, PrError> {
     let output = Command::new("gh")
         .args(["pr", "view", "--json", "number", "-q", ".number"])
         .output()
@@ -241,13 +241,13 @@ fn detect_current_branch_pr() -> Result<String, String> {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let msg = stderr.trim();
         if msg.is_empty() {
-            return Err("No PR found for the current branch".to_string());
+            return Err(PrError::NotFound("No PR found for the current branch".to_string()));
         }
-        return Err(msg.to_string());
+        return Err(PrError::Other(msg.to_string()));
     }
     let number = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if number.is_empty() {
-        return Err("No PR found for the current branch".to_string());
+        return Err(PrError::NotFound("No PR found for the current branch".to_string()));
     }
     Ok(number)
 }
@@ -266,7 +266,7 @@ fn file_anchor(filename: &str) -> String {
 // ---------------------------------------------------------------------------
 
 /// Fetch the list of files that are marked as viewed on GitHub
-fn fetch_viewed_files(pr_info: &PrInfo) -> Result<HashSet<String>, String> {
+fn fetch_viewed_files(pr_info: &PrInfo) -> Result<HashSet<String>, PrError> {
     let query = format!(
         r#"query {{ repository(owner: "{}", name: "{}") {{ pullRequest(number: {}) {{ files(first: 100) {{ nodes {{ path viewerViewedState }} }} }} }} }}"#,
         pr_info.repo_owner, pr_info.repo_name, pr_info.number
@@ -279,7 +279,7 @@ fn fetch_viewed_files(pr_info: &PrInfo) -> Result<HashSet<String>, String> {
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("gh api graphql failed: {}", stderr.trim()));
+        return Err(PrError::Other(format!("gh api graphql failed: {}", stderr.trim())));
     }
 
     let json_str = String::from_utf8_lossy(&output.stdout);
@@ -319,7 +319,7 @@ fn fetch_viewed_files(pr_info: &PrInfo) -> Result<HashSet<String>, String> {
 }
 
 /// Mark a file as viewed on GitHub PR (blocking)
-fn mark_file_as_viewed_sync(node_id: &str, file_path: &str) -> Result<(), String> {
+fn mark_file_as_viewed_sync(node_id: &str, file_path: &str) -> Result<(), PrError> {
     let mutation = format!(
         r#"mutation {{ markFileAsViewed(input: {{ pullRequestId: "{}", path: "{}" }}) {{ clientMutationId }} }}"#,
         node_id, file_path
@@ -332,14 +332,14 @@ fn mark_file_as_viewed_sync(node_id: &str, file_path: &str) -> Result<(), String
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(stderr.trim().to_string());
+        return Err(PrError::Other(stderr.trim().to_string()));
     }
 
     Ok(())
 }
 
 /// Unmark a file as viewed on GitHub PR (blocking)
-fn unmark_file_as_viewed_sync(node_id: &str, file_path: &str) -> Result<(), String> {
+fn unmark_file_as_viewed_sync(node_id: &str, file_path: &str) -> Result<(), PrError> {
     let mutation = format!(
         r#"mutation {{ unmarkFileAsViewed(input: {{ pullRequestId: "{}", path: "{}" }}) {{ clientMutationId }} }}"#,
         node_id, file_path
@@ -352,7 +352,7 @@ fn unmark_file_as_viewed_sync(node_id: &str, file_path: &str) -> Result<(), Stri
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(stderr.trim().to_string());
+        return Err(PrError::Other(stderr.trim().to_string()));
     }
 
     Ok(())
@@ -362,7 +362,7 @@ fn unmark_file_as_viewed_sync(node_id: &str, file_path: &str) -> Result<(), Stri
 // File diffs (gh pr diff + parallel contents fetch)
 // ---------------------------------------------------------------------------
 
-fn load_pr_file_diffs(pr_info: &PrInfo) -> Result<Vec<FileDiff>, String> {
+fn load_pr_file_diffs(pr_info: &PrInfo) -> Result<Vec<FileDiff>, PrError> {
     let repo_arg = format!("{}/{}", pr_info.repo_owner, pr_info.repo_name);
 
     let mut spinner = Spinner::new(
@@ -390,7 +390,7 @@ fn load_pr_file_diffs(pr_info: &PrInfo) -> Result<Vec<FileDiff>, String> {
         Err(e) => {
             let msg = format!("Failed to run gh pr diff: {}", e);
             spinner.fail(&msg);
-            return Err(msg);
+            return Err(PrError::Other(msg));
         }
     };
 
@@ -398,7 +398,7 @@ fn load_pr_file_diffs(pr_info: &PrInfo) -> Result<Vec<FileDiff>, String> {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let msg = format!("gh pr diff failed: {}", stderr.trim());
         spinner.fail(&msg);
-        return Err(msg);
+        return Err(PrError::Other(msg));
     }
 
     let diff_output = String::from_utf8_lossy(&output.stdout);

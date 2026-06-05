@@ -24,6 +24,7 @@ use tokio::task::JoinSet;
 
 use crate::command::diff::git::{build_file_diff, percent_encode};
 use crate::command::diff::types::FileDiff;
+use crate::command::diff::pr_provider::PrError;
 use crate::command::diff::PrInfo;
 
 const API_VERSION: &str = "7.1";
@@ -60,7 +61,7 @@ struct AdoClient {
 }
 
 impl AdoClient {
-    fn new(org_url: &str, project: &str, repo: &str) -> Result<Self, String> {
+    fn new(org_url: &str, project: &str, repo: &str) -> Result<Self, PrError> {
         Ok(Self {
             http: reqwest::Client::new(),
             base: org_url.trim_end_matches('/').to_string(),
@@ -87,7 +88,7 @@ impl AdoClient {
         )
     }
 
-    async fn get_json(&self, url: &str) -> Result<Value, String> {
+    async fn get_json(&self, url: &str) -> Result<Value, PrError> {
         let resp = self
             .authed(self.http.get(url))
             .header(ACCEPT, "application/json")
@@ -99,13 +100,13 @@ impl AdoClient {
         if !status.is_success() {
             return Err(auth_hint(status, &body));
         }
-        serde_json::from_str(&body).map_err(|e| format!("invalid JSON from Azure: {}", e))
+        serde_json::from_str(&body).map_err(|e| PrError::Other(format!("invalid JSON from Azure: {}", e)))
     }
 
     /// Fetch a blob's text content. An absent `blob_id` (the missing side of an
     /// add/delete) is `Ok("")`; a failed fetch is an `Err` so it can't silently
     /// empty a side and flip the file's status to Added/Deleted downstream.
-    async fn blob_text(&self, blob_id: Option<&str>) -> Result<String, String> {
+    async fn blob_text(&self, blob_id: Option<&str>) -> Result<String, PrError> {
         let Some(blob_id) = blob_id else {
             return Ok(String::new());
         };
@@ -134,7 +135,7 @@ impl AdoClient {
         Ok(String::from_utf8_lossy(&bytes).into_owned())
     }
 
-    async fn latest_iteration(&self, pr_id: u64) -> Result<u64, String> {
+    async fn latest_iteration(&self, pr_id: u64) -> Result<u64, PrError> {
         let url = format!(
             "{}?api-version={}",
             self.git_url(&format!(
@@ -148,12 +149,12 @@ impl AdoClient {
         json.get("value")
             .and_then(|v| v.as_array())
             .and_then(|arr| arr.iter().filter_map(|i| i.get("id")?.as_u64()).max())
-            .ok_or_else(|| "PR has no iterations".to_string())
+            .ok_or_else(|| PrError::Other("PR has no iterations".to_string()))
     }
 
     /// All change entries for `iteration`, compared against the merge base
     /// (`$compareTo=0`), following `$skip`/`$top` pagination.
-    async fn changes(&self, pr_id: u64, iteration: u64) -> Result<Vec<ChangeEntry>, String> {
+    async fn changes(&self, pr_id: u64, iteration: u64) -> Result<Vec<ChangeEntry>, PrError> {
         let mut entries = Vec::new();
         let mut skip = 0usize;
         loop {
@@ -192,12 +193,12 @@ impl AdoClient {
         Ok(entries)
     }
 
-    async fn load_file_diffs(&self, pr_id: u64) -> Result<Vec<FileDiff>, String> {
+    async fn load_file_diffs(&self, pr_id: u64) -> Result<Vec<FileDiff>, PrError> {
         let iteration = self.latest_iteration(pr_id).await?;
         let changes = self.changes(pr_id, iteration).await?;
 
         let sem = Arc::new(Semaphore::new(BLOB_CONCURRENCY));
-        let mut set: JoinSet<Result<(usize, FileDiff), String>> = JoinSet::new();
+        let mut set: JoinSet<Result<(usize, FileDiff), PrError>> = JoinSet::new();
         for (idx, change) in changes.into_iter().enumerate() {
             let client = self.clone();
             let sem = Arc::clone(&sem);
@@ -275,7 +276,7 @@ pub fn fetch_pr_metadata(
     project: &str,
     repo: &str,
     pr_id: u64,
-) -> Result<AzurePrMeta, String> {
+) -> Result<AzurePrMeta, PrError> {
     let client = AdoClient::new(org_url, project, repo)?;
     block_on(async move {
         // PR detail is project-scoped (not repo-scoped) in the REST API.
@@ -313,7 +314,7 @@ pub fn detect_active_pr(
     project: &str,
     repo: &str,
     branch: &str,
-) -> Result<u64, String> {
+) -> Result<u64, PrError> {
     let client = AdoClient::new(org_url, project, repo)?;
     block_on(async move {
         let url = format!(
@@ -328,11 +329,11 @@ pub fn detect_active_pr(
             .and_then(|arr| arr.first())
             .and_then(|pr| pr.get("pullRequestId"))
             .and_then(|v| v.as_u64())
-            .ok_or_else(|| format!("No active PR found for branch {}", branch))
+            .ok_or_else(|| PrError::NotFound(format!("No active PR found for branch {}", branch)))
     })
 }
 
-pub fn load_pr_file_diffs(pr: &PrInfo) -> Result<Vec<FileDiff>, String> {
+pub fn load_pr_file_diffs(pr: &PrInfo) -> Result<Vec<FileDiff>, PrError> {
     let org_url = pr
         .org_url
         .as_deref()
@@ -357,7 +358,7 @@ fn block_on<F: std::future::Future>(fut: F) -> F::Output {
     tokio::task::block_in_place(|| tokio::runtime::Handle::current().block_on(fut))
 }
 
-fn resolve_auth() -> Result<AdoAuth, String> {
+fn resolve_auth() -> Result<AdoAuth, PrError> {
     for var in ["ADO_PAT", "AZURE_DEVOPS_EXT_PAT", "AZURE_DEVOPS_PAT"] {
         if let Ok(pat) = env::var(var) {
             if !pat.trim().is_empty() {
@@ -377,34 +378,47 @@ fn resolve_auth() -> Result<AdoAuth, String> {
         ])
         .output()
         .map_err(|e| {
-            format!(
+            PrError::Auth(format!(
                 "No Azure DevOps credentials: set ADO_PAT or install the Azure CLI and run `az login` ({})",
                 e
-            )
+            ))
         })?;
     if !output.status.success() {
-        return Err(
+        return Err(PrError::Auth(
             "No Azure DevOps credentials: set ADO_PAT, or run `az login` to use the Azure CLI."
                 .to_string(),
-        );
+        ));
     }
     let json: Value = serde_json::from_slice(&output.stdout)
         .map_err(|e| format!("Could not parse az token output: {}", e))?;
     json.get("accessToken")
         .and_then(|v| v.as_str())
         .map(|t| AdoAuth::Bearer(t.to_string()))
-        .ok_or_else(|| "az returned no access token".to_string())
+        .ok_or_else(|| PrError::Auth("az returned no access token".to_string()))
 }
 
-fn auth_hint(status: reqwest::StatusCode, body: &str) -> String {
-    if status == reqwest::StatusCode::UNAUTHORIZED {
-        return "Azure DevOps auth failed (401). Check ADO_PAT scopes (Code: Read) or run `az login`.".to_string();
+fn auth_hint(status: reqwest::StatusCode, body: &str) -> PrError {
+    use reqwest::StatusCode;
+    match status {
+        StatusCode::UNAUTHORIZED => PrError::Auth(
+            "Azure DevOps auth failed (401). Check ADO_PAT scopes (Code: Read) or run `az login`."
+                .to_string(),
+        ),
+        StatusCode::FORBIDDEN => PrError::Auth(
+            "Azure DevOps returned 403. The token lacks access to this repository.".to_string(),
+        ),
+        StatusCode::NOT_FOUND => PrError::NotFound(
+            "Azure DevOps returned 404 (PR or repository not found).".to_string(),
+        ),
+        _ => {
+            let snippet: String = body.chars().take(200).collect();
+            PrError::Other(format!(
+                "Azure DevOps request failed ({}): {}",
+                status,
+                snippet.trim()
+            ))
+        }
     }
-    if status == reqwest::StatusCode::FORBIDDEN {
-        return "Azure DevOps returned 403. The token lacks access to this repository.".to_string();
-    }
-    let snippet: String = body.chars().take(200).collect();
-    format!("Azure DevOps request failed ({}): {}", status, snippet.trim())
 }
 
 #[cfg(test)]

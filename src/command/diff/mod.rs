@@ -72,7 +72,7 @@ pub fn run_diff_ui(mut options: DiffOptions, backend: &dyn VcsBackend) -> io::Re
                 options.pr = Some(number);
             }
             Err(e) => {
-                spinner.fail(&e);
+                spinner.fail(&e.to_string());
                 process::exit(1);
             }
         }
@@ -87,7 +87,7 @@ pub fn run_diff_ui(mut options: DiffOptions, backend: &dyn VcsBackend) -> io::Re
                 return app::run_app_with_pr(options, pr_info, backend);
             }
             Err(e) => {
-                spinner.fail(&e);
+                spinner.fail(&e.to_string());
                 process::exit(1);
             }
         }
@@ -103,7 +103,7 @@ pub fn run_diff_ui(mut options: DiffOptions, backend: &dyn VcsBackend) -> io::Re
                     return app::run_app_with_pr(options, pr_info, backend);
                 }
                 Err(e) => {
-                    spinner.fail(&e);
+                    spinner.fail(&e.to_string());
                     process::exit(1);
                 }
             }
