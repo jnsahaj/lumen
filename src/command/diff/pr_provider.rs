@@ -11,7 +11,7 @@ use std::process::Command;
 use std::thread;
 
 use super::azure;
-use super::git::github_load_pr_file_diffs;
+use super::git::{github_load_pr_file_diffs, percent_encode};
 use super::types::FileDiff;
 use super::{
     github_detect_current_branch_pr, github_fetch_pr_info, github_fetch_viewed_files,
@@ -350,7 +350,7 @@ impl PrProvider for AzureProvider {
             project,
             pr.repo_name,
             pr.number,
-            encode_path(&format!("/{}", filename))
+            percent_encode(&format!("/{}", filename))
         ))
     }
 }
@@ -470,23 +470,6 @@ fn decode_component(segment: &str) -> String {
     segment.replace("%20", " ")
 }
 
-/// Minimal percent-encoding for an Azure `?path=` query value.
-fn encode_path(path: &str) -> String {
-    use std::fmt::Write;
-    let mut out = String::with_capacity(path.len());
-    for b in path.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(b as char)
-            }
-            _ => {
-                let _ = write!(out, "%{:02X}", b);
-            }
-        }
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -559,7 +542,7 @@ mod tests {
 
     #[test]
     fn encodes_path_query() {
-        assert_eq!(encode_path("/src/main.rs"), "%2Fsrc%2Fmain.rs");
+        assert_eq!(percent_encode("/src/main.rs"), "%2Fsrc%2Fmain.rs");
     }
 
     #[test]

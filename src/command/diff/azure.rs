@@ -22,7 +22,7 @@ use serde_json::Value;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
-use super::git::build_file_diff;
+use super::git::{build_file_diff, percent_encode};
 use super::types::FileDiff;
 use super::PrInfo;
 
@@ -82,7 +82,7 @@ impl AdoClient {
         format!(
             "{}/{}/_apis/git/{}",
             self.base,
-            enc(&self.project),
+            percent_encode(&self.project),
             suffix
         )
     }
@@ -102,34 +102,36 @@ impl AdoClient {
         serde_json::from_str(&body).map_err(|e| format!("invalid JSON from Azure: {}", e))
     }
 
-    /// Fetch a blob's text content. Returns empty string when `blob_id` is None
-    /// (the absent side of an add/delete) or on any error.
-    async fn blob_text(&self, blob_id: Option<&str>) -> String {
+    /// Fetch a blob's text content. An absent `blob_id` (the missing side of an
+    /// add/delete) is `Ok("")`; a failed fetch is an `Err` so it can't silently
+    /// empty a side and flip the file's status to Added/Deleted downstream.
+    async fn blob_text(&self, blob_id: Option<&str>) -> Result<String, String> {
         let Some(blob_id) = blob_id else {
-            return String::new();
+            return Ok(String::new());
         };
         let url = format!(
             "{}?$format=text&api-version={}",
-            self.git_url(&format!("repositories/{}/blobs/{}", enc(&self.repo), blob_id)),
+            self.git_url(&format!("repositories/{}/blobs/{}", percent_encode(&self.repo), blob_id)),
             API_VERSION
         );
-        let Ok(resp) = self
+        let resp = self
             .authed(self.http.get(&url))
             .header(ACCEPT, "text/plain")
             .send()
             .await
-        else {
-            return String::new();
-        };
-        if !resp.status().is_success() {
-            return String::new();
+            .map_err(|e| format!("blob {} request failed: {}", blob_id, e))?;
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(auth_hint(status, &body));
         }
         // Read as bytes then lossy-decode so binary blobs degrade gracefully
         // (build_file_diff flags them as binary downstream).
-        match resp.bytes().await {
-            Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
-            Err(_) => String::new(),
-        }
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| format!("blob {} read failed: {}", blob_id, e))?;
+        Ok(String::from_utf8_lossy(&bytes).into_owned())
     }
 
     async fn latest_iteration(&self, pr_id: u64) -> Result<u64, String> {
@@ -137,7 +139,7 @@ impl AdoClient {
             "{}?api-version={}",
             self.git_url(&format!(
                 "repositories/{}/pullRequests/{}/iterations",
-                enc(&self.repo),
+                percent_encode(&self.repo),
                 pr_id
             )),
             API_VERSION
@@ -159,7 +161,7 @@ impl AdoClient {
                 "{}?$compareTo=0&$top={}&$skip={}&api-version={}",
                 self.git_url(&format!(
                     "repositories/{}/pullRequests/{}/iterations/{}/changes",
-                    enc(&self.repo),
+                    percent_encode(&self.repo),
                     pr_id,
                     iteration
                 )),
@@ -195,22 +197,23 @@ impl AdoClient {
         let changes = self.changes(pr_id, iteration).await?;
 
         let sem = Arc::new(Semaphore::new(BLOB_CONCURRENCY));
-        let mut set: JoinSet<(usize, FileDiff)> = JoinSet::new();
+        let mut set: JoinSet<Result<(usize, FileDiff), String>> = JoinSet::new();
         for (idx, change) in changes.into_iter().enumerate() {
             let client = self.clone();
             let sem = Arc::clone(&sem);
             set.spawn(async move {
-                let _permit = sem.acquire_owned().await;
-                let old = client.blob_text(change.old_blob.as_deref()).await;
-                let new = client.blob_text(change.new_blob.as_deref()).await;
-                (idx, build_file_diff(change.path, old, new))
+                let _permit = sem.acquire_owned().await.expect("blob semaphore not closed");
+                let old = client.blob_text(change.old_blob.as_deref()).await?;
+                let new = client.blob_text(change.new_blob.as_deref()).await?;
+                Ok((idx, build_file_diff(change.path, old, new)))
             });
         }
 
         // Reassemble in the original change order.
         let mut out: Vec<Option<FileDiff>> = Vec::new();
         while let Some(res) = set.join_next().await {
-            let (idx, diff) = res.map_err(|e| format!("blob fetch task failed: {}", e))?;
+            // Outer `?`: the task panicked. Inner `?`: a blob fetch failed.
+            let (idx, diff) = res.map_err(|e| format!("blob fetch task failed: {}", e))??;
             if idx >= out.len() {
                 out.resize_with(idx + 1, || None);
             }
@@ -315,8 +318,8 @@ pub fn detect_active_pr(
     block_on(async move {
         let url = format!(
             "{}?searchCriteria.status=active&searchCriteria.sourceRefName={}&api-version={}",
-            client.git_url(&format!("repositories/{}/pullrequests", enc(repo))),
-            enc(&format!("refs/heads/{}", branch)),
+            client.git_url(&format!("repositories/{}/pullrequests", percent_encode(repo))),
+            percent_encode(&format!("refs/heads/{}", branch)),
             API_VERSION
         );
         let json = client.get_json(&url).await?;
@@ -394,7 +397,7 @@ fn resolve_auth() -> Result<AdoAuth, String> {
 }
 
 fn auth_hint(status: reqwest::StatusCode, body: &str) -> String {
-    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::NON_AUTHORITATIVE_INFORMATION {
+    if status == reqwest::StatusCode::UNAUTHORIZED {
         return "Azure DevOps auth failed (401). Check ADO_PAT scopes (Code: Read) or run `az login`.".to_string();
     }
     if status == reqwest::StatusCode::FORBIDDEN {
@@ -402,23 +405,6 @@ fn auth_hint(status: reqwest::StatusCode, body: &str) -> String {
     }
     let snippet: String = body.chars().take(200).collect();
     format!("Azure DevOps request failed ({}): {}", status, snippet.trim())
-}
-
-/// Percent-encode one URL path/query segment (keeps RFC 3986 unreserved chars).
-fn enc(segment: &str) -> String {
-    use std::fmt::Write;
-    let mut out = String::with_capacity(segment.len());
-    for b in segment.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(b as char)
-            }
-            _ => {
-                let _ = write!(out, "%{:02X}", b);
-            }
-        }
-    }
-    out
 }
 
 #[cfg(test)]
@@ -475,8 +461,8 @@ mod tests {
 
     #[test]
     fn encodes_segments() {
-        assert_eq!(enc("My Project"), "My%20Project");
-        assert_eq!(enc("refs/heads/feature/x"), "refs%2Fheads%2Ffeature%2Fx");
-        assert_eq!(enc("simple-repo.git"), "simple-repo.git");
+        assert_eq!(percent_encode("My Project"), "My%20Project");
+        assert_eq!(percent_encode("refs/heads/feature/x"), "refs%2Fheads%2Ffeature%2Fx");
+        assert_eq!(percent_encode("simple-repo.git"), "simple-repo.git");
     }
 }
