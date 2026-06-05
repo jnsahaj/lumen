@@ -9,9 +9,11 @@
 //! against the PR's merge base — the same three-dot view the Azure web UI shows,
 //! rather than a raw tip-to-tip comparison.
 //!
-//! Auth resolves to a PAT (`ADO_PAT` / `AZURE_DEVOPS_EXT_PAT`) via HTTP Basic,
-//! or falls back to a bearer token from `az account get-access-token`. Only core
-//! `az` (or a PAT) is required — not the `azure-devops` extension.
+//! Auth: `az login` alone is enough — we mint a bearer token via `az account
+//! get-access-token`. Alternatively set a PAT in `AZURE_DEVOPS_EXT_PAT` (the
+//! conventional var; `AZURE_DEVOPS_PAT` / `ADO_PAT` also work), sent via HTTP
+//! Basic. Only core `az` (or a PAT) is required — not the `azure-devops`
+//! extension.
 
 use std::env;
 use std::process::Command;
@@ -402,7 +404,9 @@ fn block_on<F: std::future::Future>(fut: F) -> F::Output {
 }
 
 fn resolve_auth() -> Result<AdoAuth, PrError> {
-    for var in ["ADO_PAT", "AZURE_DEVOPS_EXT_PAT", "AZURE_DEVOPS_PAT"] {
+    // `AZURE_DEVOPS_EXT_PAT` is the conventional Azure DevOps PAT var (read by
+    // the `az devops` CLI extension); the others are accepted as aliases.
+    for var in ["AZURE_DEVOPS_EXT_PAT", "AZURE_DEVOPS_PAT", "ADO_PAT"] {
         if let Ok(pat) = env::var(var) {
             if !pat.trim().is_empty() {
                 return Ok(AdoAuth::Pat(pat));
@@ -422,14 +426,13 @@ fn resolve_auth() -> Result<AdoAuth, PrError> {
         .output()
         .map_err(|e| {
             PrError::Auth(format!(
-                "No Azure DevOps credentials: set ADO_PAT or install the Azure CLI and run `az login` ({})",
+                "No Azure DevOps credentials: run `az login`, or set AZURE_DEVOPS_EXT_PAT ({})",
                 e
             ))
         })?;
     if !output.status.success() {
         return Err(PrError::Auth(
-            "No Azure DevOps credentials: set ADO_PAT, or run `az login` to use the Azure CLI."
-                .to_string(),
+            "No Azure DevOps credentials: run `az login`, or set AZURE_DEVOPS_EXT_PAT.".to_string(),
         ));
     }
     let token: TokenResponse = serde_json::from_slice(&output.stdout)
@@ -451,7 +454,7 @@ fn auth_hint(status: reqwest::StatusCode, body: &str) -> PrError {
     use reqwest::StatusCode;
     match status {
         StatusCode::UNAUTHORIZED => PrError::Auth(
-            "Azure DevOps auth failed (401). Check ADO_PAT scopes (Code: Read) or run `az login`."
+            "Azure DevOps auth failed (401). Check your PAT scopes (Code: Read) or run `az login`."
                 .to_string(),
         ),
         StatusCode::FORBIDDEN => PrError::Auth(
