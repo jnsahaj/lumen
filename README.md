@@ -53,7 +53,7 @@ Before you begin, ensure you have:
 2. [fzf](https://github.com/junegunn/fzf) (optional) - Required for `lumen explain --list` command
 3. [mdcat](https://github.com/swsnr/mdcat) (optional) - Required for pretty output formatting
 4. [GitHub CLI (`gh`)](https://cli.github.com/) (optional) - Required for reviewing GitHub Pull Requests
-5. Azure DevOps Pull Requests (optional) - Sign in with the [Azure CLI (`az`)](https://learn.microsoft.com/cli/azure/) via `az login` (simplest), or set a Personal Access Token in `AZURE_DEVOPS_EXT_PAT` (scope: *Code → Read*). The `azure-devops` extension is **not** required.
+5. [Azure CLI (`az`)](https://learn.microsoft.com/cli/azure/) (optional) - Required for reviewing Azure DevOps Pull Requests (sign in with `az login`, or set `AZURE_DEVOPS_EXT_PAT`)
 
 ### Installation
 
