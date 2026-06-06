@@ -153,6 +153,7 @@ LUMEN_THEME=catppuccin-mocha lumen diff
 | One Dark | `one-dark` |
 | Gruvbox | `gruvbox-dark`, `gruvbox-light` |
 | Solarized | `solarized-dark`, `solarized-light` |
+| Flexoki | `flexoki-dark`, `flexoki-light` |
 
 Priority: CLI flag > config file > `LUMEN_THEME` env var > OS auto-detect.
 

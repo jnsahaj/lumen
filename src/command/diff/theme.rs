@@ -23,6 +23,8 @@ pub enum ThemePreset {
     OneDark,
     SolarizedDark,
     SolarizedLight,
+    FlexokiDark,
+    FlexokiLight,
 }
 
 impl FromStr for ThemePreset {
@@ -41,8 +43,10 @@ impl FromStr for ThemePreset {
             "one-dark" | "onedark" => Ok(Self::OneDark),
             "solarized-dark" => Ok(Self::SolarizedDark),
             "solarized-light" => Ok(Self::SolarizedLight),
+            "flexoki-dark" => Ok(Self::FlexokiDark),
+            "flexoki-light" => Ok(Self::FlexokiLight),
             _ => Err(format!(
-                "Unknown theme '{}'. Valid: default-dark, default-light, catppuccin-mocha, catppuccin-latte, dracula, nord, gruvbox-dark, gruvbox-light, one-dark, solarized-dark, solarized-light",
+                "Unknown theme '{}'. Valid: default-dark, default-light, catppuccin-mocha, catppuccin-latte, dracula, nord, gruvbox-dark, gruvbox-light, one-dark, solarized-dark, solarized-light, flexoki-dark, flexoki-light",
                 s
             )),
         }
@@ -273,6 +277,8 @@ impl Theme {
             ThemePreset::OneDark => Self::one_dark(),
             ThemePreset::SolarizedDark => Self::solarized_dark(),
             ThemePreset::SolarizedLight => Self::solarized_light(),
+            ThemePreset::FlexokiDark => Self::flexoki_dark(),
+            ThemePreset::FlexokiLight => Self::flexoki_light(),
         }
     }
 
@@ -316,7 +322,7 @@ impl Theme {
                 text_secondary: Color::Rgb(166, 173, 200),   // subtext0
                 text_muted: Color::Rgb(108, 112, 134),       // overlay0
                 line_number: Color::Rgb(88, 91, 112),        // overlay0
-                bg: Color::Rgb(24, 24, 37),           // mantle
+                bg: Color::Rgb(24, 24, 37),                  // mantle
                 footer_branch_bg: Color::Rgb(49, 50, 68),    // surface0
                 footer_branch_fg: Color::Rgb(137, 180, 250), // blue
                 status_added: Color::Rgb(166, 227, 161),     // green
@@ -499,7 +505,7 @@ impl Theme {
                 text_secondary: Color::Rgb(216, 222, 233), // nord4
                 text_muted: Color::Rgb(76, 86, 106),       // nord3
                 line_number: Color::Rgb(76, 86, 106),
-                bg: Color::Rgb(59, 66, 82),        // nord1
+                bg: Color::Rgb(59, 66, 82),               // nord1
                 footer_branch_bg: Color::Rgb(67, 76, 94), // nord2
                 footer_branch_fg: Color::Rgb(136, 192, 208),
                 status_added: Color::Rgb(163, 190, 140),
@@ -821,6 +827,128 @@ impl Theme {
                 search_match_fg: Color::White,
                 search_current_bg: Color::Rgb(203, 75, 22),
                 search_current_fg: Color::White,
+            },
+        }
+    }
+
+    pub fn flexoki_dark() -> Self {
+        Self {
+            mode: ThemeMode::Dark,
+            syntax: SyntaxColors {
+                comment: Color::Rgb(87, 86, 83),           // tx-3
+                keyword: Color::Rgb(135, 154, 57),         // green-400
+                string: Color::Rgb(58, 169, 159),          // cyan-400
+                number: Color::Rgb(139, 126, 200),         // purple-400
+                function: Color::Rgb(218, 112, 44),        // orange-400
+                function_macro: Color::Rgb(206, 93, 151),  // magenta-400
+                r#type: Color::Rgb(208, 162, 21),          // yellow-400
+                variable_builtin: Color::Rgb(209, 77, 65), // red-400
+                variable_member: Color::Rgb(67, 133, 190), // blue-400
+                module: Color::Rgb(218, 112, 44),          // orange-400
+                operator: Color::Rgb(206, 205, 195),       // tx-2
+                tag: Color::Rgb(135, 154, 57),             // green-400
+                attribute: Color::Rgb(67, 133, 190),       // blue-400
+                label: Color::Rgb(206, 93, 151),           // magenta-400
+                punctuation: Color::Rgb(206, 205, 195),    // tx-2
+                default_text: Color::Rgb(206, 205, 195),   // tx
+            },
+            diff: DiffColors {
+                added_bg: Color::Rgb(26, 30, 12),             // green-950
+                added_gutter_bg: Color::Rgb(49, 61, 7),       // green-850
+                added_gutter_fg: Color::Rgb(135, 154, 57),    // green-400
+                deleted_bg: Color::Rgb(38, 19, 18),           // red-950
+                deleted_gutter_bg: Color::Rgb(85, 27, 24),    // red-850
+                deleted_gutter_fg: Color::Rgb(209, 77, 65),   // red-400
+                context_bg: Color::Rgb(16, 15, 15),           // bg
+                empty_placeholder_fg: Color::Rgb(40, 39, 38), // ui
+                added_word_bg: Color::Rgb(61, 76, 7),         // green-800
+                deleted_word_bg: Color::Rgb(108, 32, 28),     // red-800
+            },
+            ui: UiColors {
+                border_focused: Color::Rgb(58, 169, 159),  // cyan-400
+                border_unfocused: Color::Rgb(40, 39, 38),  // ui
+                text_primary: Color::Rgb(206, 205, 195),   // tx
+                text_secondary: Color::Rgb(183, 181, 172), // tx-2
+                text_muted: Color::Rgb(87, 86, 83),        // tx-3
+                line_number: Color::Rgb(87, 86, 83),       // tx-3
+                bg: Color::Rgb(28, 27, 26),                // bg-2
+                footer_branch_bg: Color::Rgb(52, 51, 49),  // ui-2
+                footer_branch_fg: Color::Rgb(58, 169, 159),
+                status_added: Color::Rgb(135, 154, 57),
+                status_modified: Color::Rgb(208, 162, 21),
+                status_deleted: Color::Rgb(209, 77, 65),
+                stats_added: Color::Rgb(135, 154, 57),
+                stats_removed: Color::Rgb(209, 77, 65),
+                selection_bg: Color::Rgb(58, 169, 159),
+                selection_fg: Color::Rgb(16, 15, 15),
+                highlight: Color::Rgb(208, 162, 21),
+                viewed: Color::Rgb(135, 154, 57),
+                watching: Color::Rgb(208, 162, 21),
+                search_match_bg: Color::Rgb(80, 61, 2),
+                search_match_fg: Color::Rgb(250, 238, 198),
+                search_current_bg: Color::Rgb(218, 112, 44),
+                search_current_fg: Color::Rgb(16, 15, 15),
+            },
+        }
+    }
+
+    pub fn flexoki_light() -> Self {
+        Self {
+            mode: ThemeMode::Light,
+            syntax: SyntaxColors {
+                comment: Color::Rgb(183, 181, 172),        // tx-3
+                keyword: Color::Rgb(102, 128, 11),         // green-600
+                string: Color::Rgb(36, 131, 123),          // cyan-600
+                number: Color::Rgb(94, 64, 157),           // purple-600
+                function: Color::Rgb(188, 82, 21),         // orange-600
+                function_macro: Color::Rgb(160, 47, 111),  // magenta-600
+                r#type: Color::Rgb(173, 131, 1),           // yellow-600
+                variable_builtin: Color::Rgb(175, 48, 41), // red-600
+                variable_member: Color::Rgb(32, 94, 166),  // blue-600
+                module: Color::Rgb(188, 82, 21),           // orange-600
+                operator: Color::Rgb(111, 110, 105),       // tx-2
+                tag: Color::Rgb(102, 128, 11),             // green-600
+                attribute: Color::Rgb(32, 94, 166),        // blue-600
+                label: Color::Rgb(160, 47, 111),           // magenta-600
+                punctuation: Color::Rgb(111, 110, 105),    // tx-2
+                default_text: Color::Rgb(16, 15, 15),      // tx
+            },
+            diff: DiffColors {
+                added_bg: Color::Rgb(237, 238, 207),             // green-50
+                added_gutter_bg: Color::Rgb(205, 213, 151),      // green-150
+                added_gutter_fg: Color::Rgb(102, 128, 11),       // green-600
+                deleted_bg: Color::Rgb(255, 225, 213),           // red-50
+                deleted_gutter_bg: Color::Rgb(253, 178, 162),    // red-150
+                deleted_gutter_fg: Color::Rgb(175, 48, 41),      // red-600
+                context_bg: Color::Rgb(255, 252, 240),           // bg
+                empty_placeholder_fg: Color::Rgb(230, 228, 217), // ui
+                added_word_bg: Color::Rgb(190, 201, 126),        // green-200
+                deleted_word_bg: Color::Rgb(248, 154, 138),      // red-200
+            },
+            ui: UiColors {
+                border_focused: Color::Rgb(36, 131, 123),    // cyan-600
+                border_unfocused: Color::Rgb(230, 228, 217), // ui
+                text_primary: Color::Rgb(16, 15, 15),        // tx
+                text_secondary: Color::Rgb(111, 110, 105),   // tx-2
+                text_muted: Color::Rgb(183, 181, 172),       // tx-3
+                line_number: Color::Rgb(183, 181, 172),      // tx-3
+                bg: Color::Rgb(242, 240, 229),               // bg-2
+                footer_branch_bg: Color::Rgb(218, 216, 206), // ui-2
+                footer_branch_fg: Color::Rgb(36, 131, 123),
+                status_added: Color::Rgb(102, 128, 11),
+                status_modified: Color::Rgb(173, 131, 1),
+                status_deleted: Color::Rgb(175, 48, 41),
+                stats_added: Color::Rgb(102, 128, 11),
+                stats_removed: Color::Rgb(175, 48, 41),
+                selection_bg: Color::Rgb(36, 131, 123),
+                selection_fg: Color::White,
+                highlight: Color::Rgb(173, 131, 1),
+                viewed: Color::Rgb(102, 128, 11),
+                watching: Color::Rgb(173, 131, 1),
+                search_match_bg: Color::Rgb(246, 226, 160),
+                search_match_fg: Color::Rgb(16, 15, 15),
+                search_current_bg: Color::Rgb(236, 139, 73),
+                search_current_fg: Color::Rgb(16, 15, 15),
             },
         }
     }
