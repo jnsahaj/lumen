@@ -76,21 +76,14 @@ impl ViewedSync for GitHubProvider {
     }
 }
 
-// ---------------------------------------------------------------------------
-// PR metadata
-// ---------------------------------------------------------------------------
-
 fn parse_pr_input(input: &str) -> Option<(Option<String>, Option<String>, u64)> {
-    // Try to parse as a URL first
     if input.starts_with("http://") || input.starts_with("https://") {
-        // Extract PR number and repo info from URL
         // Format: https://github.com/owner/repo/pull/123
         let parts: Vec<&str> = input.trim_end_matches('/').split('/').collect();
         if parts.len() >= 2 {
             if let Some(pos) = parts.iter().position(|&p| p == "pull") {
                 if pos + 1 < parts.len() {
                     if let Ok(num) = parts[pos + 1].parse::<u64>() {
-                        // Extract owner and repo
                         if pos >= 2 {
                             let owner = parts[pos - 2].to_string();
                             let repo = parts[pos - 1].to_string();
@@ -103,7 +96,6 @@ fn parse_pr_input(input: &str) -> Option<(Option<String>, Option<String>, u64)> 
         }
         None
     } else {
-        // Try to parse as a PR number
         input.parse::<u64>().ok().map(|num| (None, None, num))
     }
 }
@@ -278,10 +270,6 @@ fn file_anchor(filename: &str) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-// ---------------------------------------------------------------------------
-// Viewed-file state
-// ---------------------------------------------------------------------------
-
 #[derive(Deserialize)]
 struct PrFiles {
     files: FileConnection,
@@ -375,10 +363,6 @@ fn unmark_file_as_viewed_sync(node_id: &str, file_path: &str) -> Result<(), PrEr
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// File diffs (gh pr diff + parallel contents fetch)
-// ---------------------------------------------------------------------------
-
 fn load_pr_file_diffs(pr_info: &PrInfo) -> Result<Vec<FileDiff>, PrError> {
     let repo_arg = format!("{}/{}", pr_info.repo_owner, pr_info.repo_name);
 
@@ -391,7 +375,6 @@ fn load_pr_file_diffs(pr_info: &PrInfo) -> Result<Vec<FileDiff>, PrError> {
         Color::Cyan,
     );
 
-    // Get PR diff to find changed files
     let output = Command::new("gh")
         .args([
             "pr",

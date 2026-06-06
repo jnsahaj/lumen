@@ -298,10 +298,6 @@ impl RawChange {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Public sync entry points (bridge the async client onto the sync diff path)
-// ---------------------------------------------------------------------------
-
 /// The PR detail endpoint, reduced to the refs and repo name we display.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -391,10 +387,6 @@ pub fn load_pr_file_diffs(pr: &PrInfo) -> Result<Vec<FileDiff>, PrError> {
     let pr_id = pr.number;
     block_on(async move { client.load_file_diffs(pr_id).await })
 }
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 /// Run an async future to completion from the synchronous diff path. `main` is
 /// a multi-threaded `#[tokio::main]`, so we mark the current worker as blocking

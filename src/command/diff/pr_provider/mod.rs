@@ -112,10 +112,6 @@ pub trait ViewedSync {
     fn set(&self, pr: &PrInfo, path: &str, viewed: bool) -> Result<(), PrError>;
 }
 
-// ---------------------------------------------------------------------------
-// Provider registry & selection
-// ---------------------------------------------------------------------------
-
 /// All compiled-in providers. Detection iterates this; adding a forge is one
 /// new module plus one entry here. Both providers are zero-sized, so the
 /// `&'static` references cost nothing.
@@ -168,10 +164,6 @@ fn provider_for_input(input: &str, repo_override: Option<&str>) -> &'static dyn 
     }
     provider_for_origin(repo_override)
 }
-
-// ---------------------------------------------------------------------------
-// Dispatchers used by the rest of the diff UI
-// ---------------------------------------------------------------------------
 
 pub fn fetch_pr_info(input: &str, repo_override: Option<&str>) -> Result<PrInfo, PrError> {
     provider_for_input(input, repo_override).fetch_pr_info(input, repo_override)
