@@ -238,6 +238,7 @@ mod tests {
         assert!(extensions.contains(&"json"), "JSON config should be loaded");
         assert!(extensions.contains(&"ex"), "Elixir config should be loaded");
         assert!(extensions.contains(&"exs"), "Elixir script config should be loaded");
+        assert!(extensions.contains(&"java"), "Java config should be loaded");
         assert!(extensions.contains(&"zig"), "Zig config should be loaded");
     }
 
@@ -301,6 +302,22 @@ end
         assert!(!result.is_empty(), "Elixir highlighting should produce output");
         let has_highlights = result.iter().any(|(_, h)| h.is_some());
         assert!(has_highlights, "Elixir code should have syntax highlights");
+    }
+
+    #[test]
+    fn test_java_highlighting() {
+        let code = r#"package com.example;
+
+public class Hello {
+    public static void main(String[] args) {
+        System.out.println("Hello, Java!");
+    }
+}
+"#;
+        let result = highlight_code(code, "test.java");
+        assert!(!result.is_empty(), "Java highlighting should produce output");
+        let has_highlights = result.iter().any(|(_, h)| h.is_some());
+        assert!(has_highlights, "Java code should have syntax highlights");
     }
 
     #[test]
