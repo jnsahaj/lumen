@@ -1313,7 +1313,9 @@ fn run_app_internal(
                                     {
                                         state.sidebar_selected = prev;
                                         state.select_file(file_index);
-                                        ensure_sidebar_visible(&mut state, usize::MAX);
+                                        let visible_height =
+                                            terminal.size()?.height.saturating_sub(5) as usize;
+                                        ensure_sidebar_visible(&mut state, visible_height);
                                         break;
                                     }
                                     if prev == 0 {
@@ -1442,7 +1444,9 @@ fn run_app_internal(
                                     state.sidebar_selected =
                                         state.sidebar_selected.saturating_sub(1);
                                 }
-                                ensure_sidebar_visible(&mut state, usize::MAX);
+                                let visible_height =
+                                    terminal.size()?.height.saturating_sub(5) as usize;
+                                ensure_sidebar_visible(&mut state, visible_height);
                             } else {
                                 state.scroll = state.scroll.saturating_sub(1);
                             }
