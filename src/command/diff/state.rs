@@ -3,10 +3,11 @@ use std::time::SystemTime;
 
 use crate::command::diff::diff_algo::{compute_side_by_side, count_added_removed, find_hunk_starts};
 use crate::command::diff::highlight::FileHighlighter;
+use crate::command::diff::outline::{compute_outline, row_plan, DiffRow, OutlineEntry};
 
 use crate::command::diff::search::SearchState;
 use crate::command::diff::types::{
-    build_file_tree, CursorPosition, DiffFullscreen, DiffLine, DiffPanelFocus,
+    build_file_tree, ChangeType, CursorPosition, DiffFullscreen, DiffLine, DiffPanelFocus,
     DiffViewSettings, FileDiff, FocusedPanel, Selection, SelectionMode, SidebarItem,
 };
 use crate::vcs::StackedCommitInfo;
@@ -16,6 +17,41 @@ pub enum PendingKey {
     #[default]
     None,
     G,
+}
+
+/// Which content view the diff panel is showing. Shift+O cycles through them.
+#[derive(Default, Clone, Copy, PartialEq)]
+pub enum ViewMode {
+    /// Normal side-by-side diff (everything).
+    #[default]
+    Diff,
+    /// Folded outline: declaration signatures only; changed bodies become
+    /// `⋯ +N`/`-N` fold markers.
+    Outline,
+    /// Like `Outline`, but the actual changed lines are expanded inline while
+    /// unchanged bodies stay folded away.
+    OutlineExpanded,
+}
+
+impl ViewMode {
+    /// True for either folded view (not the full diff).
+    pub fn is_outline(self) -> bool {
+        matches!(self, ViewMode::Outline | ViewMode::OutlineExpanded)
+    }
+
+    /// True when changed lines should be shown inline rather than counted.
+    pub fn expands(self) -> bool {
+        matches!(self, ViewMode::OutlineExpanded)
+    }
+
+    /// Next mode in the Shift+O cycle.
+    pub fn next(self) -> ViewMode {
+        match self {
+            ViewMode::Diff => ViewMode::Outline,
+            ViewMode::Outline => ViewMode::OutlineExpanded,
+            ViewMode::OutlineExpanded => ViewMode::Diff,
+        }
+    }
 }
 
 fn sidebar_item_path(item: &SidebarItem) -> &str {
@@ -158,6 +194,10 @@ pub struct AppState {
     pub show_sidebar: bool,
     pub settings: DiffViewSettings,
     pub diff_fullscreen: DiffFullscreen,
+    /// Whether the diff panel shows the normal diff or the folded outline.
+    pub view_mode: ViewMode,
+    /// When true, the folded outline shows only declarations touched by the diff.
+    pub outline_changed_only: bool,
     pub search_state: SearchState,
     pub pending_key: PendingKey,
     pub needs_reload: bool,
@@ -194,6 +234,10 @@ pub struct AppState {
     cached_total_lines: Option<(usize, usize)>,
     /// Cached syntax highlighters for current file (avoids re-parsing with tree-sitter every frame)
     cached_highlighters: Option<(usize, FileHighlighter, FileHighlighter)>,
+    /// Cached structural outline for current file (invalidated on file change)
+    cached_outline: Option<(usize, Vec<OutlineEntry>)>,
+    /// Cached row plan for current file, keyed by (file, changed_only, view_mode).
+    cached_plan: Option<(usize, bool, ViewMode, Vec<DiffRow>)>,
     /// Whether search matches need to be recomputed
     search_dirty: bool,
     /// Number of non-content rows at the top of the rendered diff (context lines + file annotations).
@@ -290,6 +334,8 @@ impl AppState {
             show_sidebar: true,
             settings,
             diff_fullscreen: DiffFullscreen::default(),
+            view_mode: ViewMode::default(),
+            outline_changed_only: false,
             search_state: SearchState::default(),
             pending_key: PendingKey::default(),
             needs_reload: false,
@@ -311,6 +357,8 @@ impl AppState {
             cached_hunks: None,
             cached_total_lines: None,
             cached_highlighters: None,
+            cached_outline: None,
+            cached_plan: None,
             search_dirty: true,
             content_row_offset: 0,
             annotation_overlay_gaps: Vec::new(),
@@ -465,12 +513,199 @@ impl AppState {
             .map(|(_, old_hl, new_hl)| (old_hl, new_hl))
     }
 
+    /// Ensure the structural outline for the current file is computed and cached.
+    /// Marks entries as `changed` when their line span intersects a changed hunk.
+    /// Call before using `outline_ref()`.
+    pub fn ensure_outline(&mut self) {
+        if self.file_diffs.is_empty() {
+            return;
+        }
+        let current = self.current_file;
+        let needs_recompute = match &self.cached_outline {
+            Some((cached_file, _)) => *cached_file != current,
+            None => true,
+        };
+        if !needs_recompute {
+            return;
+        }
+
+        // Side-by-side is needed to mark which declarations changed.
+        self.ensure_cache();
+
+        let diff = &self.file_diffs[current];
+        // For deleted files the new side is empty, so outline the old content.
+        let is_deleted = !diff.old_content.is_empty() && diff.new_content.is_empty();
+        let source = if is_deleted {
+            &diff.old_content
+        } else {
+            &diff.new_content
+        };
+        let mut entries = compute_outline(source, &diff.filename);
+
+        // Collect changed source line numbers on the side we're outlining.
+        let mut changed_lines: Vec<usize> = Vec::new();
+        if let Some((_, sbs)) = &self.cached_side_by_side {
+            for dl in sbs {
+                if matches!(dl.change_type, ChangeType::Equal) {
+                    continue;
+                }
+                let ln = if is_deleted {
+                    dl.old_line.as_ref().map(|(n, _)| *n)
+                } else {
+                    dl.new_line.as_ref().map(|(n, _)| *n)
+                };
+                if let Some(n) = ln {
+                    changed_lines.push(n);
+                }
+            }
+        }
+        for entry in &mut entries {
+            let lo = entry.start_row + 1;
+            let hi = entry.end_row + 1;
+            entry.changed = changed_lines.iter().any(|&n| n >= lo && n <= hi);
+        }
+
+        self.cached_outline = Some((current, entries));
+    }
+
+    /// Immutable reference to the cached outline. Call `ensure_outline()` first.
+    pub fn outline_ref(&self) -> &[OutlineEntry] {
+        match &self.cached_outline {
+            Some((_, data)) => data,
+            None => &[],
+        }
+    }
+
+    /// Ensure the row plan for the current file/mode is computed and cached.
+    /// The plan is the single list the renderer and all primitives iterate; a
+    /// view mode only changes which rows it contains. Call before `plan_ref()`.
+    pub fn ensure_plan(&mut self) {
+        if self.file_diffs.is_empty() {
+            return;
+        }
+        let current = self.current_file;
+        let changed_only = self.outline_changed_only;
+        let view_mode = self.view_mode;
+        let needs = match &self.cached_plan {
+            Some((f, co, vm, _)) => *f != current || *co != changed_only || *vm != view_mode,
+            None => true,
+        };
+        if !needs {
+            return;
+        }
+        self.ensure_cache();
+        self.ensure_outline();
+        let is_deleted = {
+            let diff = &self.file_diffs[current];
+            !diff.old_content.is_empty() && diff.new_content.is_empty()
+        };
+        let sbs = self
+            .cached_side_by_side
+            .as_ref()
+            .map(|(_, d)| d.as_slice())
+            .unwrap_or(&[]);
+        let entries = self.outline_ref();
+        let rows = row_plan(view_mode, sbs, entries, is_deleted, changed_only);
+        self.cached_plan = Some((current, changed_only, view_mode, rows));
+    }
+
+    /// Immutable reference to the cached row plan. Call `ensure_plan()` first.
+    pub fn plan_ref(&self) -> &[DiffRow] {
+        match &self.cached_plan {
+            Some((_, _, _, data)) => data,
+            None => &[],
+        }
+    }
+
+    /// The side-by-side index a plan row renders, if it's a code row (folds
+    /// return `None`). Used to map a click to a diff line for starting selection.
+    pub fn sbs_index_for_plan_row(&self, plan_idx: usize) -> Option<usize> {
+        match self.plan_ref().get(plan_idx)? {
+            DiffRow::Code(i) => Some(*i),
+            DiffRow::Fold { .. } => None,
+        }
+    }
+
+    /// Side-by-side index for a plan row, clamped into range and falling back to
+    /// a fold's anchor line. Used while dragging a selection (always needs a line).
+    pub fn sbs_index_for_plan_row_clamped(&self, plan_idx: usize) -> usize {
+        let plan = self.plan_ref();
+        if plan.is_empty() {
+            return 0;
+        }
+        plan[plan_idx.min(plan.len() - 1)].sbs_index()
+    }
+
+    /// Map a 1-based source line number to its side-by-side index (exact match
+    /// on either side, else the closest preceding line).
+    pub fn sbs_index_for_line(&self, line: usize) -> Option<usize> {
+        let sbs = self.side_by_side_ref();
+        let mut best = None;
+        for (i, dl) in sbs.iter().enumerate() {
+            for side in [dl.new_line.as_ref(), dl.old_line.as_ref()].into_iter().flatten() {
+                if side.0 == line {
+                    return Some(i);
+                }
+                if side.0 < line {
+                    best = Some(i);
+                }
+            }
+        }
+        best
+    }
+
+    /// The source line (new side preferred) of the currently focused hunk, used
+    /// as a stable anchor when switching view modes. `None` if no hunk is focused.
+    pub fn focused_hunk_line(&self) -> Option<usize> {
+        let fh = self.focused_hunk?;
+        let idx = *self.hunks_ref().get(fh)?;
+        let dl = self.side_by_side_ref().get(idx)?;
+        dl.new_line
+            .as_ref()
+            .map(|(n, _)| *n)
+            .or_else(|| dl.old_line.as_ref().map(|(n, _)| *n))
+    }
+
+    /// Plan-row index for a side-by-side index. In full mode the plan is 1:1, so
+    /// this is the identity; in outline modes it finds the row (code or fold)
+    /// that represents the line.
+    pub fn active_row_for_sbs(&mut self, sbs_idx: usize) -> usize {
+        if !self.view_mode.is_outline() {
+            return sbs_idx;
+        }
+        self.ensure_plan();
+        let mut best = 0;
+        for (ri, row) in self.plan_ref().iter().enumerate() {
+            if row.sbs_index() <= sbs_idx {
+                best = ri;
+            } else {
+                break;
+            }
+        }
+        best
+    }
+
+    /// Row index of `line` within the active view's row list. Used to keep the
+    /// focused hunk pinned at the same screen height across a mode switch.
+    pub fn active_row_for_line(&mut self, line: usize) -> usize {
+        let target = self.sbs_index_for_line(line).unwrap_or(0);
+        self.active_row_for_sbs(target)
+    }
+
+    /// Number of rows in the active view (the plan length). Used to clamp scroll.
+    pub fn active_line_count(&mut self) -> usize {
+        self.ensure_plan();
+        self.plan_ref().len()
+    }
+
     /// Invalidate the cache (call when file changes)
     pub fn invalidate_cache(&mut self) {
         self.cached_side_by_side = None;
         self.cached_hunks = None;
         self.cached_total_lines = None;
         self.cached_highlighters = None;
+        self.cached_outline = None;
+        self.cached_plan = None;
         self.search_dirty = true;
         self.content_row_offset = 0;
         self.annotation_overlay_gaps.clear();
@@ -804,14 +1039,17 @@ impl AppState {
         self.clear_selection(); // Clear selection when changing files
         self.invalidate_cache(); // Clear cache for new file
 
-        // Use cached computation
-        let hunks = self.get_hunks().to_vec();
-        self.scroll = hunks
-            .first()
-            .map(|&h| (h as u16).saturating_sub(5))
-            .unwrap_or(0);
+        let first_hunk = self.get_hunks().first().copied();
+        self.focused_hunk = if first_hunk.is_some() { Some(0) } else { None };
         self.h_scroll = 0;
-        self.focused_hunk = if hunks.is_empty() { None } else { Some(0) };
+        // Scroll to the first hunk in the active view's coordinate space: plan
+        // rows in outline modes, side-by-side indices in full diff. Without this
+        // mapping, outline mode would scroll past the (much shorter) plan and
+        // show an empty panel.
+        self.scroll = match first_hunk {
+            Some(h) => (self.active_row_for_sbs(h) as u16).saturating_sub(5),
+            None => 0,
+        };
     }
 
     /// Get annotation by id
@@ -1027,5 +1265,76 @@ mod tests {
 
         assert_eq!(state.current_file, 0);
         assert!(state.file_diffs.is_empty());
+    }
+
+    #[test]
+    fn test_outline_marks_changed_declarations_and_folds() {
+        use crate::command::diff::outline::DiffRow;
+        let old_content = "fn unchanged() {\n    let x = 1;\n}\n\nfn changed() {\n    let y = 2;\n}\n";
+        let new_content = "fn unchanged() {\n    let x = 1;\n}\n\nfn changed() {\n    let y = 99;\n}\n";
+        let diffs = vec![FileDiff {
+            filename: "lib.rs".to_string(),
+            old_content: old_content.to_string(),
+            new_content: new_content.to_string(),
+            status: FileStatus::Modified,
+            is_binary: false,
+        }];
+
+        let mut state = AppState::new(diffs, None);
+        state.ensure_outline();
+
+        // `fn unchanged` starts on line 1 (row 0), `fn changed` on line 5 (row 4).
+        let changed_flag = state
+            .outline_ref()
+            .iter()
+            .find(|e| e.line_number == 5)
+            .expect("changed fn should appear in outline")
+            .changed;
+        let unchanged_flag = state
+            .outline_ref()
+            .iter()
+            .find(|e| e.line_number == 1)
+            .expect("unchanged fn should appear in outline")
+            .changed;
+
+        assert!(changed_flag, "modified function should be marked changed");
+        assert!(
+            !unchanged_flag,
+            "untouched function should not be marked changed"
+        );
+
+        // Outline plan keeps both fn signatures as Code rows and collapses the
+        // bodies into Fold rows; the changed body's fold reports an addition.
+        state.view_mode = ViewMode::Outline;
+        state.ensure_plan();
+        let code_rows = state
+            .plan_ref()
+            .iter()
+            .filter(|r| matches!(r, DiffRow::Code(_)))
+            .count();
+        assert!(code_rows >= 2, "both fn signatures should remain visible");
+        let has_changed_fold = state
+            .plan_ref()
+            .iter()
+            .any(|r| matches!(r, DiffRow::Fold { added, removed, .. } if *added > 0 || *removed > 0));
+        assert!(has_changed_fold, "a fold should report the hidden change");
+
+        // changed-only narrows the visible declarations.
+        let full_code = code_rows;
+        state.outline_changed_only = true;
+        state.ensure_plan();
+        let changed_code = state
+            .plan_ref()
+            .iter()
+            .filter(|r| matches!(r, DiffRow::Code(_)))
+            .count();
+        assert!(changed_code < full_code, "changed-only should hide the untouched fn");
+
+        // Full-diff plan is 1:1 with the side-by-side lines.
+        state.view_mode = ViewMode::Diff;
+        state.outline_changed_only = false;
+        state.ensure_plan();
+        assert!(state.plan_ref().iter().all(|r| matches!(r, DiffRow::Code(_))));
+        assert_eq!(state.plan_ref().len(), state.total_lines());
     }
 }

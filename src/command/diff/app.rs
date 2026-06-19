@@ -423,10 +423,13 @@ fn run_app_internal(
             state.update_search_matches();
             // Ensure highlighters are cached (only recomputed when file changes)
             state.get_highlighters();
+            // Ensure the row plan is cached (drives the renderer in every mode)
+            state.ensure_plan();
             let diff = &state.file_diffs[state.current_file];
             let side_by_side = state.side_by_side_ref();
             let hunks = state.hunks_ref();
             let (old_hl, new_hl) = state.highlighters_ref().unwrap();
+            let plan = state.plan_ref();
             let hunk_count = hunks.len();
             let empty_viewed_hunks: std::collections::HashSet<usize> =
                 std::collections::HashSet::new();
@@ -484,6 +487,8 @@ fn run_app_internal(
                     state.total_added,
                     state.total_removed,
                     annotation_editor.as_ref(),
+                    state.view_mode,
+                    plan,
                 );
                 row_offset.set(offset);
                 *rects_cell.borrow_mut() = rects;
@@ -591,7 +596,7 @@ fn run_app_internal(
             let visible_height = terminal.size()?.height.saturating_sub(2) as usize;
             let bottom_padding = 5;
             let max_scroll = if !state.file_diffs.is_empty() {
-                let total_lines = state.total_lines();
+                let total_lines = state.active_line_count();
                 total_lines.saturating_sub(visible_height.saturating_sub(bottom_padding))
             } else {
                 0
@@ -833,14 +838,14 @@ fn run_app_internal(
                                             terminal.size()?.height.saturating_sub(5) as usize;
                                         ensure_sidebar_visible(&mut state, visible_height);
                                     }
-                                    // Compute max_scroll for the just-switched file
-                                    // before pinning scroll, so we don't overscroll
-                                    // past the last visible row.
+                                    // Map the target side-by-side line to a row in
+                                    // the active plan (identity in full diff), then
+                                    // pin it near the top without overscrolling.
                                     state.ensure_cache();
-                                    let sbs_len = state.side_by_side_ref().len();
                                     let vh = terminal.size()?.height.saturating_sub(5) as usize;
-                                    let max_scroll = sbs_len.saturating_sub(vh) as u16;
-                                    state.scroll = (sbs_line_index as u16).min(max_scroll);
+                                    let plan_row = state.active_row_for_sbs(sbs_line_index);
+                                    let max_scroll = state.active_line_count().saturating_sub(vh) as u16;
+                                    state.scroll = (plan_row as u16).min(max_scroll);
                                     active_modal = None;
                                 }
                                 ModalResult::Dismissed | ModalResult::Selected(_, _) => {
@@ -1035,11 +1040,13 @@ fn run_app_internal(
                                                 Some(y) => y,
                                                 None => continue, // Clicked inside an annotation overlay
                                             };
-                                        let line = state.scroll as usize + adjusted_y;
-                                        let sbs_len = state.side_by_side_ref().len();
-                                        if line >= sbs_len {
-                                            continue;
-                                        }
+                                        // Map the clicked plan row to a diff line;
+                                        // a click on a fold row has no target.
+                                        let plan_idx = state.scroll as usize + adjusted_y;
+                                        let line = match state.sbs_index_for_plan_row(plan_idx) {
+                                            Some(l) => l,
+                                            None => continue,
+                                        };
 
                                         let panel_x = match panel {
                                             DiffPanelFocus::Old => layout.old_panel_x,
@@ -1089,10 +1096,9 @@ fn run_app_internal(
                                         // Adjust for inline annotation overlay gaps (clamped for drag)
                                         let adjusted_y =
                                             state.adjust_for_overlay_gaps_clamped(content_y);
-                                        let line = state.scroll as usize + adjusted_y;
-                                        // Clamp to valid side_by_side range
-                                        let sbs_len = state.side_by_side_ref().len();
-                                        let line = line.min(sbs_len.saturating_sub(1));
+                                        // Map the dragged-over plan row to a diff line.
+                                        let plan_idx = state.scroll as usize + adjusted_y;
+                                        let line = state.sbs_index_for_plan_row_clamped(plan_idx);
 
                                         let panel_x = match panel {
                                             DiffPanelFocus::Old => layout.old_panel_x,
@@ -1398,6 +1404,34 @@ fn run_app_internal(
                             state.diff_fullscreen = DiffFullscreen::None;
                             state.mark_search_dirty();
                         }
+                        KeyCode::Char('O') => {
+                            // Cycle: full diff → outline → outline+diff → full diff.
+                            // Anchor on the focused hunk and keep it at the same
+                            // screen height so the view doesn't jump on switch.
+                            let anchor_line = state.focused_hunk_line();
+                            let offset = anchor_line.map(|l| {
+                                state
+                                    .active_row_for_line(l)
+                                    .saturating_sub(state.scroll as usize)
+                            });
+                            state.view_mode = state.view_mode.next();
+                            state.focused_panel = FocusedPanel::DiffView;
+                            state.h_scroll = 0;
+                            match (anchor_line, offset) {
+                                (Some(l), Some(off)) => {
+                                    let new_row = state.active_row_for_line(l);
+                                    let max = state.active_line_count().saturating_sub(1);
+                                    state.scroll = new_row.saturating_sub(off).min(max) as u16;
+                                }
+                                _ => state.scroll = 0,
+                            }
+                            state.mark_search_dirty();
+                        }
+                        KeyCode::Char('c') if state.view_mode.is_outline() => {
+                            // Toggle "changed declarations only" filter in the folded view.
+                            state.outline_changed_only = !state.outline_changed_only;
+                            state.scroll = 0;
+                        }
                         KeyCode::Down
                             if state.search_state.has_query()
                                 && state.focused_panel == FocusedPanel::DiffView =>
@@ -1680,8 +1714,9 @@ fn run_app_internal(
                                 };
                                 if !hunks.is_empty() {
                                     state.focused_hunk = Some(next_hunk);
+                                    let row = state.active_row_for_sbs(hunks[next_hunk]);
                                     state.scroll = adjust_scroll_for_hunk(
-                                        hunks[next_hunk],
+                                        row,
                                         state.scroll,
                                         visible_height,
                                         max_scroll,
@@ -1704,8 +1739,9 @@ fn run_app_internal(
                                 };
                                 if !hunks.is_empty() {
                                     state.focused_hunk = Some(prev_hunk);
+                                    let row = state.active_row_for_sbs(hunks[prev_hunk]);
                                     state.scroll = adjust_scroll_for_hunk(
-                                        hunks[prev_hunk],
+                                        row,
                                         state.scroll,
                                         visible_height,
                                         max_scroll,
@@ -2140,6 +2176,23 @@ fn run_app_internal(
                                             KeyBind {
                                                 key: "=",
                                                 description: "Reset fullscreen to side-by-side",
+                                            },
+                                        ],
+                                    },
+                                    KeyBindSection {
+                                        title: "Outline (folded diff)",
+                                        bindings: vec![
+                                            KeyBind {
+                                                key: "O",
+                                                description: "Cycle: diff → outline → outline+diff",
+                                            },
+                                            KeyBind {
+                                                key: "c",
+                                                description: "Fold to changed declarations only",
+                                            },
+                                            KeyBind {
+                                                key: "j/k, ctrl+d/u",
+                                                description: "Scroll (same as diff)",
                                             },
                                         ],
                                     },
