@@ -9,7 +9,8 @@ use crate::command::diff::annotation::AnnotationEditor;
 use crate::command::diff::context::{compute_context_lines, ContextLine};
 use crate::command::diff::highlight::{highlight_line_spans, FileHighlighter};
 use crate::command::diff::search::{MatchPanel, SearchState};
-use crate::command::diff::state::{Annotation, AnnotationTarget};
+use crate::command::diff::outline::DiffRow;
+use crate::command::diff::state::{Annotation, AnnotationTarget, ViewMode};
 use crate::command::diff::theme;
 
 /// One overlay slot in the rendered diff: either a saved annotation or the
@@ -1031,18 +1032,18 @@ fn is_in_ann_range(
     })
 }
 
-/// Build the focus/annotation indicator span for a diff line.
+/// Build the annotation indicator span for a diff line.
+///
+/// The focused-hunk bar is drawn separately, as a continuous run on the panel's
+/// left border (see the buffer pass after the panels render), so it never lands
+/// in this gutter column and can't fragment across one-sided rows.
 fn make_indicator_span(
-    in_focused: bool,
     in_annotation: bool,
     line_selected: bool,
     bg: Color,
-    focus_style: Style,
     annotation_style: Style,
 ) -> Span<'static> {
-    let indicator = if in_focused {
-        Span::styled("▎", focus_style)
-    } else if in_annotation {
+    let indicator = if in_annotation {
         Span::styled("▍", annotation_style)
     } else {
         Span::styled(" ", Style::default())
@@ -1284,6 +1285,8 @@ pub fn render_diff(
     total_added: usize,
     total_removed: usize,
     editor: Option<&AnnotationEditor>,
+    view_mode: ViewMode,
+    plan: &[DiffRow],
 ) -> (usize, Vec<(usize, usize)>, Vec<(u64, Rect)>, Option<Rect>) {
     let area = frame.area();
     let t = theme::get();
@@ -1396,8 +1399,13 @@ pub fn render_diff(
     // side_by_side is now passed as a parameter (pre-computed and cached)
     let line_stats = compute_line_stats(side_by_side);
 
-    let is_new_file = diff.old_content.is_empty() && !diff.new_content.is_empty();
-    let is_deleted_file = !diff.old_content.is_empty() && diff.new_content.is_empty();
+    // Full mode shows whole added/deleted files with a dedicated single-panel
+    // layout; outline modes always use the unified two-panel plan loop below
+    // (a folded one-sided file renders fine there).
+    let is_new_file =
+        !view_mode.is_outline() && diff.old_content.is_empty() && !diff.new_content.is_empty();
+    let is_deleted_file =
+        !view_mode.is_outline() && !diff.old_content.is_empty() && diff.new_content.is_empty();
 
     // Track how many non-diff rows are at the top (context lines + file annotations)
     let content_row_offset: usize;
@@ -1484,7 +1492,6 @@ pub fn render_diff(
         let line_targets = slot_targets(&line_slots);
         let ann_index_ranges = compute_target_index_ranges(&line_targets, side_by_side);
         let annotation_indicator_style = Style::default().fg(t.ui.highlight);
-        let focus_style = Style::default().fg(t.ui.border_focused);
 
         let row_target_width = (main_area.width as usize).saturating_sub(2) + h_scroll as usize;
 
@@ -1504,11 +1511,9 @@ pub fn render_diff(
             if let Some((num, text)) = &diff_line.new_line {
                 let mut spans: Vec<Span> = Vec::new();
                 spans.push(make_indicator_span(
-                    false,
                     in_annotation,
                     new_line_selected,
                     bg,
-                    focus_style,
                     annotation_indicator_style,
                 ));
 
@@ -1659,7 +1664,6 @@ pub fn render_diff(
         let line_targets = slot_targets(&line_slots);
         let ann_index_ranges = compute_target_index_ranges(&line_targets, side_by_side);
         let annotation_indicator_style = Style::default().fg(t.ui.highlight);
-        let focus_style = Style::default().fg(t.ui.border_focused);
 
         let row_target_width = (main_area.width as usize).saturating_sub(2) + h_scroll as usize;
 
@@ -1679,11 +1683,9 @@ pub fn render_diff(
             if let Some((num, text)) = &diff_line.old_line {
                 let mut spans: Vec<Span> = Vec::new();
                 spans.push(make_indicator_span(
-                    false,
                     in_annotation,
                     old_line_selected,
                     bg,
-                    focus_style,
                     annotation_indicator_style,
                 ));
 
@@ -1766,32 +1768,51 @@ pub fn render_diff(
             );
         }
     } else {
-        let (old_area, new_area) = match diff_fullscreen {
-            DiffFullscreen::OldOnly => (Some(main_area), None),
-            DiffFullscreen::NewOnly => (None, Some(main_area)),
-            DiffFullscreen::None => {
-                let content_chunks = Layout::default()
-                    .direction(Direction::Horizontal)
-                    .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-                    .split(main_area);
-                (Some(content_chunks[0]), Some(content_chunks[1]))
+        // Outline routes added/deleted files through this two-panel loop too,
+        // but one side would be entirely empty — so collapse to a single panel
+        // (the side with content), matching full mode's added/deleted layout.
+        let content_added = diff.old_content.is_empty() && !diff.new_content.is_empty();
+        let content_deleted = !diff.old_content.is_empty() && diff.new_content.is_empty();
+        let (old_area, new_area) = if view_mode.is_outline() && content_added {
+            (None, Some(main_area))
+        } else if view_mode.is_outline() && content_deleted {
+            (Some(main_area), None)
+        } else {
+            match diff_fullscreen {
+                DiffFullscreen::OldOnly => (Some(main_area), None),
+                DiffFullscreen::NewOnly => (None, Some(main_area)),
+                DiffFullscreen::None => {
+                    let content_chunks = Layout::default()
+                        .direction(Direction::Horizontal)
+                        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                        .split(main_area);
+                    (Some(content_chunks[0]), Some(content_chunks[1]))
+                }
             }
         };
 
-        let old_context = compute_context_lines(
-            &diff.old_content,
-            &diff.filename,
-            scroll as usize,
-            &settings.context,
-            settings.tab_width,
-        );
-        let new_context = compute_context_lines(
-            &diff.new_content,
-            &diff.filename,
-            scroll as usize,
-            &settings.context,
-            settings.tab_width,
-        );
+        // Sticky context headers are a full-diff affordance; in outline modes the
+        // visible declarations already supply structure, so skip them there.
+        let (old_context, new_context) = if view_mode.is_outline() {
+            (Vec::new(), Vec::new())
+        } else {
+            (
+                compute_context_lines(
+                    &diff.old_content,
+                    &diff.filename,
+                    scroll as usize,
+                    &settings.context,
+                    settings.tab_width,
+                ),
+                compute_context_lines(
+                    &diff.new_content,
+                    &diff.filename,
+                    scroll as usize,
+                    &settings.context,
+                    settings.tab_width,
+                ),
+            )
+        };
         let context_count = old_context.len().max(new_context.len());
 
         let reference_area = old_area.or(new_area).unwrap_or(main_area);
@@ -1799,11 +1820,6 @@ pub fn render_diff(
         let scroll_usize = scroll as usize;
 
         let content_height = visible_height.saturating_sub(context_count);
-        let visible_lines: Vec<&DiffLine> = side_by_side
-            .iter()
-            .skip(scroll_usize)
-            .take(content_height)
-            .collect();
 
         let mut old_lines: Vec<Line> = Vec::new();
         let mut new_lines: Vec<Line> = Vec::new();
@@ -1865,19 +1881,6 @@ pub fn render_diff(
             }
         };
 
-        let is_in_focused_hunk = |line_idx: usize, change_type: ChangeType| -> bool {
-            if matches!(change_type, ChangeType::Equal) {
-                return false;
-            }
-            if let Some(hunk_idx) = focused_hunk {
-                if let Some(&hunk_start) = hunks.get(hunk_idx) {
-                    let hunk_end = hunks.get(hunk_idx + 1).copied().unwrap_or(usize::MAX);
-                    return line_idx >= hunk_start && line_idx < hunk_end;
-                }
-            }
-            false
-        };
-
         // Add file-level slots at the top (after context lines)
         for slot in &file_slots {
             let num_lines = slot.height();
@@ -1898,9 +1901,12 @@ pub fn render_diff(
 
         // Track rendered rows for new-panel border annotation markers (paragraph-relative)
         let mut border_marker_rows: Vec<usize> = Vec::new();
+        // Paragraph-relative rows covered by the focused hunk. Drawn afterward as
+        // one continuous bar on the panel's left border, so the indicator is solid
+        // across code and fold rows and never floats on a blank one-sided row.
+        let mut focus_marker_rows: Vec<usize> = Vec::new();
         let mut rendered_row = content_row_offset;
 
-        let focus_style = Style::default().fg(t.ui.border_focused);
         let annotation_indicator_style = Style::default().fg(t.ui.highlight);
 
         // Old panel always has full borders (Borders::ALL); the new panel drops its left
@@ -1917,9 +1923,109 @@ pub fn render_diff(
             .unwrap_or(0)
             + h_scroll as usize;
 
-        for (i, diff_line) in visible_lines.iter().enumerate() {
-            let line_idx = scroll_usize + i;
-            let in_focused = is_in_focused_hunk(line_idx, diff_line.change_type);
+        // One panel's fold marker: tinted "±N" for a changed side, a blank row
+        // for the unchanged side of a one-sided change, and a dim "⋯ N lines"
+        // separator for an unchanged gap (only emitted in outline+diff).
+        let fold_line = |count: usize,
+                         lines: usize,
+                         sign: char,
+                         gutter_fg: Color,
+                         gutter_bg: Color,
+                         line_bg: Color,
+                         changed: bool,
+                         target_width: usize|
+         -> Line<'static> {
+            if !changed {
+                let spans = vec![
+                    Span::styled(" ", Style::default().bg(bg)),
+                    Span::styled(
+                        format!("{:>4} ", "⋯"),
+                        Style::default().fg(t.ui.text_muted).bg(bg),
+                    ),
+                    Span::styled(
+                        format!("{} line{}", lines, if lines == 1 { "" } else { "s" }),
+                        Style::default().fg(t.ui.text_muted).bg(bg),
+                    ),
+                ];
+                return Line::from(pad_line_bg(spans, target_width, bg));
+            }
+            if count == 0 {
+                return blank_diff_line(target_width, bg);
+            }
+            // Match the code-row indicator column (default bg, not the diff tint)
+            // so the gutter's left edge is consistent across code and fold rows.
+            let spans = vec![
+                Span::styled(" ", Style::default()),
+                Span::styled(
+                    format!("{:>4} ", "⋯"),
+                    Style::default().fg(gutter_fg).bg(gutter_bg),
+                ),
+                Span::styled(
+                    format!("{}{}", sign, count),
+                    Style::default().fg(t.ui.text_secondary).bg(line_bg),
+                ),
+            ];
+            Line::from(pad_line_bg(spans, target_width, line_bg))
+        };
+
+        // Side-by-side range of the focused hunk, so the indicator spans every
+        // plan row the hunk touches (its expanded lines and/or the fold hiding
+        // it) rather than a single row.
+        let focused_range = focused_hunk.and_then(|fh| {
+            let start = *hunks.get(fh)?;
+            let end = hunks.get(fh + 1).copied().unwrap_or(usize::MAX);
+            Some((start, end))
+        });
+
+        for (i, row) in plan.iter().skip(scroll_usize).take(content_height).enumerate() {
+            // Fold rows render a marker and carry no per-line diff state.
+            let line_idx = match row {
+                DiffRow::Fold { at, lines, added, removed } => {
+                    let changed = *added > 0 || *removed > 0;
+                    // A fold is in-focus when its hidden range overlaps the hunk.
+                    let next_at = plan
+                        .get(scroll_usize + i + 1)
+                        .map(|r| r.sbs_index())
+                        .unwrap_or(side_by_side.len());
+                    let in_focused =
+                        focused_range.is_some_and(|(s, e)| *at < e && next_at > s);
+                    if in_focused {
+                        focus_marker_rows.push(rendered_row);
+                    }
+                    if old_area.is_some() {
+                        old_lines.push(fold_line(
+                            *removed,
+                            *lines,
+                            '-',
+                            t.diff.deleted_gutter_fg,
+                            t.diff.deleted_gutter_bg,
+                            t.diff.deleted_bg,
+                            changed,
+                            old_row_target_width,
+                        ));
+                    }
+                    if new_area.is_some() {
+                        new_lines.push(fold_line(
+                            *added,
+                            *lines,
+                            '+',
+                            t.diff.added_gutter_fg,
+                            t.diff.added_gutter_bg,
+                            t.diff.added_bg,
+                            changed,
+                            new_row_target_width,
+                        ));
+                    }
+                    rendered_row += 1;
+                    continue;
+                }
+                DiffRow::Code(idx) => *idx,
+            };
+            let diff_line = &side_by_side[line_idx];
+            // A code row joins the focus bar when its side-by-side index falls in
+            // the focused hunk's range — positional, so the bar stays solid across
+            // any aligned context rows the hunk spans rather than breaking on them.
+            let in_focused = focused_range.is_some_and(|(s, e)| line_idx >= s && line_idx < e);
             let hunk_viewed = is_line_in_viewed_hunk(line_idx, diff_line.change_type);
             let mut style = DiffLineStyle::for_change_type(diff_line.change_type, bg, t);
             if hunk_viewed {
@@ -1945,6 +2051,9 @@ pub fn render_diff(
             if new_in_annotation {
                 border_marker_rows.push(rendered_row);
             }
+            if in_focused {
+                focus_marker_rows.push(rendered_row);
+            }
             rendered_row += 1;
 
             let old_line_selected =
@@ -1957,11 +2066,9 @@ pub fn render_diff(
             if old_area.is_some() {
                 let mut old_spans: Vec<Span> = Vec::new();
                 old_spans.push(make_indicator_span(
-                    in_focused,
                     old_in_annotation,
                     old_line_selected,
                     bg,
-                    focus_style,
                     annotation_indicator_style,
                 ));
                 let mut old_line_pushed = false;
@@ -2042,15 +2149,18 @@ pub fn render_diff(
                         old_line_pushed = true;
                     }
                     None => {
-                        // Fill the whole row (including the line-number gutter) with stripes,
-                        // extending past the visible viewport so horizontal scroll stays striped.
-                        let current_len: usize =
-                            old_spans.iter().map(|s| s.content.chars().count()).sum();
-                        let stripe_width = old_row_target_width.saturating_sub(current_len);
-                        old_spans.push(Span::styled(
-                            generate_stripe_pattern(stripe_width),
-                            Style::default().fg(t.diff.empty_placeholder_fg),
-                        ));
+                        // Full diff stripes the empty side of an insert/delete;
+                        // outline modes leave it plain (stripes everywhere would be
+                        // noise when most rows are one-sided).
+                        if !view_mode.is_outline() {
+                            let current_len: usize =
+                                old_spans.iter().map(|s| s.content.chars().count()).sum();
+                            let stripe_width = old_row_target_width.saturating_sub(current_len);
+                            old_spans.push(Span::styled(
+                                generate_stripe_pattern(stripe_width),
+                                Style::default().fg(t.diff.empty_placeholder_fg),
+                            ));
+                        }
                     }
                 }
                 if !old_line_pushed {
@@ -2064,11 +2174,9 @@ pub fn render_diff(
                 let mut new_spans: Vec<Span> = Vec::new();
                 if old_area.is_none() {
                     new_spans.push(make_indicator_span(
-                        in_focused,
                         new_in_annotation,
                         new_line_selected,
                         bg,
-                        focus_style,
                         annotation_indicator_style,
                     ));
                 }
@@ -2150,15 +2258,18 @@ pub fn render_diff(
                         new_line_pushed = true;
                     }
                     None => {
-                        // Fill the whole row (including the line-number gutter) with stripes,
-                        // extending past the visible viewport so horizontal scroll stays striped.
-                        let current_len: usize =
-                            new_spans.iter().map(|s| s.content.chars().count()).sum();
-                        let stripe_width = new_row_target_width.saturating_sub(current_len);
-                        new_spans.push(Span::styled(
-                            generate_stripe_pattern(stripe_width),
-                            Style::default().fg(t.diff.empty_placeholder_fg),
-                        ));
+                        // Full diff stripes the empty side of an insert/delete;
+                        // outline modes leave it plain (stripes everywhere would be
+                        // noise when most rows are one-sided).
+                        if !view_mode.is_outline() {
+                            let current_len: usize =
+                                new_spans.iter().map(|s| s.content.chars().count()).sum();
+                            let stripe_width = new_row_target_width.saturating_sub(current_len);
+                            new_spans.push(Span::styled(
+                                generate_stripe_pattern(stripe_width),
+                                Style::default().fg(t.diff.empty_placeholder_fg),
+                            ));
+                        }
                     }
                 }
                 if !new_line_pushed {
@@ -2221,13 +2332,21 @@ pub fn render_diff(
             }
         }
 
+        let mode_suffix = if view_mode.expands() {
+            " · outline+diff"
+        } else if view_mode.is_outline() {
+            " · outline"
+        } else {
+            ""
+        };
+
         if let Some(area) = old_area {
             let old_para = Paragraph::new(old_lines)
                 .style(Style::default().bg(bg))
                 .scroll((0, h_scroll))
                 .block(
                     Block::default()
-                        .title(Line::styled(" [2] Old ", title_style))
+                        .title(Line::styled(format!(" [2] Old{} ", mode_suffix), title_style))
                         .borders(Borders::ALL)
                         .border_style(border_style),
                 );
@@ -2246,12 +2365,36 @@ pub fn render_diff(
                 .scroll((0, h_scroll))
                 .block(
                     Block::default()
-                        .title(Line::styled(" New ", title_style))
+                        .title(Line::styled(format!(" New{} ", mode_suffix), title_style))
                         .borders(new_borders)
                         .style(Style::default().bg(bg))
                         .border_style(border_style),
                 );
             frame.render_widget(new_para, area);
+        }
+
+        // Draw the focused-hunk bar as one continuous run on the diff's left
+        // border, overwriting the frame edge for exactly the rows the hunk spans.
+        // Keeping it on the border (not in the gutter) means it never collides
+        // with line numbers and stays solid across code and fold rows alike.
+        if let Some(bar_area) = old_area.or(new_area) {
+            if !focus_marker_rows.is_empty() {
+                let border_x = bar_area.x;
+                let content_start = bar_area.y + 1;
+                let bottom = bar_area.y + bar_area.height.saturating_sub(1);
+                let buf = frame.buffer_mut();
+                for &para_row in &focus_marker_rows {
+                    let screen_row = content_start + para_row as u16;
+                    if screen_row < bottom {
+                        if let Some(cell) =
+                            buf.cell_mut(ratatui::layout::Position::new(border_x, screen_row))
+                        {
+                            cell.set_fg(t.ui.border_focused);
+                            cell.set_char('▎');
+                        }
+                    }
+                }
+            }
         }
 
         // Render annotation gutter markers on the shared border for new panel annotations
