@@ -34,7 +34,7 @@ pub struct LumenProvider {
     provider_name: String,
 }
 
-/// Provider configuration for custom endpoint providers (OpenCode Zen, OpenRouter, Vercel)
+/// Provider configuration for custom endpoint providers (OpenCode Zen, OpenRouter, Vercel, LM Studio)
 struct CustomProviderConfig {
     endpoint: &'static str,
     env_key: &'static str,
@@ -48,8 +48,12 @@ impl LumenProvider {
         model: Option<String>,
     ) -> Result<Self, LumenError> {
         let (backend, provider_name) = match provider_type {
-            // Custom endpoint providers (OpenCode Zen, OpenRouter, Vercel) - use ServiceTargetResolver
-            ProviderType::OpencodeZen | ProviderType::Openrouter | ProviderType::Vercel | ProviderType::Groq => {
+            // Custom endpoint providers (OpenCode Zen, OpenRouter, Vercel, LM Studio) - use ServiceTargetResolver
+            ProviderType::OpencodeZen
+            | ProviderType::Openrouter
+            | ProviderType::Vercel
+            | ProviderType::Groq
+            | ProviderType::LmStudio => {
                 let defaults = ProviderInfo::for_provider(provider_type);
                 let config = match provider_type {
                     ProviderType::OpencodeZen => CustomProviderConfig {
@@ -73,6 +77,11 @@ impl LumenProvider {
                         env_key: defaults.env_key,
                         adapter_kind: AdapterKind::OpenAI,
                     },
+                    ProviderType::LmStudio => CustomProviderConfig {
+                        endpoint: "http://localhost:1234/v1/",
+                        env_key: defaults.env_key,
+                        adapter_kind: AdapterKind::OpenAI,
+                    },
                     _ => unreachable!(),
                 };
 
@@ -82,7 +91,9 @@ impl LumenProvider {
                 // Get API key from CLI/config or environment
                 let auth_env_key = config.env_key;
                 if let Some(key) = api_key {
-                    std::env::set_var(auth_env_key, key);
+                    if !auth_env_key.is_empty() {
+                        std::env::set_var(auth_env_key, key);
+                    }
                 }
 
                 let endpoint = config.endpoint;
@@ -91,9 +102,16 @@ impl LumenProvider {
                 let target_resolver = ServiceTargetResolver::from_resolver_fn(
                     move |service_target: ServiceTarget| -> Result<ServiceTarget, genai::resolver::Error> {
                         let ServiceTarget { model, .. } = service_target;
+
+                        let auth_data = if !auth_env_key.is_empty() {
+                            AuthData::from_env(auth_env_key)
+                        } else {
+                            AuthData::from_single("")
+                        };
+
                         Ok(ServiceTarget {
                             endpoint: Endpoint::from_static(endpoint),
-                            auth: AuthData::from_env(auth_env_key),
+                            auth: auth_data,
                             model: ModelIden::new(adapter_kind, model.model_name),
                         })
                     },

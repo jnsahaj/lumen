@@ -46,6 +46,13 @@ pub const ALL_PROVIDERS: &[ProviderInfo] = &[
         env_key: "",
     },
     ProviderInfo {
+        id: "lmstudio",
+        provider_type: ProviderType::LmStudio,
+        display_name: "LM Studio (local)",
+        default_model: "qwen/qwen3-4b-2507",
+        env_key: "",
+    },
+    ProviderInfo {
         id: "opencode-zen",
         provider_type: ProviderType::OpencodeZen,
         display_name: "OpenCode Zen",
