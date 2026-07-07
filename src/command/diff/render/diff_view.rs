@@ -5,12 +5,12 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 
-use crate::command::diff::annotation::AnnotationEditor;
 use crate::command::diff::context::{compute_context_lines, ContextLine};
 use crate::command::diff::highlight::{highlight_line_spans, FileHighlighter};
 use crate::command::diff::search::{MatchPanel, SearchState};
 use crate::command::diff::state::{Annotation, AnnotationTarget};
 use crate::command::diff::theme;
+use crate::command::diff::{annotation::AnnotationEditor, state::TreeCache};
 
 /// One overlay slot in the rendered diff: either a saved annotation or the
 /// active inline editor (new or editing an existing annotation).
@@ -1249,6 +1249,7 @@ pub fn render_diff(
     frame: &mut Frame,
     diff: &FileDiff,
     _file_diffs: &[FileDiff],
+    trees: &TreeCache,
     sidebar_items: &[SidebarItem],
     sidebar_visible: &[usize],
     collapsed_dirs: &HashSet<String>,
@@ -1420,6 +1421,7 @@ pub fn render_diff(
         let new_context = compute_context_lines(
             &diff.new_content,
             &diff.filename,
+            &trees.new_file_trees,
             scroll as usize,
             &settings.context,
             settings.tab_width,
@@ -1595,6 +1597,7 @@ pub fn render_diff(
         let old_context = compute_context_lines(
             &diff.old_content,
             &diff.filename,
+            &trees.old_file_trees,
             scroll as usize,
             &settings.context,
             settings.tab_width,
@@ -1781,6 +1784,7 @@ pub fn render_diff(
         let old_context = compute_context_lines(
             &diff.old_content,
             &diff.filename,
+            &trees.old_file_trees,
             scroll as usize,
             &settings.context,
             settings.tab_width,
@@ -1788,6 +1792,7 @@ pub fn render_diff(
         let new_context = compute_context_lines(
             &diff.new_content,
             &diff.filename,
+            &trees.new_file_trees,
             scroll as usize,
             &settings.context,
             settings.tab_width,

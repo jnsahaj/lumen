@@ -1,6 +1,9 @@
 use std::collections::{HashMap, HashSet};
 use std::time::SystemTime;
 
+use tree_sitter::{Parser, Tree};
+
+use crate::command::diff::context::get_language_context;
 use crate::command::diff::diff_algo::{compute_side_by_side, count_added_removed, find_hunk_starts};
 use crate::command::diff::highlight::FileHighlighter;
 
@@ -139,6 +142,12 @@ impl Annotation {
     }
 }
 
+#[derive(Debug, Default)]
+pub struct TreeCache {
+    pub old_file_trees: HashMap<String, Tree>,
+    pub new_file_trees: HashMap<String, Tree>,
+}
+
 pub struct AppState {
     pub file_diffs: Vec<FileDiff>,
     pub sidebar_items: Vec<SidebarItem>,
@@ -194,6 +203,8 @@ pub struct AppState {
     cached_total_lines: Option<(usize, usize)>,
     /// Cached syntax highlighters for current file (avoids re-parsing with tree-sitter every frame)
     cached_highlighters: Option<(usize, FileHighlighter, FileHighlighter)>,
+    /// Cached parsed syntax tree
+    pub cached_trees: TreeCache,
     /// Whether search matches need to be recomputed
     search_dirty: bool,
     /// Number of non-content rows at the top of the rendered diff (context lines + file annotations).
@@ -311,6 +322,7 @@ impl AppState {
             cached_hunks: None,
             cached_total_lines: None,
             cached_highlighters: None,
+            cached_trees: TreeCache::default(),
             search_dirty: true,
             content_row_offset: 0,
             annotation_overlay_gaps: Vec::new(),
@@ -354,6 +366,25 @@ impl AppState {
             self.cached_side_by_side = Some((current, side_by_side));
             self.cached_hunks = Some((current, hunks));
             self.cached_total_lines = Some((current, total));
+            let filename = self.file_diffs[current].filename.clone();
+            let old_source = &self.file_diffs[current].old_content;
+            let new_source = &self.file_diffs[current].new_content;
+            let Some(lang_ctx) = get_language_context(&filename) else {
+                return &self.cached_side_by_side.as_ref().unwrap().1;
+            };
+            let mut parser = Parser::new();
+            if parser.set_language(&lang_ctx.language).is_ok() {
+                let old_tree = self.cached_trees.old_file_trees.get(&filename);
+                if let Some(tree) = parser.parse(old_source, old_tree) {
+                    self.cached_trees
+                        .old_file_trees
+                        .insert(filename.clone(), tree);
+                }
+                let new_tree = self.cached_trees.new_file_trees.get(&filename);
+                if let Some(tree) = parser.parse(new_source, new_tree) {
+                    self.cached_trees.new_file_trees.insert(filename, tree);
+                }
+            }
         }
 
         &self.cached_side_by_side.as_ref().unwrap().1
@@ -389,6 +420,25 @@ impl AppState {
             self.cached_side_by_side = Some((current, sbs));
             self.cached_hunks = Some((current, hnks));
             self.cached_total_lines = Some((current, total));
+            let filename = self.file_diffs[current].filename.clone();
+            let old_source = &self.file_diffs[current].old_content;
+            let new_source = &self.file_diffs[current].new_content;
+            let Some(lang_ctx) = get_language_context(&filename) else {
+                return;
+            };
+            let mut parser = Parser::new();
+            if parser.set_language(&lang_ctx.language).is_ok() {
+                let old_tree = self.cached_trees.old_file_trees.get(&filename);
+                if let Some(tree) = parser.parse(old_source, old_tree) {
+                    self.cached_trees
+                        .old_file_trees
+                        .insert(filename.clone(), tree);
+                }
+                let new_tree = self.cached_trees.new_file_trees.get(&filename);
+                if let Some(tree) = parser.parse(new_source, new_tree) {
+                    self.cached_trees.new_file_trees.insert(filename, tree);
+                }
+            }
         }
     }
 

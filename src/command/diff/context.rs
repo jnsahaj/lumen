@@ -1,8 +1,8 @@
-use std::path::Path;
+use std::{collections::HashMap, path::Path};
 
 use once_cell::sync::Lazy;
 use streaming_iterator::StreamingIterator;
-use tree_sitter::{Language, Parser, Query, QueryCursor};
+use tree_sitter::{Language, Point, Query, QueryCursor, Tree};
 
 /// Configuration for context lines feature
 #[derive(Clone)]
@@ -118,8 +118,8 @@ const CSHARP_CONTEXT_QUERY: &str = r#"
 (lock_statement) @context
 "#;
 
-struct LanguageContext {
-    language: Language,
+pub struct LanguageContext {
+    pub language: Language,
     query: Query,
 }
 
@@ -224,7 +224,7 @@ static LANGUAGE_CONTEXTS: Lazy<Vec<(&'static str, LanguageContext)>> = Lazy::new
     contexts
 });
 
-fn get_language_context(filename: &str) -> Option<&'static LanguageContext> {
+pub fn get_language_context(filename: &str) -> Option<&'static LanguageContext> {
     let ext = Path::new(filename).extension().and_then(|e| e.to_str())?;
     LANGUAGE_CONTEXTS
         .iter()
@@ -240,6 +240,7 @@ fn get_language_context(filename: &str) -> Option<&'static LanguageContext> {
 pub fn compute_context_lines(
     source: &str,
     filename: &str,
+    trees: &HashMap<String, Tree>,
     scroll_position: usize,
     config: &ContextConfig,
     tab_width: usize,
@@ -254,16 +255,15 @@ pub fn compute_context_lines(
         return Vec::new();
     };
 
-    let mut parser = Parser::new();
-    if parser.set_language(&lang_ctx.language).is_err() {
-        return Vec::new();
-    }
-
-    let Some(tree) = parser.parse(source, None) else {
+    let Some(tree) = trees.get(filename) else {
         return Vec::new();
     };
 
     let mut cursor = QueryCursor::new();
+
+    let start_point = Point::new(0, 0);
+    let end_point = Point::new(scroll_position, 0);
+    cursor.set_point_range(start_point..end_point);
 
     let lines: Vec<&str> = source.lines().collect();
 
@@ -313,33 +313,66 @@ pub fn compute_context_lines(
 
 #[cfg(test)]
 mod tests {
+    use tree_sitter::Parser;
+
     use super::*;
+
+    fn get_tree_cache(filename: &str, source: &str) -> HashMap<String, Tree> {
+        let mut tree_cache = HashMap::default();
+        
+        let Some(lang_ctx) = get_language_context(&filename) else {
+            return tree_cache;
+        };
+        
+        let mut parser = Parser::new();
+        if parser.set_language(&lang_ctx.language).is_err() {
+            return tree_cache;
+        }
+        
+        if let Some(tree) = parser.parse(source, None) {
+            tree_cache.insert(filename.to_string(), tree);
+        }
+
+        return tree_cache;
+
+    }
 
     #[test]
     fn test_empty_source() {
         let config = ContextConfig::default();
-        let result = compute_context_lines("", "test.rs", 5, &config, 4);
+        let filename = "test.rs";
+        let source = "";
+        let tree_cache = get_tree_cache(filename, source);
+        
+        let result = compute_context_lines(source, filename, &tree_cache, 5, &config, 4);
         assert!(result.is_empty());
     }
 
     #[test]
     fn test_scroll_at_zero() {
         let config = ContextConfig::default();
+        let filename = "test.rs";
         let source = "fn main() {\n    println!(\"hello\");\n}";
-        let result = compute_context_lines(source, "test.rs", 0, &config, 4);
+        let tree_cache = get_tree_cache(filename, source);
+        
+        let result = compute_context_lines(source, filename, &tree_cache, 0, &config, 4);
         assert!(result.is_empty());
     }
 
     #[test]
     fn test_rust_function_context() {
         let config = ContextConfig::default();
+        let filename = "test.rs";
         let source = r#"fn main() {
     let x = 1;
     let y = 2;
     let z = 3;
     println!("{}", x + y + z);
 }"#;
-        let result = compute_context_lines(source, "test.rs", 3, &config, 4);
+        let tree_cache = get_tree_cache(filename, source);
+
+        
+        let result = compute_context_lines(source, filename, &tree_cache, 3, &config, 4);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].content, "fn main() {");
         assert_eq!(result[0].line_number, 1);
@@ -348,6 +381,7 @@ mod tests {
     #[test]
     fn test_nested_rust_contexts() {
         let config = ContextConfig::default();
+        let filename = "test.rs";
         let source = r#"impl Foo {
     fn bar() {
         if true {
@@ -355,7 +389,9 @@ mod tests {
         }
     }
 }"#;
-        let result = compute_context_lines(source, "test.rs", 3, &config, 4);
+        let tree_cache = get_tree_cache(filename, source);
+        
+        let result = compute_context_lines(source, filename, &tree_cache, 3, &config, 4);
         // Should show impl, fn, and if
         assert!(result.len() >= 2);
         assert!(result[0].content.contains("impl Foo"));
@@ -364,8 +400,11 @@ mod tests {
     #[test]
     fn test_unsupported_language() {
         let config = ContextConfig::default();
+        let filename = "test.xyz";
         let source = "some content\nmore content\neven more";
-        let result = compute_context_lines(source, "test.xyz", 2, &config, 4);
+        let tree_cache = get_tree_cache(filename, source);
+        
+        let result = compute_context_lines(source, filename, &tree_cache, 2, &config, 4);
         assert!(result.is_empty());
     }
 
@@ -375,8 +414,11 @@ mod tests {
             enabled: false,
             max_lines: 5,
         };
+        let filename = "test.rs";
         let source = "fn main() {\n    let x = 1;\n}";
-        let result = compute_context_lines(source, "test.rs", 1, &config, 4);
+        let tree_cache = get_tree_cache(filename, source);
+        
+        let result = compute_context_lines(source, filename, &tree_cache, 1, &config, 4);
         assert!(result.is_empty());
     }
 }
