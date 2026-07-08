@@ -445,6 +445,7 @@ fn run_app_internal(
                     frame,
                     diff,
                     &state.file_diffs,
+                    &state.cached_trees,
                     &state.sidebar_items,
                     &state.sidebar_visible,
                     &state.collapsed_dirs,
