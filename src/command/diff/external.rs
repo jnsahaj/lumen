@@ -422,4 +422,56 @@ Binary files a/img.png and b/img.png differ
         let paths = vec!["a".to_string(), "b".to_string(), "c".to_string()];
         assert!(load_files_diffs(&paths).is_err());
     }
+
+    #[test]
+    fn test_load_files_diffs_modified() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = dir.path().join("old.txt");
+        let new = dir.path().join("new.txt");
+        std::fs::write(&old, "one\n").unwrap();
+        std::fs::write(&new, "two\n").unwrap();
+
+        let paths = vec![
+            old.to_string_lossy().into_owned(),
+            new.to_string_lossy().into_owned(),
+        ];
+        let diffs = load_files_diffs(&paths).unwrap();
+        assert_eq!(diffs.len(), 1);
+        assert_eq!(diffs[0].filename, paths[1]);
+        assert_eq!(diffs[0].status, FileStatus::Modified);
+        assert_eq!(diffs[0].old_content, "one\n");
+        assert_eq!(diffs[0].new_content, "two\n");
+    }
+
+    #[test]
+    fn test_load_files_diffs_added_when_old_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let new = dir.path().join("new.txt");
+        std::fs::write(&new, "hello\n").unwrap();
+
+        let paths = vec![
+            dir.path().join("absent.txt").to_string_lossy().into_owned(),
+            new.to_string_lossy().into_owned(),
+        ];
+        let diffs = load_files_diffs(&paths).unwrap();
+        assert_eq!(diffs[0].status, FileStatus::Added);
+        assert!(diffs[0].old_content.is_empty());
+        assert_eq!(diffs[0].new_content, "hello\n");
+    }
+
+    #[test]
+    fn test_load_files_diffs_deleted_when_new_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = dir.path().join("old.txt");
+        std::fs::write(&old, "bye\n").unwrap();
+
+        let paths = vec![
+            old.to_string_lossy().into_owned(),
+            dir.path().join("absent.txt").to_string_lossy().into_owned(),
+        ];
+        let diffs = load_files_diffs(&paths).unwrap();
+        assert_eq!(diffs[0].status, FileStatus::Deleted);
+        assert_eq!(diffs[0].old_content, "bye\n");
+        assert!(diffs[0].new_content.is_empty());
+    }
 }

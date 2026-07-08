@@ -477,3 +477,55 @@ pub fn run_diff_ui(mut options: DiffOptions, backend: &dyn VcsBackend) -> io::Re
 
     app::run_app(options, None, backend)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn opts() -> DiffOptions {
+        DiffOptions {
+            reference: None,
+            pr: None,
+            detect_pr: false,
+            file: None,
+            watch: false,
+            theme: None,
+            stacked: false,
+            focus: None,
+            origin: None,
+            wrap: false,
+            stdin: false,
+            files: None,
+        }
+    }
+
+    #[test]
+    fn test_is_external_source_stdin_flag() {
+        let mut o = opts();
+        o.stdin = true;
+        assert!(is_external_source(&o));
+    }
+
+    #[test]
+    fn test_is_external_source_files() {
+        let mut o = opts();
+        o.files = Some(vec!["a".into(), "b".into()]);
+        assert!(is_external_source(&o));
+    }
+
+    #[test]
+    fn test_is_external_source_dash_reference() {
+        let mut o = opts();
+        o.reference = Some(CommitReference::Single("-".into()));
+        assert!(is_external_source(&o));
+    }
+
+    #[test]
+    fn test_is_external_source_negative() {
+        assert!(!is_external_source(&opts()));
+
+        let mut o = opts();
+        o.reference = Some(CommitReference::Single("HEAD".into()));
+        assert!(!is_external_source(&o));
+    }
+}

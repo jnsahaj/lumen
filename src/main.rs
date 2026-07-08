@@ -197,3 +197,67 @@ fn read_from_stdin() -> Result<String, LumenError> {
     eprintln!("Reading commit SHA from stdin: '{}'", buffer.trim());
     Ok(buffer)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn diff_cmd(stdin: bool, files: Option<Vec<String>>, reference: Option<&str>) -> Commands {
+        Commands::Diff {
+            reference: reference.map(|s| CommitReference::Single(s.to_string())),
+            pr: None,
+            detect_pr: false,
+            file: None,
+            watch: false,
+            theme: None,
+            stacked: false,
+            focus: None,
+            origin: None,
+            wrap: false,
+            stdin,
+            files,
+        }
+    }
+
+    #[test]
+    fn test_external_label_stdin() {
+        assert_eq!(
+            external_diff_label(&diff_cmd(true, None, None)),
+            Some(Some("stdin".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_external_label_dash_reference() {
+        assert_eq!(
+            external_diff_label(&diff_cmd(false, None, Some("-"))),
+            Some(Some("stdin".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_external_label_two_files() {
+        let files = Some(vec!["old".to_string(), "new".to_string()]);
+        assert_eq!(
+            external_diff_label(&diff_cmd(false, files, None)),
+            Some(Some("old → new".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_external_label_three_files_has_no_label_but_is_external() {
+        let files = Some(vec!["a".to_string(), "b".to_string(), "c".to_string()]);
+        assert_eq!(external_diff_label(&diff_cmd(false, files, None)), Some(None));
+    }
+
+    #[test]
+    fn test_external_label_none_for_regular_diff() {
+        assert_eq!(external_diff_label(&diff_cmd(false, None, Some("HEAD"))), None);
+        assert_eq!(external_diff_label(&diff_cmd(false, None, None)), None);
+    }
+
+    #[test]
+    fn test_external_label_none_for_non_diff_command() {
+        assert_eq!(external_diff_label(&Commands::List), None);
+    }
+}

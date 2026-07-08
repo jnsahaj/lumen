@@ -77,3 +77,24 @@ impl VcsBackend for NoopBackend {
         "diff"
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_label_surfaced_as_branch() {
+        let b = NoopBackend::new(Some("stdin".to_string()));
+        assert_eq!(b.get_current_branch().unwrap(), Some("stdin".to_string()));
+        assert_eq!(b.name(), "diff");
+    }
+
+    #[test]
+    fn test_no_label_and_empty_collections() {
+        let b = NoopBackend::new(None);
+        assert_eq!(b.get_current_branch().unwrap(), None);
+        assert!(b.get_changed_files("x").unwrap().is_empty());
+        assert!(b.get_working_tree_changed_files().unwrap().is_empty());
+        assert!(b.get_commit("x").is_err());
+    }
+}
