@@ -147,6 +147,14 @@ pub enum Commands {
         /// Soft-wrap long diff lines instead of scrolling horizontally
         #[arg(long)]
         wrap: bool,
+
+        /// Read a unified diff from stdin instead of a repository
+        #[arg(long)]
+        stdin: bool,
+
+        /// Compare two arbitrary files directly, without a repository
+        #[arg(long, num_args = 1.., value_name = "PATH")]
+        files: Option<Vec<String>>,
     },
     /// Interactively configure Lumen (provider, API key)
     Configure,
@@ -179,6 +187,29 @@ mod tests {
         let cli = Cli::try_parse_from(["lumen", "diff", "--wrap"]).unwrap();
         match cli.command {
             Commands::Diff { wrap, .. } => assert!(wrap),
+            _ => panic!("expected diff command"),
+        }
+    }
+
+    #[test]
+    fn test_diff_stdin_flag_parses() {
+        let cli = Cli::try_parse_from(["lumen", "diff", "--stdin"]).unwrap();
+        match cli.command {
+            Commands::Diff { stdin, .. } => assert!(stdin),
+            _ => panic!("expected diff command"),
+        }
+    }
+
+    #[test]
+    fn test_diff_files_flag_parses() {
+        let cli = Cli::try_parse_from(["lumen", "diff", "--files", "old.txt", "new.txt"]).unwrap();
+        match cli.command {
+            Commands::Diff { files, .. } => {
+                assert_eq!(
+                    files,
+                    Some(vec!["old.txt".to_string(), "new.txt".to_string()])
+                );
+            }
             _ => panic!("expected diff command"),
         }
     }

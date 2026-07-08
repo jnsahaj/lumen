@@ -7,7 +7,7 @@ use error::LumenError;
 use git_entity::{commit::Commit, diff::Diff, GitEntity};
 use std::io::Read;
 use std::process;
-use vcs::VcsBackendType;
+use vcs::{NoopBackend, VcsBackend, VcsBackendType};
 
 mod ai_prompt;
 mod command;
@@ -37,10 +37,12 @@ async fn run() -> Result<(), LumenError> {
     let provider = provider::LumenProvider::new(config.provider, config.api_key, config.model)?;
     let command = command::LumenCommand::new(provider);
 
-    // Get VCS backend based on CLI override or auto-detection
     let cwd = std::env::current_dir()?;
     let vcs_override = cli.vcs.map(VcsBackendType::from);
-    let backend = vcs::get_backend(&cwd, vcs_override)?;
+    let backend: Box<dyn VcsBackend> = match external_diff_label(&cli.command) {
+        Some(label) => Box::new(NoopBackend::new(label)),
+        None => vcs::get_backend(&cwd, vcs_override)?,
+    };
 
     match cli.command {
         Commands::Explain {
@@ -133,6 +135,8 @@ async fn run() -> Result<(), LumenError> {
             focus,
             origin,
             wrap,
+            stdin,
+            files,
         } => {
             let options = command::diff::DiffOptions {
                 reference,
@@ -145,6 +149,8 @@ async fn run() -> Result<(), LumenError> {
                 focus,
                 origin,
                 wrap: wrap || config.wrap.unwrap_or(false),
+                stdin,
+                files,
             };
             command::diff::run_diff_ui(options, backend.as_ref())?;
         }
@@ -154,6 +160,34 @@ async fn run() -> Result<(), LumenError> {
     }
 
     Ok(())
+}
+
+fn external_diff_label(command: &Commands) -> Option<Option<String>> {
+    let Commands::Diff {
+        reference,
+        stdin,
+        files,
+        ..
+    } = command
+    else {
+        return None;
+    };
+
+    if let Some(paths) = files {
+        let label = if paths.len() == 2 {
+            Some(format!("{} → {}", paths[0], paths[1]))
+        } else {
+            None
+        };
+        return Some(label);
+    }
+
+    let from_stdin = *stdin || matches!(reference, Some(CommitReference::Single(s)) if s == "-");
+    if from_stdin {
+        return Some(Some("stdin".to_string()));
+    }
+
+    None
 }
 
 fn read_from_stdin() -> Result<String, LumenError> {

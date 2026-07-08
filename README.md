@@ -107,7 +107,20 @@ lumen diff --focus src/main.rs
 
 # Soft-wrap long lines (also settable in lumen.config.json)
 lumen diff --wrap
+
+# Review a unified diff from any tool, no repository required
+arc diff | lumen diff --stdin
+kubectl diff -f manifest.yaml | lumen diff --stdin
+lumen diff -            # `-` is shorthand for --stdin
+
+# Compare two arbitrary files directly
+lumen diff --files old.toml new.toml
 ```
+
+> `--stdin` reconstructs the diff from the hunks in the patch, so the view shows
+> the changed regions and their context (what the patch carried), not the whole
+> file. This makes lumen a general-purpose diff viewer for `arc`, `chezmoi`,
+> `kubectl`, `terraform`, and any tool that emits a unified diff.
 
 #### Stacked Diff Mode
 

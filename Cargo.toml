@@ -56,6 +56,9 @@ pollster = { version = "0.4", optional = true }
 futures = { version = "0.3", optional = true }
 terminal-light = "1.8.0"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [features]
 default = ["jj"]
 jj = ["jj-lib", "chrono", "pollster", "futures"]

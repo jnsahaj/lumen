@@ -2553,6 +2553,7 @@ dependencies = [
  "indoc",
  "inquire",
  "jj-lib",
+ "libc",
  "notify",
  "notify-debouncer-mini",
  "nucleo-matcher",
