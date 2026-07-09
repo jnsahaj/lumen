@@ -151,6 +151,10 @@ pub enum Commands {
         /// Soft-wrap long diff lines instead of scrolling horizontally
         #[arg(long)]
         wrap: bool,
+
+        /// Show an AI-generated review guide in the sidebar (grouped changes)
+        #[arg(long)]
+        guide: bool,
     },
     /// Interactively configure Lumen (provider, API key)
     Configure,
@@ -183,6 +187,15 @@ mod tests {
         let cli = Cli::try_parse_from(["lumen", "diff", "--wrap"]).unwrap();
         match cli.command {
             Commands::Diff { wrap, .. } => assert!(wrap),
+            _ => panic!("expected diff command"),
+        }
+    }
+
+    #[test]
+    fn test_diff_guide_flag_parses() {
+        let cli = Cli::try_parse_from(["lumen", "diff", "--guide"]).unwrap();
+        match cli.command {
+            Commands::Diff { guide, .. } => assert!(guide),
             _ => panic!("expected diff command"),
         }
     }

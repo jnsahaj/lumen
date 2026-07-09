@@ -9,5 +9,6 @@ pub use modal::{
     FilePickerItem, FileStatus as ModalFileStatus, KeyBind, KeyBindSection, Modal, ModalContent,
     ModalResult,
 };
+pub use sidebar::GuideStatus;
 
 pub use crate::command::diff::global_search::GlobalSearchState;

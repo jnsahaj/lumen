@@ -7,6 +7,7 @@ use error::LumenError;
 use git_entity::{commit::Commit, diff::Diff, GitEntity};
 use std::io::Read;
 use std::process;
+use std::sync::Arc;
 use vcs::VcsBackendType;
 
 mod ai_prompt;
@@ -35,8 +36,12 @@ async fn run() -> Result<(), LumenError> {
         Err(e) => return Err(e),
     };
 
-    let provider = provider::LumenProvider::new(config.provider, config.api_key, config.model)?;
-    let command = command::LumenCommand::new(provider);
+    let provider = Arc::new(provider::LumenProvider::new(
+        config.provider,
+        config.api_key,
+        config.model,
+    )?);
+    let command = command::LumenCommand::new(provider.clone());
 
     // Get VCS backend based on CLI override or auto-detection
     let cwd = std::env::current_dir()?;
@@ -139,6 +144,7 @@ async fn run() -> Result<(), LumenError> {
             focus,
             origin,
             wrap,
+            guide,
         } => {
             let options = command::diff::DiffOptions {
                 reference,
@@ -151,8 +157,9 @@ async fn run() -> Result<(), LumenError> {
                 focus,
                 origin,
                 wrap: wrap || config.wrap.unwrap_or(false),
+                guide: guide || config.guide.unwrap_or(false),
             };
-            command::diff::run_diff_ui(options, backend.as_ref())?;
+            command::diff::run_diff_ui(options, backend.as_ref(), provider.clone())?;
         }
         Commands::Configure => {
             command::configure::ConfigureCommand::execute()?;

@@ -18,11 +18,13 @@ mod watcher;
 use std::collections::HashSet;
 use std::io;
 use std::process::{self, Command};
+use std::sync::Arc;
 use std::thread;
 
 use spinoff::{spinners, Color, Spinner};
 
 use crate::commit_reference::CommitReference;
+use crate::provider::LumenProvider;
 use crate::vcs::VcsBackend;
 
 pub struct DiffOptions {
@@ -36,6 +38,7 @@ pub struct DiffOptions {
     pub focus: Option<String>,
     pub origin: Option<String>,
     pub wrap: bool,
+    pub guide: bool,
 }
 
 #[derive(Clone)]
@@ -100,7 +103,10 @@ fn resolve_origin_repo() -> Result<String, String> {
     if parts.len() >= 2 {
         Ok(format!("{}/{}", parts[0], parts[1]))
     } else {
-        Err(format!("Could not parse owner/repo from origin URL: {}", url))
+        Err(format!(
+            "Could not parse owner/repo from origin URL: {}",
+            url
+        ))
     }
 }
 
@@ -298,6 +304,108 @@ fn mark_file_as_viewed_sync(node_id: &str, file_path: &str) -> Result<(), String
     Ok(())
 }
 
+/// Concatenate the non-binary files in `file_diffs` into a single unified
+/// diff, as if `git diff` had produced them all in one invocation. Used to
+/// feed the whole working-tree diff to the model for grouped summarization.
+pub fn combined_unified_diff(file_diffs: &[types::FileDiff]) -> String {
+    let mut combined = String::new();
+
+    for file_diff in file_diffs {
+        if file_diff.is_binary {
+            continue;
+        }
+
+        combined.push_str(&format!(
+            "diff --git a/{path} b/{path}\n",
+            path = file_diff.filename
+        ));
+
+        let a_path = format!("a/{}", file_diff.filename);
+        let b_path = format!("b/{}", file_diff.filename);
+        let body = similar::TextDiff::from_lines(&file_diff.old_content, &file_diff.new_content)
+            .unified_diff()
+            .header(&a_path, &b_path)
+            .to_string();
+        combined.push_str(&body);
+    }
+
+    combined
+}
+
+/// A single grouped-summary request: the diff identity it's keyed against
+/// (see `current_diff_identity` in `app.rs`), the combined diff text to send
+/// to the model, and the ground-truth file list used to reconcile the
+/// model's grouping against what actually changed.
+pub struct GenerateRequest {
+    pub identity: String,
+    pub combined_diff: String,
+    pub ground_truth: Vec<String>,
+}
+
+/// Result of a `GenerateRequest`, tagged with the identity it was requested
+/// for so the receiver can route it back to the right cache entry even if
+/// the user has since navigated to a different diff.
+pub type GroupResult = (
+    String,
+    Result<crate::grouped_summary::GroupedSummary, String>,
+);
+
+/// Spawn the single background grouping worker for the lifetime of the TUI
+/// session. Owns `provider` and a Tokio `handle` captured on a runtime
+/// thread, loops on `req_rx` until the sender side is dropped (TUI exit),
+/// and reports `(identity, result)` back over `res_tx` for each request in
+/// turn. Requests are processed serially — the previous per-keypress thread
+/// spawning is replaced by this persistent worker so overlapping requests
+/// can't race each other.
+///
+/// `handle` must be captured on a thread that is already inside a Tokio
+/// runtime context (e.g. via `tokio::runtime::Handle::current()` from the
+/// synchronous TUI loop, which itself runs on a Tokio worker thread). A
+/// plain `std::thread::spawn` closure has no ambient runtime, so calling
+/// `Handle::current()` *inside* the spawned thread panics with "there is no
+/// reactor running" — the handle must be captured outside and moved in.
+pub fn spawn_group_worker(
+    provider: Arc<LumenProvider>,
+    handle: tokio::runtime::Handle,
+    req_rx: std::sync::mpsc::Receiver<GenerateRequest>,
+    res_tx: std::sync::mpsc::Sender<GroupResult>,
+) {
+    thread::spawn(move || {
+        for req in req_rx {
+            let GenerateRequest {
+                identity,
+                combined_diff,
+                ground_truth,
+            } = req;
+            let result = handle.block_on(async {
+                let cmd = crate::command::explain::ExplainCommand {
+                    git_entity: crate::git_entity::GitEntity::Diff(
+                        crate::git_entity::diff::Diff::WorkingTree {
+                            staged: false,
+                            diff: combined_diff,
+                        },
+                    ),
+                    query: None,
+                    grouped: true,
+                };
+                provider.explain_grouped(&cmd).await
+            });
+
+            let parsed = result
+                .map_err(|e| e.to_string())
+                .and_then(|raw| {
+                    crate::grouped_summary::parse_grouped_summary(&raw).map_err(|e| e.to_string())
+                })
+                .map(|mut summary| {
+                    crate::grouped_summary::reconcile_groups(&mut summary, &ground_truth);
+                    summary
+                });
+
+            let _ = res_tx.send((identity, parsed));
+        }
+    });
+}
+
 /// Unmark a file as viewed on GitHub PR (blocking)
 fn unmark_file_as_viewed_sync(node_id: &str, file_path: &str) -> Result<(), String> {
     let mutation = format!(
@@ -338,7 +446,20 @@ fn detect_current_branch_pr() -> Result<String, String> {
     Ok(number)
 }
 
-pub fn run_diff_ui(mut options: DiffOptions, backend: &dyn VcsBackend) -> io::Result<()> {
+pub fn run_diff_ui(
+    mut options: DiffOptions,
+    backend: &dyn VcsBackend,
+    provider: Arc<LumenProvider>,
+) -> io::Result<()> {
+    // Spawn the single grouping worker up front and hand every dispatch
+    // branch below its own request-sender clone plus the (single) result
+    // receiver. `provider` is moved into the worker here — it's no longer
+    // threaded down into `app::run_app*`.
+    let handle = tokio::runtime::Handle::current();
+    let (req_tx, req_rx) = std::sync::mpsc::channel::<GenerateRequest>();
+    let (res_tx, res_rx) = std::sync::mpsc::channel::<GroupResult>();
+    spawn_group_worker(provider, handle, req_rx, res_tx);
+
     // Resolve --detect-pr into options.pr
     if options.detect_pr && options.pr.is_none() {
         let mut spinner = Spinner::new(
@@ -373,7 +494,7 @@ pub fn run_diff_ui(mut options: DiffOptions, backend: &dyn VcsBackend) -> io::Re
         match fetch_pr_info(pr_input, options.origin.as_deref()) {
             Ok(pr_info) => {
                 spinner.success("Fetched PR metadata");
-                return app::run_app_with_pr(options, pr_info, backend);
+                return app::run_app_with_pr(options, pr_info, backend, req_tx.clone(), res_rx);
             }
             Err(e) => {
                 spinner.fail(&e);
@@ -398,7 +519,7 @@ pub fn run_diff_ui(mut options: DiffOptions, backend: &dyn VcsBackend) -> io::Re
             match fetch_pr_info(input, options.origin.as_deref()) {
                 Ok(pr_info) => {
                     spinner.success("Fetched PR metadata");
-                    return app::run_app_with_pr(options, pr_info, backend);
+                    return app::run_app_with_pr(options, pr_info, backend, req_tx.clone(), res_rx);
                 }
                 Err(e) => {
                     spinner.fail(&e);
@@ -443,12 +564,90 @@ pub fn run_diff_ui(mut options: DiffOptions, backend: &dyn VcsBackend) -> io::Re
                 }
             };
 
-            return app::run_app_stacked(options, commits, backend);
+            return app::run_app_stacked(options, commits, backend, req_tx.clone(), res_rx);
         } else {
             eprintln!("\x1b[91merror:\x1b[0m --stacked requires a range (e.g., main..feature)");
             process::exit(1);
         }
     }
 
-    app::run_app(options, None, backend)
+    app::run_app(options, None, backend, req_tx, res_rx)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::types::{FileDiff, FileStatus};
+    use super::*;
+
+    #[test]
+    fn combined_unified_diff_emits_a_diff_git_header_per_file() {
+        let file_diffs = vec![FileDiff {
+            filename: "src/a.rs".to_string(),
+            old_content: "old\n".to_string(),
+            new_content: "new\n".to_string(),
+            status: FileStatus::Modified,
+            is_binary: false,
+        }];
+
+        let combined = combined_unified_diff(&file_diffs);
+
+        assert!(combined.contains("diff --git a/src/a.rs b/src/a.rs\n"));
+        assert!(combined.contains("-old\n"));
+        assert!(combined.contains("+new\n"));
+    }
+
+    #[test]
+    fn combined_unified_diff_concatenates_headers_for_multiple_files_in_order() {
+        let file_diffs = vec![
+            FileDiff {
+                filename: "src/a.rs".to_string(),
+                old_content: "old a\n".to_string(),
+                new_content: "new a\n".to_string(),
+                status: FileStatus::Modified,
+                is_binary: false,
+            },
+            FileDiff {
+                filename: "src/b.rs".to_string(),
+                old_content: "old b\n".to_string(),
+                new_content: "new b\n".to_string(),
+                status: FileStatus::Modified,
+                is_binary: false,
+            },
+        ];
+
+        let combined = combined_unified_diff(&file_diffs);
+
+        let a_pos = combined
+            .find("diff --git a/src/a.rs b/src/a.rs\n")
+            .expect("missing header for a.rs");
+        let b_pos = combined
+            .find("diff --git a/src/b.rs b/src/b.rs\n")
+            .expect("missing header for b.rs");
+        assert!(a_pos < b_pos);
+    }
+
+    #[test]
+    fn combined_unified_diff_skips_binary_files() {
+        let file_diffs = vec![
+            FileDiff {
+                filename: "image.png".to_string(),
+                old_content: String::new(),
+                new_content: String::new(),
+                status: FileStatus::Added,
+                is_binary: true,
+            },
+            FileDiff {
+                filename: "src/a.rs".to_string(),
+                old_content: "old\n".to_string(),
+                new_content: "new\n".to_string(),
+                status: FileStatus::Modified,
+                is_binary: false,
+            },
+        ];
+
+        let combined = combined_unified_diff(&file_diffs);
+
+        assert!(!combined.contains("image.png"));
+        assert!(combined.contains("diff --git a/src/a.rs b/src/a.rs\n"));
+    }
 }

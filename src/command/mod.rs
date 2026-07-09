@@ -3,6 +3,7 @@ use explain::ExplainCommand;
 use list::ListCommand;
 use operate::OperateCommand;
 use std::process::Stdio;
+use std::sync::Arc;
 
 use crate::config::configuration::DraftConfig;
 use crate::error::LumenError;
@@ -37,11 +38,11 @@ pub enum CommandType<'a> {
 }
 
 pub struct LumenCommand {
-    provider: LumenProvider,
+    provider: Arc<LumenProvider>,
 }
 
 impl LumenCommand {
-    pub fn new(provider: LumenProvider) -> Self {
+    pub fn new(provider: Arc<LumenProvider>) -> Self {
         LumenCommand { provider }
     }
 
