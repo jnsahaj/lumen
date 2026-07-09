@@ -21,6 +21,7 @@ impl ListCommand {
         ExplainCommand {
             git_entity,
             query: None,
+            grouped: false,
         }
         .execute(provider)
         .await

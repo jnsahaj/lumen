@@ -15,6 +15,7 @@ mod commit_reference;
 mod config;
 mod error;
 mod git_entity;
+mod grouped_summary;
 mod provider;
 mod vcs;
 
@@ -48,6 +49,7 @@ async fn run() -> Result<(), LumenError> {
             staged,
             query,
             list,
+            grouped,
         } => {
             let git_entity = if list {
                 let sha = LumenCommand::get_sha_from_fzf(backend.as_ref())?;
@@ -94,7 +96,11 @@ async fn run() -> Result<(), LumenError> {
             };
 
             command
-                .execute(command::CommandType::Explain { git_entity, query })
+                .execute(command::CommandType::Explain {
+                    git_entity,
+                    query,
+                    grouped,
+                })
                 .await?;
         }
         Commands::List => {

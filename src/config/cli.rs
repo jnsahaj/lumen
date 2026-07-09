@@ -91,6 +91,10 @@ pub enum Commands {
         /// Select commit interactively using fuzzy finder
         #[arg(long)]
         list: bool,
+
+        /// Group the changes into logical clusters with a summary per group
+        #[arg(long, conflicts_with = "query")]
+        grouped: bool,
     },
     /// List all commits in an interactive fuzzy-finder, and summarize the changes
     List,
@@ -180,6 +184,49 @@ mod tests {
         match cli.command {
             Commands::Diff { wrap, .. } => assert!(wrap),
             _ => panic!("expected diff command"),
+        }
+    }
+
+    #[test]
+    fn test_explain_grouped_flag_parses() {
+        let cli = Cli::try_parse_from(["lumen", "explain", "--grouped"]).unwrap();
+        match cli.command {
+            Commands::Explain { grouped, .. } => assert!(grouped),
+            _ => panic!("expected explain command"),
+        }
+    }
+
+    #[test]
+    fn test_explain_grouped_conflicts_with_query() {
+        let result = Cli::try_parse_from(["lumen", "explain", "--grouped", "--query", "x"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_explain_grouped_composes_with_staged() {
+        let cli = Cli::try_parse_from(["lumen", "explain", "--grouped", "--staged"]).unwrap();
+        match cli.command {
+            Commands::Explain {
+                grouped, staged, ..
+            } => {
+                assert!(grouped);
+                assert!(staged);
+            }
+            _ => panic!("expected explain command"),
+        }
+    }
+
+    #[test]
+    fn test_explain_grouped_composes_with_reference() {
+        let cli = Cli::try_parse_from(["lumen", "explain", "--grouped", "HEAD"]).unwrap();
+        match cli.command {
+            Commands::Explain {
+                grouped, reference, ..
+            } => {
+                assert!(grouped);
+                assert!(reference.is_some());
+            }
+            _ => panic!("expected explain command"),
         }
     }
 }
