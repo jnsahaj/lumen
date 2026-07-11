@@ -1,0 +1,307 @@
+# Release workflow: builds macOS + Linux binaries, creates a GitHub release,
+# publishes to crates.io, and updates the Homebrew tap.
+#
+# Trigger manually from the Actions tab (or `gh workflow run release.yml`):
+#   - version: the new version to release (e.g. 2.31.0)
+#   - dry_run: build everything and upload artifacts, but do NOT push a tag,
+#     create a release, or publish anywhere. Use this to test the pipeline.
+#
+# One-time setup required for the publish steps:
+#   - crates.io: either add a CARGO_REGISTRY_TOKEN repo secret, or configure
+#     Trusted Publishing on crates.io (Settings -> Trusted Publishing) for
+#     repository jnsahaj/lumen and workflow file release.yml.
+#   - Homebrew: add a TAP_GITHUB_TOKEN repo secret — a fine-grained PAT with
+#     "Contents: read and write" on jnsahaj/homebrew-lumen. If missing, the
+#     Homebrew step is skipped (everything else still works).
+
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (e.g. 2.31.0)"
+        required: true
+        type: string
+      dry_run:
+        description: "Dry run: build only, publish nothing"
+        type: boolean
+        default: false
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions: {}
+
+env:
+  VERSION: ${{ inputs.version }}
+
+jobs:
+  # Validate the version, bump Cargo.toml/Cargo.lock, and (unless dry_run)
+  # commit + tag + push. Builds consume the bumped manifests as an artifact so
+  # dry runs exercise the exact same path as real releases.
+  prepare:
+    name: Prepare v${{ inputs.version }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Validate version
+        run: |
+          if ! echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Invalid version '$VERSION'. Expected X.Y.Z"
+            exit 1
+          fi
+          current=$(grep -m1 '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+          if [ "$VERSION" = "$current" ]; then
+            echo "::error::Version $VERSION is already the current version"
+            exit 1
+          fi
+          if git ls-remote --exit-code origin "refs/tags/v$VERSION" >/dev/null 2>&1; then
+            echo "::error::Tag v$VERSION already exists"
+            exit 1
+          fi
+
+      - name: Bump version in Cargo.toml and Cargo.lock
+        run: |
+          sed -i "0,/^version = /s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
+          cargo update --workspace
+          grep -m1 '^version = ' Cargo.toml
+          grep -A1 '^name = "lumen"$' Cargo.lock
+
+      - name: Upload bumped manifests
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-manifests
+          path: |
+            Cargo.toml
+            Cargo.lock
+          if-no-files-found: error
+
+      - name: Commit, tag, and push
+        if: ${{ !inputs.dry_run }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Cargo.toml Cargo.lock
+          git commit -m "chore: bump version to $VERSION"
+          git tag -a "v$VERSION" -m "Release v$VERSION"
+          git push origin HEAD:main "v$VERSION"
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-apple-darwin
+            os: macos-15-intel
+          - target: aarch64-apple-darwin
+            os: macos-15
+          # Build on the oldest supported Ubuntu so the glibc requirement
+          # stays low enough for older distros.
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-22.04
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-22.04-arm
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-22.04
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-22.04-arm
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    env:
+      CC_x86_64_unknown_linux_musl: musl-gcc
+      CC_aarch64_unknown_linux_musl: musl-gcc
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Use bumped manifests
+        uses: actions/download-artifact@v4
+        with:
+          name: release-manifests
+
+      - name: Install musl toolchain
+        if: ${{ contains(matrix.target, 'musl') }}
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # Vendored OpenSSL + libgit2 + tree-sitter grammars make cold builds
+      # slow; the cache mostly pays off when a dry run precedes the release.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Smoke test
+        run: |
+          out=$(./target/${{ matrix.target }}/release/lumen --version)
+          echo "$out"
+          echo "$out" | grep -qF "$VERSION" || {
+            echo "::error::Binary reports wrong version"
+            exit 1
+          }
+
+      - name: Package
+        run: |
+          tarball="lumen-${{ matrix.target }}.tar.gz"
+          tar -czf "$tarball" -C "target/${{ matrix.target }}/release" lumen
+          if command -v sha256sum >/dev/null; then
+            sha256sum "$tarball" > "$tarball.sha256"
+          else
+            shasum -a 256 "$tarball" > "$tarball.sha256"
+          fi
+          cat "$tarball.sha256"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lumen-${{ matrix.target }}
+          path: |
+            lumen-${{ matrix.target }}.tar.gz
+            lumen-${{ matrix.target }}.tar.gz.sha256
+          if-no-files-found: error
+
+  release:
+    name: Create GitHub release
+    if: ${{ !inputs.dry_run }}
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: lumen-*
+          path: dist
+          merge-multiple: true
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "v$VERSION" \
+            --title "v$VERSION" \
+            --generate-notes \
+            --verify-tag \
+            dist/*
+
+  publish-crate:
+    name: Publish to crates.io
+    if: ${{ !inputs.dry_run }}
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # for crates.io Trusted Publishing
+    env:
+      HAS_CLASSIC_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN != '' }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: v${{ inputs.version }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Prefer a classic token if configured; otherwise use Trusted Publishing.
+      - name: Authenticate with crates.io (Trusted Publishing)
+        if: ${{ env.HAS_CLASSIC_TOKEN != 'true' }}
+        id: auth
+        uses: rust-lang/crates-io-auth-action@v1
+
+      - name: Publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN || steps.auth.outputs.token }}
+        run: cargo publish --locked
+
+  homebrew:
+    name: Update Homebrew tap
+    if: ${{ !inputs.dry_run }}
+    needs: [prepare, release]
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Check for tap token
+        id: token
+        run: echo "have=${{ secrets.TAP_GITHUB_TOKEN != '' }}" >> "$GITHUB_OUTPUT"
+
+      - name: Skip notice
+        if: ${{ steps.token.outputs.have != 'true' }}
+        run: echo "::warning::TAP_GITHUB_TOKEN not set — skipping Homebrew tap update"
+
+      - name: Checkout tap
+        if: ${{ steps.token.outputs.have == 'true' }}
+        uses: actions/checkout@v6
+        with:
+          repository: jnsahaj/homebrew-lumen
+          token: ${{ secrets.TAP_GITHUB_TOKEN }}
+
+      - name: Download checksums
+        if: ${{ steps.token.outputs.have == 'true' }}
+        uses: actions/download-artifact@v4
+        with:
+          pattern: lumen-*
+          path: dist
+          merge-multiple: true
+
+      - name: Update formula
+        if: ${{ steps.token.outputs.have == 'true' }}
+        run: |
+          sha() { awk '{print $1}' "dist/lumen-$1.tar.gz.sha256"; }
+          url() { echo "https://github.com/jnsahaj/lumen/releases/download/v$VERSION/lumen-$1.tar.gz"; }
+
+          cat > Formula/lumen.rb << EOF
+          class Lumen < Formula
+            desc "lumen is a command-line tool that can show pretty diff, generate commit messages with AI, summarise diffs / commits, and more without requiring an API key."
+            homepage "https://github.com/jnsahaj/lumen"
+            version "$VERSION"
+
+            on_macos do
+              on_intel do
+                url "$(url x86_64-apple-darwin)"
+                sha256 "$(sha x86_64-apple-darwin)"
+              end
+
+              on_arm do
+                url "$(url aarch64-apple-darwin)"
+                sha256 "$(sha aarch64-apple-darwin)"
+              end
+            end
+
+            on_linux do
+              on_intel do
+                url "$(url x86_64-unknown-linux-gnu)"
+                sha256 "$(sha x86_64-unknown-linux-gnu)"
+              end
+
+              on_arm do
+                url "$(url aarch64-unknown-linux-gnu)"
+                sha256 "$(sha aarch64-unknown-linux-gnu)"
+              end
+            end
+
+            def install
+              bin.install "lumen"
+            end
+          end
+          EOF
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/lumen.rb
+          git commit -m "chore: bump lumen to $VERSION"
+          git push
