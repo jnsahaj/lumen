@@ -49,7 +49,7 @@ impl LumenProvider {
     ) -> Result<Self, LumenError> {
         let (backend, provider_name) = match provider_type {
             // Custom endpoint providers (OpenCode Zen, OpenRouter, Vercel) - use ServiceTargetResolver
-            ProviderType::OpencodeZen | ProviderType::Openrouter | ProviderType::Vercel => {
+            ProviderType::OpencodeZen | ProviderType::Openrouter | ProviderType::Vercel | ProviderType::Groq => {
                 let defaults = ProviderInfo::for_provider(provider_type);
                 let config = match provider_type {
                     ProviderType::OpencodeZen => CustomProviderConfig {
@@ -65,6 +65,11 @@ impl LumenProvider {
                     ProviderType::Vercel => CustomProviderConfig {
                         // Trailing slash is required for URL joining to work correctly
                         endpoint: "https://ai-gateway.vercel.sh/v1/",
+                        env_key: defaults.env_key,
+                        adapter_kind: AdapterKind::OpenAI,
+                    },
+                    ProviderType::Groq => CustomProviderConfig {
+                        endpoint: "https://api.groq.com/openai/v1/",
                         env_key: defaults.env_key,
                         adapter_kind: AdapterKind::OpenAI,
                     },
