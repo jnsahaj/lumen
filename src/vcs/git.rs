@@ -999,6 +999,75 @@ mod tests {
     }
 
     #[test]
+    fn test_get_range_diff_three_dot_uses_merge_base_for_diverging_branches() {
+        use crate::vcs::test_utils::{git, make_temp_dir};
+        use std::fs;
+
+        let _lock = crate::vcs::test_utils::cwd_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = make_temp_dir("git-range-three-dot-diverging");
+        let original = std::env::current_dir().expect("get cwd");
+
+        git(&dir, &["init"]);
+        git(&dir, &["config", "user.email", "test@example.com"]);
+        git(&dir, &["config", "user.name", "Test User"]);
+
+        // Base commit shared by both branches.
+        fs::write(dir.join("base.txt"), "base\n").expect("write base");
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-m", "base"]);
+
+        // Diverge: "feature" branch gets its own unique commit.
+        git(&dir, &["checkout", "-b", "feature"]);
+        fs::write(dir.join("feature_only.txt"), "feature\n").expect("write feature_only");
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-m", "feature-only commit"]);
+
+        // Back on main, diverge with a different unique commit not reachable
+        // from "feature".
+        git(&dir, &["checkout", "main"]);
+        fs::write(dir.join("main_only.txt"), "main content\n").expect("write main_only");
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-m", "main-only commit"]);
+
+        std::env::set_current_dir(&dir).expect("set cwd");
+
+        let backend = GitBackend::from_cwd().expect("should open repo");
+
+        // Two-dot: diffs feature's tree directly against main's tree, so it
+        // picks up feature's own divergent file as a removal.
+        let diff_2dot = backend
+            .get_range_diff("feature", "main", false)
+            .expect("should get two-dot diff");
+        assert!(
+            diff_2dot.contains("feature_only.txt"),
+            "two-dot diff should include feature's divergent file, got: {}",
+            diff_2dot
+        );
+
+        // Three-dot: diffs merge-base(feature, main)..main, so feature's own
+        // divergent commit must not leak in — only main's unique commit shows.
+        let diff_3dot = backend
+            .get_range_diff("feature", "main", true)
+            .expect("should get three-dot diff");
+        assert!(
+            !diff_3dot.contains("feature_only.txt"),
+            "three-dot diff should exclude feature's divergent file, got: {}",
+            diff_3dot
+        );
+        assert!(
+            diff_3dot.contains("main_only.txt"),
+            "three-dot diff should include main's own committed change, got: {}",
+            diff_3dot
+        );
+
+        // Cleanup
+        let _ = std::env::set_current_dir(&original);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn test_range_diff_excludes_lock_files() {
         use crate::vcs::test_utils::{git, make_temp_dir};
         use std::fs;

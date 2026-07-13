@@ -62,7 +62,17 @@ impl DiffRefs {
                 }
             }
             Some(CommitReference::RangeToWorkingTree { from }) => {
-                DiffRefs::RangeToWorkingTree { from: from.clone() }
+                // Get merge-base against the working tree's parent, matching
+                // the three-dot semantics used for `TripleDots` above.
+                let head_ref = backend.working_copy_parent_ref();
+                let merge_base = backend.get_merge_base(from, head_ref).unwrap_or_else(|e| {
+                    eprintln!(
+                        "Warning: failed to find merge-base for {}...{}: {}. Using '{}' as base.",
+                        from, head_ref, e, from
+                    );
+                    from.clone()
+                });
+                DiffRefs::RangeToWorkingTree { from: merge_base }
             }
         }
     }
@@ -640,6 +650,92 @@ mod tests {
         let committed = diffs.iter().find(|d| d.filename == "committed.txt").unwrap();
         assert_eq!(committed.old_content, "");
         assert_eq!(committed.new_content, "committed\n");
+
+        let _ = std::env::set_current_dir(&original);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_load_file_diffs_range_to_working_tree_uses_merge_base_for_diverging_branches() {
+        let _lock = crate::vcs::test_utils::cwd_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = make_temp_dir("git-diff-range-to-wt-diverging");
+        let original = std::env::current_dir().expect("get cwd");
+
+        git(&dir, &["init"]);
+        git(&dir, &["config", "user.email", "test@example.com"]);
+        git(&dir, &["config", "user.name", "Test User"]);
+
+        // Base commit shared by both branches.
+        fs::write(dir.join("base.txt"), "base\n").expect("write base");
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-m", "base"]);
+
+        // Diverge: "feature" branch gets its own unique commit.
+        git(&dir, &["checkout", "-b", "feature"]);
+        fs::write(dir.join("feature_only.txt"), "feature\n").expect("write feature_only");
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-m", "feature-only commit"]);
+
+        // Back on main, diverge with a different unique commit not reachable
+        // from "feature" — this is what merge-base(feature, HEAD)..HEAD sees.
+        git(&dir, &["checkout", "main"]);
+        fs::write(dir.join("main_only.txt"), "main content\n").expect("write main_only");
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-m", "main-only commit"]);
+
+        // Uncommitted working-tree changes on top of HEAD (main).
+        fs::write(dir.join("uncommitted.txt"), "uncommitted\n").expect("write uncommitted");
+        fs::write(dir.join("base.txt"), "base modified\n").expect("modify base");
+
+        std::env::set_current_dir(&dir).expect("set cwd");
+
+        let backend = crate::vcs::GitBackend::from_cwd().expect("should open repo");
+        let options = super::super::DiffOptions {
+            reference: Some(
+                crate::commit_reference::CommitReference::RangeToWorkingTree {
+                    from: "feature".to_string(),
+                },
+            ),
+            pr: None,
+            detect_pr: false,
+            file: None,
+            watch: false,
+            theme: None,
+            stacked: false,
+            focus: None,
+            origin: None,
+            wrap: false,
+        };
+
+        let diffs = load_file_diffs(&options, &backend);
+        let filenames: Vec<&str> = diffs.iter().map(|d| d.filename.as_str()).collect();
+
+        // Merge-base semantics: only the delta unique to HEAD (main-only commit)
+        // plus working-tree changes should show up. The "feature" branch's own
+        // divergent commit must NOT leak in — that would be two-dot/direct-diff
+        // semantics, which is the bug this test guards against.
+        assert!(
+            !filenames.contains(&"feature_only.txt"),
+            "feature branch's divergent commit should be excluded under merge-base semantics, got: {:?}",
+            filenames
+        );
+        assert!(
+            filenames.contains(&"main_only.txt"),
+            "should include HEAD's own committed change since merge-base, got: {:?}",
+            filenames
+        );
+        assert!(
+            filenames.contains(&"uncommitted.txt"),
+            "should include untracked working tree file, got: {:?}",
+            filenames
+        );
+        assert!(
+            filenames.contains(&"base.txt"),
+            "should include modified working tree file, got: {:?}",
+            filenames
+        );
 
         let _ = std::env::set_current_dir(&original);
         let _ = fs::remove_dir_all(&dir);
