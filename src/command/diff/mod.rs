@@ -1,4 +1,5 @@
 mod annotation;
+mod annotation_store;
 mod app;
 mod context;
 mod coordinates;
@@ -36,6 +37,7 @@ pub struct DiffOptions {
     pub focus: Option<String>,
     pub origin: Option<String>,
     pub wrap: bool,
+    pub save_annotations: bool,
 }
 
 #[derive(Clone)]
@@ -78,7 +80,7 @@ fn parse_pr_input(input: &str) -> Option<(Option<String>, Option<String>, u64)> 
     }
 }
 
-fn resolve_origin_repo() -> Result<String, String> {
+pub(crate) fn resolve_origin_repo() -> Result<String, String> {
     let output = Command::new("git")
         .args(["remote", "get-url", "origin"])
         .output()

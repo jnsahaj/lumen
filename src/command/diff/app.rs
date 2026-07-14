@@ -36,6 +36,7 @@ fn open_tui_writer() -> io::Result<Box<dyn Write + Send>> {
 }
 
 use super::annotation::{AnnotationEditor, AnnotationEditorResult};
+use super::annotation_store;
 use super::coordinates::{extract_selected_text, PanelLayout};
 use super::git::{
     get_current_branch, load_file_diffs, load_pr_file_diffs, load_single_commit_diffs,
@@ -230,22 +231,25 @@ fn format_annotation_preview(annotation: &super::state::Annotation) -> String {
     let truncated_filename = truncate_path(&annotation.filename, 30);
     let line_display = annotation.line_range_display();
     let label = annotation.target_label();
+    let stale_marker = if annotation.stale { " (stale)" } else { "" };
     if line_display.is_empty() {
         format!(
-            "{} [{}] | {} | {}",
+            "{} [{}] | {} | {}{}",
             truncated_filename,
             label,
             preview,
-            annotation.format_time()
+            annotation.format_time(),
+            stale_marker
         )
     } else {
         format!(
-            "{}:{} [{}] | {} | {}",
+            "{}:{} [{}] | {} | {}{}",
             truncated_filename,
             line_display,
             label,
             preview,
-            annotation.format_time()
+            annotation.format_time(),
+            stale_marker
         )
     }
 }
@@ -293,6 +297,63 @@ fn sync_viewed_files_from_github(pr_info: &PrInfo, state: &mut AppState) {
     }
 }
 
+/// Resolve where (if anywhere) this session's annotations should be persisted.
+/// Returns `None` when persistence is disabled via `--no-save-annotations` or
+/// when no stable session key (PR number, diff reference, or branch) exists.
+fn init_annotation_persistence(
+    options: &DiffOptions,
+    pr_info: Option<&PrInfo>,
+    diff_reference: Option<&str>,
+    backend: &dyn VcsBackend,
+) -> Option<std::path::PathBuf> {
+    if !options.save_annotations {
+        return None;
+    }
+    let owner_repo = super::resolve_origin_repo().ok();
+    let fallback_slug = std::env::current_dir()
+        .map(|p| annotation_store::slugify_path(&p))
+        .unwrap_or_else(|_| "unknown".to_string());
+    let pr_number = pr_info.map(|p| p.number);
+    let current_branch = backend.get_current_branch().ok().flatten();
+    annotation_store::resolve_annotation_store_path(
+        owner_repo.as_deref(),
+        &fallback_slug,
+        pr_number,
+        diff_reference,
+        current_branch.as_deref(),
+    )
+}
+
+/// Load previously saved annotations for this session into `state`,
+/// marking any whose blob hash no longer matches the file on disk as stale.
+fn apply_saved_annotations(state: &mut AppState, path: &std::path::Path) {
+    let store = annotation_store::load(path);
+    let mut max_id = store.next_id;
+    for stored in &store.annotations {
+        let mut ann = annotation_store::from_stored(stored);
+        let current_hash = annotation_store::blob_hash_for_path(&ann.filename);
+        ann.stale = ann.anchor.is_some() && ann.anchor != current_hash;
+        if ann.id >= max_id {
+            max_id = ann.id + 1;
+        }
+        state.annotations.push(ann);
+    }
+    state.set_annotation_next_id_floor(max_id);
+}
+
+/// Write the current annotation set to disk, if persistence is enabled for this session.
+fn persist_annotations(state: &AppState, path: &Option<std::path::PathBuf>) {
+    let Some(path) = path else { return };
+    let _ = annotation_store::save_merged(path, |store| {
+        store.annotations = state
+            .annotations
+            .iter()
+            .map(annotation_store::to_stored)
+            .collect();
+        store.next_id = state.annotation_next_id();
+    });
+}
+
 fn run_app_internal(
     options: DiffOptions,
     pr_info: Option<PrInfo>,
@@ -322,7 +383,7 @@ fn run_app_internal(
             CommitReference::RangeToWorkingTree { from } => format!("{}..-", from),
         })
     };
-    state.set_diff_reference(diff_ref_str);
+    state.set_diff_reference(diff_ref_str.clone());
 
     // Initialize stacked mode if commits were provided
     if let Some(commits) = stacked_commits {
@@ -339,6 +400,22 @@ fn run_app_internal(
         sync_viewed_files_from_github(pr, &mut state);
         let viewed_count = state.viewed_files.len();
         spinner.success(&format!("{} files marked as viewed", viewed_count));
+    }
+
+    let annotation_store_path =
+        init_annotation_persistence(&options, pr_info.as_ref(), diff_ref_str.as_deref(), backend);
+    if let Some(ref path) = annotation_store_path {
+        if let Some(parent) = path.parent() {
+            annotation_store::prune_stale(parent, 30);
+        }
+        apply_saved_annotations(&mut state, path);
+        let stale_count = state.annotations.iter().filter(|a| a.stale).count();
+        if stale_count > 0 {
+            eprintln!(
+                "{} annotation(s) may be stale — file changed since they were written",
+                stale_count
+            );
+        }
     }
 
     // Now enter TUI mode. Use /dev/tty when stdout is captured so the
@@ -439,7 +516,8 @@ fn run_app_internal(
             let row_offset = std::cell::Cell::new(0usize);
             let gaps_cell = std::cell::RefCell::new(Vec::new());
             let rects_cell = std::cell::RefCell::new(Vec::new());
-            let editor_rect_cell: std::cell::Cell<Option<ratatui::layout::Rect>> = std::cell::Cell::new(None);
+            let editor_rect_cell: std::cell::Cell<Option<ratatui::layout::Rect>> =
+                std::cell::Cell::new(None);
             terminal.draw(|frame| {
                 let (offset, gaps, rects, er) = render_diff(
                     frame,
@@ -658,6 +736,7 @@ fn run_app_internal(
                                 if let Some(id) = editor.id {
                                     // Editing existing annotation
                                     state.update_annotation(id, content);
+                                    persist_annotations(&state, &annotation_store_path);
                                 } else {
                                     // New annotation
                                     state.add_annotation(
@@ -665,13 +744,16 @@ fn run_app_internal(
                                         editor.target.clone(),
                                         content,
                                         editor.created_at(),
+                                        annotation_store::blob_hash_for_path(&editor.filename),
                                     );
+                                    persist_annotations(&state, &annotation_store_path);
                                 }
                                 annotation_editor = None;
                             }
                             AnnotationEditorResult::Delete => {
                                 if let Some(id) = editor.id {
                                     state.remove_annotation(id);
+                                    persist_annotations(&state, &annotation_store_path);
                                 }
                                 annotation_editor = None;
                             }
@@ -759,6 +841,7 @@ fn run_app_internal(
                                 }
                                 ModalResult::AnnotationDelete { annotation_id } => {
                                     state.remove_annotation(annotation_id);
+                                    persist_annotations(&state, &annotation_store_path);
                                     // Refresh the modal if there are still annotations
                                     if !state.annotations.is_empty() {
                                         let mut sorted_annotations = state.annotations.clone();
@@ -901,18 +984,24 @@ fn run_app_internal(
                                         if editor.is_empty() {
                                             if let Some(id) = editor.id {
                                                 state.remove_annotation(id);
+                                                persist_annotations(&state, &annotation_store_path);
                                             }
                                         } else {
                                             let content = editor.content();
                                             if let Some(id) = editor.id {
                                                 state.update_annotation(id, content);
+                                                persist_annotations(&state, &annotation_store_path);
                                             } else {
                                                 state.add_annotation(
                                                     editor.filename.clone(),
                                                     editor.target.clone(),
                                                     content,
                                                     editor.created_at(),
+                                                    annotation_store::blob_hash_for_path(
+                                                        &editor.filename,
+                                                    ),
                                                 );
+                                                persist_annotations(&state, &annotation_store_path);
                                             }
                                         }
                                     }
@@ -1900,10 +1989,8 @@ fn run_app_internal(
                         }
                         KeyCode::Char('e') => {
                             if !state.file_diffs.is_empty() {
-                                let _ = execute!(
-                                    terminal.backend_mut(),
-                                    PopKeyboardEnhancementFlags
-                                );
+                                let _ =
+                                    execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags);
                                 execute!(
                                     terminal.backend_mut(),
                                     DisableMouseCapture,
@@ -1952,7 +2039,9 @@ fn run_app_internal(
                                 )?;
                                 let _ = execute!(
                                     terminal.backend_mut(),
-                                    PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+                                    PushKeyboardEnhancementFlags(
+                                        KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                                    )
                                 );
                                 terminal.clear()?;
                             }
@@ -2106,10 +2195,10 @@ fn run_app_internal(
                                                 key: "h/l or left/right",
                                                 description: "Scroll horizontally",
                                             },
-                                        KeyBind {
-                                            key: "w",
-                                            description: "Toggle watch mode",
-                                        },
+                                            KeyBind {
+                                                key: "w",
+                                                description: "Toggle watch mode",
+                                            },
                                             KeyBind {
                                                 key: "gg / G",
                                                 description: "Scroll to top / bottom",
@@ -2153,7 +2242,8 @@ fn run_app_internal(
                                             },
                                             KeyBind {
                                                 key: "ctrl+f",
-                                                description: "Global fuzzy search (all files, with preview)",
+                                                description:
+                                                    "Global fuzzy search (all files, with preview)",
                                             },
                                             KeyBind {
                                                 key: "n or down",

@@ -147,6 +147,10 @@ pub enum Commands {
         /// Soft-wrap long diff lines instead of scrolling horizontally
         #[arg(long)]
         wrap: bool,
+
+        /// Disable persisting review annotations to disk between sessions
+        #[arg(long = "no-save-annotations")]
+        no_save_annotations: bool,
     },
     /// Interactively configure Lumen (provider, API key)
     Configure,
