@@ -1296,11 +1296,17 @@ pub fn render_diff(
     guide_group_selected: usize,
     guide_file_selected: usize,
     guide_status: GuideStatus,
+    status_message: Option<&str>,
 ) -> (usize, Vec<(usize, usize)>, Vec<(u64, Rect)>, Option<Rect>) {
     let area = frame.area();
     let t = theme::get();
     let bg = t.ui.bg;
     let h_scroll = if settings.wrap { 0 } else { h_scroll };
+    // Compute before `guide_status` is potentially moved into
+    // `render_guide_sidebar` below — this drives the footer's ambient
+    // "generating" indicator, which is visible even outside the Guide
+    // sidebar.
+    let guide_pending = matches!(&guide_status, GuideStatus::Pending);
 
     // Layout: header (if stacked) + main content + footer
     let (content_area, footer_area) = if stacked_mode {
@@ -1414,6 +1420,8 @@ pub fn render_diff(
                 focused_hunk: None,
                 search_state,
                 area_width: area.width,
+                status_message,
+                guide_pending,
             },
         );
         return (0, Vec::new(), Vec::new(), None);
@@ -2426,6 +2434,8 @@ pub fn render_diff(
             focused_hunk,
             search_state,
             area_width: area.width,
+            status_message,
+            guide_pending,
         },
     );
 
