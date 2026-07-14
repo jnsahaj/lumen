@@ -98,6 +98,7 @@ pub enum ModalResult {
     AnnotationEdit { annotation_id: u64 },
     AnnotationDelete { annotation_id: u64 },
     AnnotationCopyAll,
+    AnnotationCopyDeleteAll,
     AnnotationExport(String),
 }
 
@@ -890,6 +891,9 @@ impl Modal {
                 Span::styled("y", Style::default().fg(t.ui.text_muted)),
                 Span::styled(" copy  ", Style::default().fg(t.ui.text_muted)),
                 Span::styled("│  ", Style::default().fg(t.ui.border_unfocused)),
+                Span::styled("Y", Style::default().fg(t.ui.text_muted)),
+                Span::styled(" copy+del  ", Style::default().fg(t.ui.text_muted)),
+                Span::styled("│  ", Style::default().fg(t.ui.border_unfocused)),
                 Span::styled("o", Style::default().fg(t.ui.text_muted)),
                 Span::styled(" export", Style::default().fg(t.ui.text_muted)),
             ])
@@ -1279,6 +1283,10 @@ impl Modal {
                                 annotation_id: ann.id,
                             }
                         }),
+                        KeyCode::Char('Y') => Some(ModalResult::AnnotationCopyDeleteAll),
+                        KeyCode::Char('y') if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                            Some(ModalResult::AnnotationCopyDeleteAll)
+                        }
                         KeyCode::Char('y') => Some(ModalResult::AnnotationCopyAll),
                         KeyCode::Char('o') => {
                             *export_input = Some(String::from("annotations.txt"));
