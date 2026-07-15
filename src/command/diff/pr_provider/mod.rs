@@ -1,40 +1,28 @@
-//! Pull-request hosting provider abstraction.
-//!
-//! `lumen diff --pr` originally only understood GitHub (it shelled out to the
-//! `gh` CLI everywhere). This module introduces a [`PrProvider`] trait so other
-//! forges can be supported, with [`github`] for GitHub and [`azure`] for Azure
-//! DevOps. Adding a forge (e.g. `glab` for GitLab) is one new module plus one
-//! entry in [`PROVIDERS`].
+//! Pull-request hosting provider routing.
 
 mod azure;
 mod github;
 
+use std::borrow::Cow;
 use std::collections::HashSet;
-use std::process::Command;
+use std::fmt;
 use std::thread;
 
 use super::types::FileDiff;
 use super::PrInfo;
+use crate::vcs::VcsBackend;
 
-use azure::AzureProvider;
-use github::GitHubProvider;
+use azure::{AzurePrReference, AzureRepository};
+use github::{GitHubPrReference, GitHubRepository};
 
-/// An error from a PR-provider operation. The variant is the kind, so the diff
-/// UI can react to it (e.g. prompt for credentials on [`PrError::Auth`]).
-/// [`PrError::Other`] is the catch-all for CLI/transport failures, and the
-/// `From<String>` impl lets internal string errors fall through to it.
 #[derive(Debug, thiserror::Error)]
 pub enum PrError {
-    /// Authentication or authorization failed (missing/insufficient token).
     #[error("authentication failed: {0}")]
     Auth(String),
-    /// The PR (or the current branch's PR) could not be found.
     #[error("not found: {0}")]
     NotFound(String),
-    /// The input couldn't be parsed as a PR reference for this provider.
     #[error("invalid PR reference: {0}")]
     InvalidRef(String),
-    /// Anything else: CLI invocation failure, transport error, bad output.
     #[error("{0}")]
     Other(String),
 }
@@ -51,141 +39,162 @@ impl From<&str> for PrError {
     }
 }
 
-/// Provider-specific data carried on [`PrInfo`]. Each variant holds exactly the
-/// fields its forge needs, so adding a forge is a new variant rather than more
-/// `Option`s smeared across a shared struct.
+/// Provider-specific coordinates for a resolved pull request.
 #[derive(Clone, Debug)]
-pub enum ProviderData {
-    GitHub {
-        /// PR node id, used by the viewed-file GraphQL mutations.
-        node_id: String,
-    },
-    Azure {
-        /// Organisation base URL, e.g. `https://dev.azure.com/org`.
-        org_url: String,
-        project: String,
-    },
+pub enum PrProvider {
+    GitHub { node_id: String },
+    Azure { org_url: String, project: String },
 }
 
-/// A pull-request hosting provider. Each method maps to one capability the diff
-/// UI needs; the viewed-file sync methods default to no-ops so providers without
-/// that concept (Azure DevOps) don't have to implement them.
-///
-/// `Sync` is required so a `&'static dyn PrProvider` (stored on [`PrInfo`]) can
-/// be moved into the background threads that sync viewed-file state.
-pub trait PrProvider: Sync {
-    /// Does this provider recognise `input` as one of its PR URLs?
-    fn matches_url(&self, input: &str) -> bool;
-
-    /// Does this provider recognise `origin` (a git remote URL) as one of its
-    /// repositories? Used to pick a provider for bare PR numbers.
-    fn matches_origin(&self, origin: &str) -> bool;
-
-    /// Resolve a PR number/URL into full metadata.
-    fn fetch_pr_info(&self, input: &str, repo_override: Option<&str>) -> Result<PrInfo, PrError>;
-
-    /// Find the PR associated with the current branch.
-    fn detect_current_branch_pr(&self, repo_override: Option<&str>) -> Result<String, PrError>;
-
-    /// Load the file diffs for a PR.
-    fn load_pr_file_diffs(&self, pr: &PrInfo) -> Result<Vec<FileDiff>, PrError>;
-
-    /// Build a browser URL for `filename` within the PR.
-    fn file_web_url(&self, pr: &PrInfo, filename: &str) -> Option<String>;
-
-    /// Per-file "viewed" state sync, if this provider supports it. Returning
-    /// `Some` *is* the capability — there's no separate boolean flag that can
-    /// drift out of step with the implementation.
-    fn viewed_sync(&self) -> Option<&dyn ViewedSync> {
-        None
-    }
+#[derive(Clone, Debug)]
+enum Repository {
+    GitHub(GitHubRepository),
+    Azure(AzureRepository),
 }
 
-/// Syncing per-file "viewed" state with the forge (e.g. GitHub's PR file
-/// checkboxes). Providers without the concept simply don't return one from
-/// [`PrProvider::viewed_sync`].
-pub trait ViewedSync {
-    /// Fetch the set of paths currently marked as viewed.
-    fn fetch(&self, pr: &PrInfo) -> Result<HashSet<String>, PrError>;
-
-    /// Mark/unmark a file as viewed (blocking).
-    fn set(&self, pr: &PrInfo, path: &str, viewed: bool) -> Result<(), PrError>;
+/// Repository information read once from the selected VCS backend.
+#[derive(Clone, Debug)]
+pub struct RepositoryContext {
+    origin: Option<String>,
+    repository: Option<Repository>,
+    current_branch: Option<String>,
 }
 
-/// All compiled-in providers. Detection iterates this; adding a forge is one
-/// new module plus one entry here. Both providers are zero-sized, so the
-/// `&'static` references cost nothing.
-static PROVIDERS: &[&dyn PrProvider] = &[&GitHubProvider, &AzureProvider];
+impl RepositoryContext {
+    pub fn resolve(backend: Option<&dyn VcsBackend>, repository_override: Option<&str>) -> Self {
+        let origin = repository_override
+            .map(str::to_owned)
+            .or_else(|| backend.and_then(|backend| backend.origin_url().ok().flatten()));
+        let repository = origin.as_deref().and_then(parse_repository);
+        let current_branch =
+            backend.and_then(|backend| backend.get_current_branch().ok().flatten());
 
-/// Used when no provider matches a bare PR number's remote.
-const DEFAULT_PROVIDER: &dyn PrProvider = &GitHubProvider;
-
-/// True if `input` looks like a PR reference (a known PR URL or a bare number).
-pub fn is_pr_reference(input: &str) -> bool {
-    PROVIDERS.iter().any(|p| p.matches_url(input)) || input.parse::<u64>().is_ok()
-}
-
-fn read_origin_url() -> Option<String> {
-    let output = Command::new("git")
-        .args(["remote", "get-url", "origin"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if url.is_empty() {
-        None
-    } else {
-        Some(url)
-    }
-}
-
-/// Pick a provider from the git `origin` remote (and any `--origin` override),
-/// defaulting to GitHub when nothing matches.
-fn provider_for_origin(repo_override: Option<&str>) -> &'static dyn PrProvider {
-    let candidates = [repo_override.map(|s| s.to_string()), read_origin_url()];
-    for candidate in candidates.into_iter().flatten() {
-        if let Some(p) = PROVIDERS
-            .iter()
-            .copied()
-            .find(|p| p.matches_origin(&candidate))
-        {
-            return p;
+        Self {
+            origin,
+            repository,
+            current_branch,
         }
     }
-    DEFAULT_PROVIDER
-}
 
-/// Pick a provider from a PR URL/number, falling back to origin detection.
-fn provider_for_input(input: &str, repo_override: Option<&str>) -> &'static dyn PrProvider {
-    if let Some(p) = PROVIDERS.iter().copied().find(|p| p.matches_url(input)) {
-        return p;
+    #[cfg(test)]
+    fn from_sources(
+        repository_override: Option<&str>,
+        backend_origin: Option<&str>,
+        current_branch: Option<&str>,
+    ) -> Self {
+        let origin = repository_override
+            .map(str::to_owned)
+            .or_else(|| backend_origin.map(str::to_owned));
+        let repository = origin.as_deref().and_then(parse_repository);
+        Self {
+            origin,
+            repository,
+            current_branch: current_branch.map(str::to_owned),
+        }
     }
-    provider_for_origin(repo_override)
 }
 
-pub fn fetch_pr_info(input: &str, repo_override: Option<&str>) -> Result<PrInfo, PrError> {
-    provider_for_input(input, repo_override).fetch_pr_info(input, repo_override)
+#[derive(Clone, Debug)]
+enum PrReference {
+    GitHub(GitHubPrReference),
+    Azure(AzurePrReference),
+    Number(u64),
 }
 
-pub fn detect_current_branch_pr(repo_override: Option<&str>) -> Result<String, PrError> {
-    provider_for_origin(repo_override).detect_current_branch_pr(repo_override)
+fn parse_pr_reference(input: &str) -> Option<PrReference> {
+    if let Ok(number) = input.parse::<u64>() {
+        return Some(PrReference::Number(number));
+    }
+    let url = parse_http_url(input)?;
+    github::parse_pr_url(url)
+        .map(PrReference::GitHub)
+        .or_else(|| azure::parse_pr_url(url).map(PrReference::Azure))
+}
+
+fn parse_repository(input: &str) -> Option<Repository> {
+    azure::parse_repository(input)
+        .map(Repository::Azure)
+        .or_else(|| github::parse_repository(input).map(Repository::GitHub))
+}
+
+fn resolve_pr_reference(input: &str, context: &RepositoryContext) -> Result<PrReference, PrError> {
+    match parse_pr_reference(input) {
+        Some(PrReference::Number(number)) => match &context.repository {
+            Some(Repository::GitHub(repo)) => Ok(PrReference::GitHub(repo.with_number(number))),
+            Some(Repository::Azure(repo)) => Ok(PrReference::Azure(repo.with_number(number))),
+            None => Err(PrError::InvalidRef(match &context.origin {
+                Some(origin) => {
+                    format!("unsupported repository origin: {}", safe_diagnostic(origin))
+                }
+                None => {
+                    "could not determine repository; configure origin or pass --origin".to_string()
+                }
+            })),
+        },
+        Some(reference) => Ok(reference),
+        None => Err(PrError::InvalidRef(format!(
+            "{}. Use a PR number or an exact GitHub/Azure DevOps PR URL.",
+            safe_diagnostic(input)
+        ))),
+    }
+}
+
+pub fn is_pr_reference(input: &str) -> bool {
+    parse_pr_reference(input).is_some()
+}
+
+pub fn fetch_pr_info(input: &str, context: &RepositoryContext) -> Result<PrInfo, PrError> {
+    match resolve_pr_reference(input, context)? {
+        PrReference::GitHub(reference) => github::fetch_pr_info(&reference),
+        PrReference::Azure(reference) => azure::fetch_pr_info(&reference),
+        PrReference::Number(_) => {
+            unreachable!("bare PR numbers are resolved using repository context")
+        }
+    }
+}
+
+pub fn detect_current_branch_pr(context: &RepositoryContext) -> Result<String, PrError> {
+    let branch = context.current_branch.as_deref().ok_or_else(|| {
+        PrError::NotFound("could not determine the current branch or bookmark".to_string())
+    })?;
+    match &context.repository {
+        Some(Repository::GitHub(repo)) => github::detect_current_branch_pr(repo, branch),
+        Some(Repository::Azure(repo)) => azure::detect_current_branch_pr(repo, branch),
+        None => Err(PrError::InvalidRef(match &context.origin {
+            Some(origin) => {
+                format!("unsupported repository origin: {}", safe_diagnostic(origin))
+            }
+            None => "could not determine repository; configure origin or pass --origin".to_string(),
+        })),
+    }
 }
 
 pub fn load_pr_file_diffs(pr: &PrInfo) -> Result<Vec<FileDiff>, PrError> {
-    pr.provider.load_pr_file_diffs(pr)
-}
-
-pub fn fetch_viewed_files(pr: &PrInfo) -> Result<HashSet<String>, PrError> {
-    match pr.provider.viewed_sync() {
-        Some(vs) => vs.fetch(pr),
-        None => Ok(HashSet::new()),
+    match &pr.provider {
+        PrProvider::GitHub { .. } => github::load_pr_file_diffs(pr),
+        PrProvider::Azure { org_url, project } => azure::load_pr_file_diffs(org_url, project, pr),
     }
 }
 
+/// `None` means the provider does not support per-file viewed state.
+pub fn fetch_viewed_files(pr: &PrInfo) -> Result<Option<HashSet<String>>, PrError> {
+    match &pr.provider {
+        PrProvider::GitHub { .. } => github::fetch_viewed_files(pr).map(Some),
+        PrProvider::Azure { .. } => Ok(None),
+    }
+}
+
+pub fn supports_viewed_files(pr: &PrInfo) -> bool {
+    matches!(&pr.provider, PrProvider::GitHub { .. })
+}
+
 pub fn pr_file_web_url(pr: &PrInfo, filename: &str) -> Option<String> {
-    pr.provider.file_web_url(pr, filename)
+    match &pr.provider {
+        PrProvider::GitHub { .. } => Some(github::file_web_url(pr, filename)),
+        PrProvider::Azure { org_url, project } => {
+            Some(azure::file_web_url(org_url, project, pr, filename))
+        }
+    }
 }
 
 pub fn mark_file_as_viewed_async(pr: &PrInfo, file_path: &str) {
@@ -197,16 +206,108 @@ pub fn unmark_file_as_viewed_async(pr: &PrInfo, file_path: &str) {
 }
 
 fn set_file_viewed_async(pr: &PrInfo, file_path: &str, viewed: bool) {
-    if pr.provider.viewed_sync().is_none() {
+    if !matches!(&pr.provider, PrProvider::GitHub { .. }) {
         return;
     }
     let pr = pr.clone();
     let path = file_path.to_string();
     thread::spawn(move || {
-        if let Some(vs) = pr.provider.viewed_sync() {
-            let _ = vs.set(&pr, &path, viewed);
-        }
+        let PrProvider::GitHub { node_id } = &pr.provider else {
+            return;
+        };
+        let _ = github::set_file_viewed(node_id, &path, viewed);
     });
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct HttpUrl<'a> {
+    pub host: &'a str,
+    pub path: &'a str,
+}
+
+pub(super) fn strip_http_userinfo(input: &str) -> Cow<'_, str> {
+    let Some((scheme, rest)) = input.split_once("://") else {
+        return input.into();
+    };
+    if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
+        return input.into();
+    }
+    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let authority = &rest[..authority_end];
+    let Some((_, host)) = authority.rsplit_once('@') else {
+        return input.into();
+    };
+    format!("{}://{}{}", scheme, host, &rest[authority_end..]).into()
+}
+
+struct SafeDiagnostic<'a>(&'a str);
+
+impl fmt::Display for SafeDiagnostic<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(strip_http_userinfo(self.0).as_ref())
+    }
+}
+
+fn safe_diagnostic(input: &str) -> SafeDiagnostic<'_> {
+    SafeDiagnostic(input)
+}
+
+pub(super) fn parse_http_url(input: &str) -> Option<HttpUrl<'_>> {
+    let (scheme, rest) = input.split_once("://")?;
+    if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
+        return None;
+    }
+    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let authority = &rest[..authority_end];
+    if authority.is_empty() || authority.contains('@') || authority.contains(':') {
+        return None;
+    }
+    let suffix = &rest[authority_end..];
+    let path_end = suffix.find(['?', '#']).unwrap_or(suffix.len());
+    let path = &suffix[..path_end];
+    Some(HttpUrl {
+        host: authority,
+        path,
+    })
+}
+
+pub(super) fn decoded_path_segments(path: &str) -> Option<Vec<String>> {
+    let path = path.strip_prefix('/')?;
+    let path = path.strip_suffix('/').unwrap_or(path);
+    if path.is_empty() {
+        return Some(Vec::new());
+    }
+    path.split('/').map(decode_path_segment).collect()
+}
+
+fn decode_path_segment(segment: &str) -> Option<String> {
+    if segment.is_empty() {
+        return None;
+    }
+    let bytes = segment.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let high = hex_value(*bytes.get(index + 1)?)?;
+            let low = hex_value(*bytes.get(index + 2)?)?;
+            decoded.push((high << 4) | low);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(decoded).ok()
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -214,12 +315,78 @@ mod tests {
     use super::*;
 
     #[test]
-    fn is_pr_reference_detects_forms() {
+    fn routes_only_exact_provider_urls() {
         assert!(is_pr_reference("123"));
         assert!(is_pr_reference("https://github.com/o/r/pull/1"));
         assert!(is_pr_reference(
             "https://dev.azure.com/o/p/_git/r/pullrequest/1"
         ));
-        assert!(!is_pr_reference("main..feature"));
+        assert!(!is_pr_reference("https://github.com.evil.test/o/r/pull/1"));
+        assert!(!is_pr_reference(
+            "https://evil.test/dev.azure.com/o/p/_git/r/pullrequest/1"
+        ));
+        assert!(!is_pr_reference("https://github.com/o/r/issues/1"));
+    }
+
+    #[test]
+    fn repository_override_replaces_backend_origin() {
+        let context = RepositoryContext::from_sources(
+            Some("https://dev.azure.com/org/project/_git/repo"),
+            Some("git@github.com:owner/repo.git"),
+            Some("feature"),
+        );
+
+        assert!(matches!(context.repository, Some(Repository::Azure(_))));
+        assert_eq!(context.current_branch.as_deref(), Some("feature"));
+    }
+
+    #[test]
+    fn github_repository_origin_accepts_https_credentials() {
+        let context = RepositoryContext::from_sources(
+            None,
+            Some("https://user:TOKEN@github.com/owner/repo.git"),
+            Some("feature"),
+        );
+
+        assert!(matches!(context.repository, Some(Repository::GitHub(_))));
+    }
+
+    #[test]
+    fn unsupported_origin_error_redacts_https_credentials() {
+        let context = RepositoryContext::from_sources(
+            None,
+            Some("https://user:SECRET@example.com/owner/repo.git"),
+            Some("feature"),
+        );
+
+        let error = resolve_pr_reference("12", &context).expect_err("unsupported origin");
+
+        assert_eq!(
+            error.to_string(),
+            "invalid PR reference: unsupported repository origin: https://example.com/owner/repo.git"
+        );
+    }
+
+    #[test]
+    fn invalid_reference_error_redacts_https_credentials() {
+        let context = RepositoryContext::from_sources(None, None, None);
+
+        let error = resolve_pr_reference(
+            "https://user:SECRET@example.com/owner/repo/pull/1",
+            &context,
+        )
+        .expect_err("unknown provider");
+
+        assert!(!error.to_string().contains("SECRET"));
+    }
+
+    #[test]
+    fn decodes_all_percent_encoded_utf8_bytes() {
+        assert_eq!(
+            decode_path_segment("My%2BProject").as_deref(),
+            Some("My+Project")
+        );
+        assert_eq!(decode_path_segment("caf%C3%A9").as_deref(), Some("café"));
+        assert!(decode_path_segment("bad%2").is_none());
     }
 }

@@ -18,16 +18,14 @@
 use std::env;
 use std::process::Command;
 use std::sync::Arc;
+use std::thread;
 
 use reqwest::header::ACCEPT;
 use serde::Deserialize;
-use tokio::sync::Semaphore;
-use tokio::task::JoinSet;
 
-use crate::command::diff::git::{build_file_diff, percent_encode};
-use crate::command::diff::pr_provider::{PrError, ProviderData};
-use crate::command::diff::types::FileDiff;
-use crate::command::diff::PrInfo;
+use crate::command::diff::git::percent_encode;
+use crate::command::diff::pr_provider::PrError;
+use crate::command::diff::types::{is_binary_content, FileDiff, FileStatus};
 
 const API_VERSION: &str = "7.1";
 /// Azure DevOps OAuth resource id, used with `az account get-access-token`.
@@ -54,7 +52,7 @@ enum AdoAuth {
 
 #[derive(Clone)]
 struct AdoClient {
-    http: reqwest::Client,
+    http: reqwest::blocking::Client,
     /// Organisation base URL, e.g. `https://dev.azure.com/org`.
     base: String,
     project: String,
@@ -65,7 +63,9 @@ struct AdoClient {
 impl AdoClient {
     fn new(org_url: &str, project: &str, repo: &str) -> Result<Self, PrError> {
         Ok(Self {
-            http: reqwest::Client::new(),
+            http: reqwest::blocking::Client::builder()
+                .build()
+                .map_err(|e| format!("could not create Azure HTTP client: {}", e))?,
             base: org_url.trim_end_matches('/').to_string(),
             project: project.to_string(),
             repo: repo.to_string(),
@@ -73,7 +73,7 @@ impl AdoClient {
         })
     }
 
-    fn authed(&self, rb: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+    fn authed(&self, rb: reqwest::blocking::RequestBuilder) -> reqwest::blocking::RequestBuilder {
         match self.auth.as_ref() {
             AdoAuth::Pat(pat) => rb.basic_auth("", Some(pat)),
             AdoAuth::Bearer(token) => rb.bearer_auth(token),
@@ -92,15 +92,16 @@ impl AdoClient {
 
     /// GET `url` and deserialize the JSON body into `T`. Unknown fields are
     /// ignored, so each caller's struct declares only the fields it needs.
-    async fn get<T: serde::de::DeserializeOwned>(&self, url: &str) -> Result<T, PrError> {
+    fn get<T: serde::de::DeserializeOwned>(&self, url: &str) -> Result<T, PrError> {
         let resp = self
             .authed(self.http.get(url))
             .header(ACCEPT, "application/json")
             .send()
-            .await
             .map_err(|e| format!("request failed: {}", e))?;
         let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
+        let body = resp
+            .text()
+            .map_err(|e| format!("response body read failed: {}", e))?;
         if !status.is_success() {
             return Err(auth_hint(status, &body));
         }
@@ -108,12 +109,10 @@ impl AdoClient {
             .map_err(|e| PrError::Other(format!("invalid JSON from Azure: {}", e)))
     }
 
-    /// Fetch a blob's text content. An absent `blob_id` (the missing side of an
-    /// add/delete) is `Ok("")`; a failed fetch is an `Err` so it can't silently
-    /// empty a side and flip the file's status to Added/Deleted downstream.
-    async fn blob_text(&self, blob_id: Option<&str>) -> Result<String, PrError> {
+    /// Fetch a blob's text content while retaining whether the side exists.
+    fn blob_text(&self, blob_id: Option<&str>) -> Result<Option<String>, PrError> {
         let Some(blob_id) = blob_id else {
-            return Ok(String::new());
+            return Ok(None);
         };
         let url = format!(
             "{}?$format=text&api-version={}",
@@ -128,23 +127,23 @@ impl AdoClient {
             .authed(self.http.get(&url))
             .header(ACCEPT, "text/plain")
             .send()
-            .await
             .map_err(|e| format!("blob {} request failed: {}", blob_id, e))?;
         let status = resp.status();
         if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
+            let body = resp
+                .text()
+                .map_err(|e| format!("blob {} error body read failed: {}", blob_id, e))?;
             return Err(auth_hint(status, &body));
         }
         // Read as bytes then lossy-decode so binary blobs degrade gracefully
         // (build_file_diff flags them as binary downstream).
         let bytes = resp
             .bytes()
-            .await
             .map_err(|e| format!("blob {} read failed: {}", blob_id, e))?;
-        Ok(String::from_utf8_lossy(&bytes).into_owned())
+        Ok(Some(String::from_utf8_lossy(&bytes).into_owned()))
     }
 
-    async fn latest_iteration(&self, pr_id: u64) -> Result<u64, PrError> {
+    fn latest_iteration(&self, pr_id: u64) -> Result<u64, PrError> {
         let url = format!(
             "{}?api-version={}",
             self.git_url(&format!(
@@ -154,7 +153,7 @@ impl AdoClient {
             )),
             API_VERSION
         );
-        let list: IterationList = self.get(&url).await?;
+        let list: IterationList = self.get(&url)?;
         list.value
             .iter()
             .map(|i| i.id)
@@ -164,9 +163,9 @@ impl AdoClient {
 
     /// All change entries for `iteration`, compared against the merge base
     /// (`$compareTo=0`), following `$skip`/`$top` pagination.
-    async fn changes(&self, pr_id: u64, iteration: u64) -> Result<Vec<ChangeEntry>, PrError> {
+    fn changes(&self, pr_id: u64, iteration: u64) -> Result<Vec<ChangeEntry>, PrError> {
         let mut entries = Vec::new();
-        let mut skip = 0usize;
+        let mut skip = 0_u64;
         loop {
             let url = format!(
                 "{}?$compareTo=0&$top={}&$skip={}&api-version={}",
@@ -180,54 +179,120 @@ impl AdoClient {
                 skip,
                 API_VERSION
             );
-            let page: ChangesPage = self.get(&url).await?;
-            let page_len = page.change_entries.len();
-            entries.extend(
-                page.change_entries
-                    .into_iter()
-                    .filter_map(RawChange::into_change),
-            );
-            // `nextSkip` is the canonical "more pages" signal; fall back to a
-            // short page meaning we're done.
-            if page.next_skip == 0 || page_len < CHANGES_PAGE {
-                break;
+            let page: ChangesPage = self.get(&url)?;
+            for raw_change in page.change_entries {
+                if let Some(change) = raw_change.into_change()? {
+                    entries.push(change);
+                }
             }
-            skip = page.next_skip as usize;
+            match page.next_skip {
+                None | Some(0) => break,
+                Some(next_skip) if next_skip > skip => skip = next_skip,
+                Some(next_skip) => {
+                    return Err(PrError::Other(format!(
+                        "Azure returned non-advancing nextSkip cursor {} after {}",
+                        next_skip, skip
+                    )))
+                }
+            }
         }
         Ok(entries)
     }
 
-    async fn load_file_diffs(&self, pr_id: u64) -> Result<Vec<FileDiff>, PrError> {
-        let iteration = self.latest_iteration(pr_id).await?;
-        let changes = self.changes(pr_id, iteration).await?;
+    fn fetch_file_diff(&self, change: &ChangeEntry) -> Result<FileDiff, PrError> {
+        let old = self.blob_text(change.old_blob.as_deref());
+        let new = self.blob_text(change.new_blob.as_deref());
+        match (old, new) {
+            (Ok(old), Ok(new)) => Ok(build_file_diff(change, old, new)),
+            (Err(old), Err(new)) => Err(PrError::Other(format!(
+                "both blob fetches failed for {}: {}; {}",
+                change.path, old, new
+            ))),
+            (Err(error), _) | (_, Err(error)) => Err(error),
+        }
+    }
 
-        let sem = Arc::new(Semaphore::new(BLOB_CONCURRENCY));
-        let mut set: JoinSet<Result<(usize, FileDiff), PrError>> = JoinSet::new();
-        for (idx, change) in changes.into_iter().enumerate() {
-            let client = self.clone();
-            let sem = Arc::clone(&sem);
-            set.spawn(async move {
-                let _permit = sem
-                    .acquire_owned()
-                    .await
-                    .expect("blob semaphore not closed");
-                let old = client.blob_text(change.old_blob.as_deref()).await?;
-                let new = client.blob_text(change.new_blob.as_deref()).await?;
-                Ok((idx, build_file_diff(change.path, old, new)))
-            });
+    fn load_file_diffs(&self, pr_id: u64) -> Result<Vec<FileDiff>, PrError> {
+        let iteration = self.latest_iteration(pr_id)?;
+        let changes = self.changes(pr_id, iteration)?;
+        if changes.is_empty() {
+            return Ok(Vec::new());
         }
 
-        // Reassemble in the original change order.
-        let mut out: Vec<Option<FileDiff>> = Vec::new();
-        while let Some(res) = set.join_next().await {
-            // Outer `?`: the task panicked. Inner `?`: a blob fetch failed.
-            let (idx, diff) = res.map_err(|e| format!("blob fetch task failed: {}", e))??;
-            if idx >= out.len() {
-                out.resize_with(idx + 1, || None);
+        let worker_count = changes.len().min(BLOB_CONCURRENCY);
+        let base_chunk_size = changes.len() / worker_count;
+        let larger_chunks = changes.len() % worker_count;
+        let batches = thread::scope(|scope| {
+            let mut workers = Vec::with_capacity(worker_count);
+            let mut chunk_start = 0;
+            for worker_index in 0..worker_count {
+                let chunk_len = base_chunk_size + usize::from(worker_index < larger_chunks);
+                let chunk = &changes[chunk_start..chunk_start + chunk_len];
+                let result_start = chunk_start;
+                chunk_start += chunk_len;
+                let client = self.clone();
+                workers.push(scope.spawn(move || {
+                    chunk
+                        .iter()
+                        .enumerate()
+                        .map(|(offset, change)| {
+                            (result_start + offset, client.fetch_file_diff(change))
+                        })
+                        .collect::<Vec<_>>()
+                }));
             }
-            out[idx] = Some(diff);
+
+            workers
+                .into_iter()
+                .map(|worker| worker.join())
+                .collect::<Vec<_>>()
+        });
+
+        let mut out = std::iter::repeat_with(|| None)
+            .take(changes.len())
+            .collect::<Vec<Option<FileDiff>>>();
+        let mut failures = Vec::new();
+        for batch in batches {
+            match batch {
+                Ok(results) => {
+                    for (index, result) in results {
+                        match result {
+                            Ok(diff) => out[index] = Some(diff),
+                            Err(error) => failures.push(error),
+                        }
+                    }
+                }
+                Err(_) => failures.push(PrError::Other(
+                    "Azure blob fetch worker panicked".to_string(),
+                )),
+            }
         }
-        Ok(out.into_iter().flatten().collect())
+
+        if failures.len() == 1 {
+            return Err(failures.remove(0));
+        }
+        if !failures.is_empty() {
+            return Err(PrError::Other(format!(
+                "multiple Azure blob fetch failures: {}",
+                failures
+                    .into_iter()
+                    .map(|error| error.to_string())
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            )));
+        }
+
+        out.into_iter()
+            .enumerate()
+            .map(|(index, diff)| {
+                diff.ok_or_else(|| {
+                    PrError::Other(format!(
+                        "Azure blob worker returned no result for change {}",
+                        index
+                    ))
+                })
+            })
+            .collect()
     }
 }
 
@@ -246,22 +311,62 @@ struct Iteration {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ChangesPage {
-    #[serde(default)]
     change_entries: Vec<RawChange>,
-    /// Canonical "more pages" cursor; `0`/absent means we're done.
-    #[serde(default)]
-    next_skip: u64,
+    /// Canonical "more pages" cursor; `0` or absent means we're done.
+    next_skip: Option<u64>,
 }
 
 /// A `changeEntries[]` entry exactly as Azure returns it.
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct RawChange {
+    change_type: AzureChangeType,
     item: Option<RawItem>,
-    #[serde(rename = "originalPath")]
     original_path: Option<String>,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+enum AzureChangeType {
+    None,
+    Add,
+    Edit,
+    Encoding,
+    Rename,
+    Delete,
+    Undelete,
+    Branch,
+    Merge,
+    Lock,
+    Rollback,
+    SourceRename,
+    TargetRename,
+    Property,
+    All,
+}
+
+impl AzureChangeType {
+    fn file_status(self) -> FileStatus {
+        match self {
+            Self::Add | Self::Undelete => FileStatus::Added,
+            Self::Delete => FileStatus::Deleted,
+            Self::None
+            | Self::Edit
+            | Self::Encoding
+            | Self::Rename
+            | Self::Branch
+            | Self::Merge
+            | Self::Lock
+            | Self::Rollback
+            | Self::SourceRename
+            | Self::TargetRename
+            | Self::Property
+            | Self::All => FileStatus::Modified,
+        }
+    }
+}
+
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RawItem {
     path: Option<String>,
@@ -272,6 +377,7 @@ struct RawItem {
 }
 
 /// One PR file change reduced to what the diff UI needs.
+#[derive(Debug)]
 struct ChangeEntry {
     /// Repo-relative path without a leading slash.
     path: String,
@@ -279,22 +385,74 @@ struct ChangeEntry {
     new_blob: Option<String>,
     /// Blob id of the old (base) side, if any.
     old_blob: Option<String>,
+    status: FileStatus,
 }
 
 impl RawChange {
-    /// Reduce a wire entry to a [`ChangeEntry`], skipping folders and entries
-    /// with no path. The rename case falls back to `originalPath`.
-    fn into_change(self) -> Option<ChangeEntry> {
-        let item = self.item.unwrap_or_default();
+    /// Reduce a wire entry to a [`ChangeEntry`], skipping folders explicitly.
+    fn into_change(self) -> Result<Option<ChangeEntry>, PrError> {
+        let item = self.item.ok_or_else(|| {
+            PrError::Other("Azure returned a file change without an item".to_string())
+        })?;
         if item.is_folder {
-            return None;
+            return Ok(None);
         }
-        let raw_path = item.path.or(self.original_path)?;
-        Some(ChangeEntry {
-            path: raw_path.trim_start_matches('/').to_string(),
-            new_blob: item.object_id.filter(|s| !s.is_empty()),
-            old_blob: item.original_object_id.filter(|s| !s.is_empty()),
-        })
+        let raw_path = item
+            .path
+            .or(self.original_path)
+            .filter(|path| !path.trim_matches('/').is_empty())
+            .ok_or_else(|| {
+                PrError::Other("Azure returned a file change without a path".to_string())
+            })?;
+        let path = raw_path.trim_start_matches('/').to_string();
+        let new_blob = item.object_id.filter(|id| !id.is_empty());
+        let old_blob = item.original_object_id.filter(|id| !id.is_empty());
+        let status = self.change_type.file_status();
+
+        match status {
+            FileStatus::Added if new_blob.is_none() => {
+                return Err(missing_blob_error(&path, "new"));
+            }
+            FileStatus::Deleted if old_blob.is_none() => {
+                return Err(missing_blob_error(&path, "old"));
+            }
+            FileStatus::Modified if old_blob.is_none() || new_blob.is_none() => {
+                let side = if old_blob.is_none() { "old" } else { "new" };
+                return Err(missing_blob_error(&path, side));
+            }
+            _ => {}
+        }
+
+        Ok(Some(ChangeEntry {
+            path,
+            new_blob,
+            old_blob,
+            status,
+        }))
+    }
+}
+
+fn missing_blob_error(path: &str, side: &str) -> PrError {
+    PrError::Other(format!(
+        "Azure returned file change {} without {} blob id",
+        path, side
+    ))
+}
+
+fn build_file_diff(
+    change: &ChangeEntry,
+    old_content: Option<String>,
+    new_content: Option<String>,
+) -> FileDiff {
+    let old_content = old_content.unwrap_or_default();
+    let new_content = new_content.unwrap_or_default();
+    let is_binary = is_binary_content(&old_content) || is_binary_content(&new_content);
+    FileDiff {
+        filename: change.path.clone(),
+        old_content,
+        new_content,
+        status: change.status,
+        is_binary,
     }
 }
 
@@ -320,15 +478,15 @@ pub fn fetch_pr_metadata(
     repo: &str,
     pr_id: u64,
 ) -> Result<AzurePrMeta, PrError> {
-    let client = AdoClient::new(org_url, project, repo)?;
-    block_on(async move {
+    on_http_thread(|| {
+        let client = AdoClient::new(org_url, project, repo)?;
         // PR detail is project-scoped (not repo-scoped) in the REST API.
         let url = format!(
             "{}?api-version={}",
             client.git_url(&format!("pullrequests/{}", pr_id)),
             API_VERSION
         );
-        let detail: PrDetail = client.get(&url).await?;
+        let detail: PrDetail = client.get(&url)?;
         Ok(AzurePrMeta {
             source_ref: detail.source_ref_name,
             target_ref: detail.target_ref_name,
@@ -358,8 +516,8 @@ pub fn detect_active_pr(
     repo: &str,
     branch: &str,
 ) -> Result<u64, PrError> {
-    let client = AdoClient::new(org_url, project, repo)?;
-    block_on(async move {
+    on_http_thread(|| {
+        let client = AdoClient::new(org_url, project, repo)?;
         let url = format!(
             "{}?searchCriteria.status=active&searchCriteria.sourceRefName={}&api-version={}",
             client.git_url(&format!(
@@ -369,7 +527,7 @@ pub fn detect_active_pr(
             percent_encode(&format!("refs/heads/{}", branch)),
             API_VERSION
         );
-        let list: PrList = client.get(&url).await?;
+        let list: PrList = client.get(&url)?;
         list.value
             .first()
             .map(|pr| pr.pull_request_id)
@@ -377,22 +535,27 @@ pub fn detect_active_pr(
     })
 }
 
-pub fn load_pr_file_diffs(pr: &PrInfo) -> Result<Vec<FileDiff>, PrError> {
-    let ProviderData::Azure { org_url, project } = &pr.data else {
-        return Err(PrError::Other(
-            "Azure PR missing organisation/project data".to_string(),
-        ));
-    };
-    let client = AdoClient::new(org_url, project, &pr.repo_name)?;
-    let pr_id = pr.number;
-    block_on(async move { client.load_file_diffs(pr_id).await })
+pub fn load_pr_file_diffs(
+    org_url: &str,
+    project: &str,
+    repo: &str,
+    pr_id: u64,
+) -> Result<Vec<FileDiff>, PrError> {
+    on_http_thread(|| AdoClient::new(org_url, project, repo)?.load_file_diffs(pr_id))
 }
 
-/// Run an async future to completion from the synchronous diff path. `main` is
-/// a multi-threaded `#[tokio::main]`, so we mark the current worker as blocking
-/// and drive the future on the existing runtime — no second runtime, no new deps.
-fn block_on<F: std::future::Future>(fut: F) -> F::Output {
-    tokio::task::block_in_place(|| tokio::runtime::Handle::current().block_on(fut))
+/// Keep reqwest's blocking client outside any transitive async runtime.
+fn on_http_thread<T, F>(operation: F) -> Result<T, PrError>
+where
+    T: Send,
+    F: FnOnce() -> Result<T, PrError> + Send,
+{
+    thread::scope(|scope| {
+        scope
+            .spawn(operation)
+            .join()
+            .map_err(|_| PrError::Other("Azure HTTP worker panicked".to_string()))?
+    })
 }
 
 fn resolve_auth() -> Result<AdoAuth, PrError> {
@@ -471,38 +634,73 @@ mod tests {
     use super::*;
 
     /// Deserialize a wire change entry and reduce it the way `changes()` does.
-    fn change(v: serde_json::Value) -> Option<ChangeEntry> {
+    fn change(v: serde_json::Value) -> Result<Option<ChangeEntry>, PrError> {
         serde_json::from_value::<RawChange>(v)
             .unwrap()
             .into_change()
     }
 
     #[test]
-    fn parses_add_edit_delete_changes() {
+    fn change_type_parses_add() {
         let add = change(serde_json::json!({
             "changeType": "add",
             "item": { "path": "/src/new.rs", "objectId": "newsha" }
         }))
+        .unwrap()
         .unwrap();
-        assert_eq!(add.path, "src/new.rs");
-        assert_eq!(add.new_blob.as_deref(), Some("newsha"));
-        assert_eq!(add.old_blob, None);
 
+        assert_eq!(add.status, FileStatus::Added);
+    }
+
+    #[test]
+    fn change_type_parses_edit() {
         let edit = change(serde_json::json!({
             "changeType": "edit",
             "item": { "path": "/a.txt", "objectId": "n", "originalObjectId": "o" }
         }))
+        .unwrap()
         .unwrap();
-        assert_eq!(edit.new_blob.as_deref(), Some("n"));
-        assert_eq!(edit.old_blob.as_deref(), Some("o"));
 
+        assert_eq!(edit.status, FileStatus::Modified);
+    }
+
+    #[test]
+    fn change_type_parses_delete() {
         let del = change(serde_json::json!({
             "changeType": "delete",
             "item": { "path": "/gone.rs", "originalObjectId": "o" }
         }))
+        .unwrap()
         .unwrap();
-        assert_eq!(del.new_blob, None);
-        assert_eq!(del.old_blob.as_deref(), Some("o"));
+
+        assert_eq!(del.status, FileStatus::Deleted);
+    }
+
+    #[test]
+    fn change_type_parses_rename_as_modified() {
+        let rename = change(serde_json::json!({
+            "changeType": "rename",
+            "item": {
+                "path": "/new.rs",
+                "objectId": "n",
+                "originalObjectId": "o"
+            },
+            "originalPath": "/old.rs"
+        }))
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(rename.status, FileStatus::Modified);
+    }
+
+    #[test]
+    fn unknown_change_type_is_rejected() {
+        let result = serde_json::from_value::<RawChange>(serde_json::json!({
+            "changeType": "unexpected",
+            "item": { "path": "/a.txt", "objectId": "n" }
+        }));
+
+        assert!(result.is_err());
     }
 
     #[test]
@@ -511,6 +709,7 @@ mod tests {
             "changeType": "add",
             "item": { "path": "/dir", "isFolder": true }
         }))
+        .unwrap()
         .is_none());
     }
 
@@ -521,8 +720,84 @@ mod tests {
             "item": { "objectId": "n", "originalObjectId": "o" },
             "originalPath": "/old/name.rs"
         }))
+        .unwrap()
         .unwrap();
         assert_eq!(renamed.path, "old/name.rs");
+    }
+
+    #[test]
+    fn malformed_change_without_item_is_rejected() {
+        let error = change(serde_json::json!({
+            "changeType": "add"
+        }))
+        .unwrap_err();
+
+        assert!(error.to_string().contains("without an item"));
+    }
+
+    #[test]
+    fn malformed_change_without_path_is_rejected() {
+        let error = change(serde_json::json!({
+            "changeType": "add",
+            "item": { "objectId": "n" }
+        }))
+        .unwrap_err();
+
+        assert!(error.to_string().contains("without a path"));
+    }
+
+    #[test]
+    fn malformed_change_without_required_blob_is_rejected() {
+        let error = change(serde_json::json!({
+            "changeType": "delete",
+            "item": { "path": "/empty.txt" }
+        }))
+        .unwrap_err();
+
+        assert!(error.to_string().contains("without old blob id"));
+    }
+
+    #[test]
+    fn empty_added_file_keeps_added_status() {
+        let change = change(serde_json::json!({
+            "changeType": "add",
+            "item": { "path": "/empty.txt", "objectId": "n" }
+        }))
+        .unwrap()
+        .unwrap();
+        let diff = build_file_diff(&change, None, Some(String::new()));
+
+        assert_eq!(diff.status, FileStatus::Added);
+    }
+
+    #[test]
+    fn edit_to_empty_content_keeps_modified_status() {
+        let change = change(serde_json::json!({
+            "changeType": "edit",
+            "item": {
+                "path": "/empty.txt",
+                "objectId": "n",
+                "originalObjectId": "o"
+            }
+        }))
+        .unwrap()
+        .unwrap();
+        let diff = build_file_diff(&change, Some("content".to_string()), Some(String::new()));
+
+        assert_eq!(diff.status, FileStatus::Modified);
+    }
+
+    #[test]
+    fn empty_deleted_file_keeps_deleted_status() {
+        let change = change(serde_json::json!({
+            "changeType": "delete",
+            "item": { "path": "/empty.txt", "originalObjectId": "o" }
+        }))
+        .unwrap()
+        .unwrap();
+        let diff = build_file_diff(&change, Some(String::new()), None);
+
+        assert_eq!(diff.status, FileStatus::Deleted);
     }
 
     #[test]

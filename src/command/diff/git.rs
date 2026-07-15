@@ -6,7 +6,6 @@ use super::DiffOptions;
 use crate::commit_reference::CommitReference;
 use crate::vcs::VcsBackend;
 
-
 pub fn get_current_branch(backend: &dyn VcsBackend) -> String {
     backend
         .get_current_branch()
@@ -76,7 +75,7 @@ pub fn get_changed_files(options: &DiffOptions, backend: &dyn VcsBackend) -> Vec
             let wt_files = backend.get_working_tree_changed_files().unwrap_or_default();
             let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
             let mut combined: Vec<String> = Vec::new();
-            for f in range_files.into_iter().chain(wt_files.into_iter()) {
+            for f in range_files.into_iter().chain(wt_files) {
                 if seen.insert(f.clone()) {
                     combined.push(f);
                 }
@@ -327,9 +326,11 @@ mod tests {
 
         let backend = crate::vcs::GitBackend::from_cwd().expect("should open repo");
         let options = super::super::DiffOptions {
-            reference: Some(crate::commit_reference::CommitReference::RangeToWorkingTree {
-                from: "HEAD~1".to_string(),
-            }),
+            reference: Some(
+                crate::commit_reference::CommitReference::RangeToWorkingTree {
+                    from: "HEAD~1".to_string(),
+                },
+            ),
             pr: None,
             detect_pr: false,
             file: None,
@@ -367,7 +368,10 @@ mod tests {
         assert_eq!(base.new_content, "base modified\n");
 
         // committed.txt: old=empty (not in HEAD~1), new=fs content
-        let committed = diffs.iter().find(|d| d.filename == "committed.txt").unwrap();
+        let committed = diffs
+            .iter()
+            .find(|d| d.filename == "committed.txt")
+            .unwrap();
         assert_eq!(committed.old_content, "");
         assert_eq!(committed.new_content, "committed\n");
 

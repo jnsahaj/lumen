@@ -23,8 +23,8 @@ use jj_lib::repo::{ReadonlyRepo, Repo, StoreFactories};
 use jj_lib::repo_path::RepoPath;
 use jj_lib::repo_path::RepoPathUiConverter;
 use jj_lib::revset::{
-    RevsetAliasesMap, RevsetDiagnostics, RevsetExtensions, RevsetParseContext,
-    RevsetWorkspaceContext, SymbolResolver, SymbolResolverExtension,
+    ResolvedRevsetExpression, RevsetAliasesMap, RevsetDiagnostics, RevsetExtensions,
+    RevsetParseContext, RevsetWorkspaceContext, SymbolResolver, SymbolResolverExtension,
 };
 use jj_lib::settings::UserSettings;
 use jj_lib::time_util::DatePatternContext;
@@ -715,22 +715,92 @@ impl VcsBackend for JjBackend {
     }
 
     fn get_current_branch(&self) -> Result<Option<String>, VcsError> {
-        // jj uses "bookmarks" instead of "branches"
-        // Find a bookmark that points to the working copy commit (@)
         let wc_commit = self.resolve_single_commit("@")?;
         let wc_commit_id = wc_commit.id();
+        let local_bookmarks: Vec<_> = self
+            .repo
+            .view()
+            .local_bookmarks()
+            .filter_map(|(name, target)| {
+                target
+                    .as_normal()
+                    .map(|commit_id| (name.as_str().to_string(), commit_id.clone()))
+            })
+            .collect();
 
-        // Iterate local bookmarks to find one pointing to @
-        for (name, target) in self.repo.view().local_bookmarks() {
-            if let Some(commit_id) = target.as_normal() {
-                if commit_id == wc_commit_id {
-                    return Ok(Some(name.as_str().to_string()));
-                }
+        let select_unique = |mut names: Vec<String>, location: &str| {
+            names.sort();
+            match names.as_slice() {
+                [] => Ok(None),
+                [name] => Ok(Some(name.clone())),
+                _ => Err(VcsError::Other(format!(
+                    "ambiguous current jj bookmark: {} {}. Move or delete bookmarks so only one candidate remains, or specify the PR explicitly",
+                    location,
+                    names.join(", ")
+                ))),
             }
+        };
+
+        let exact_names = local_bookmarks
+            .iter()
+            .filter(|(_, commit_id)| commit_id == wc_commit_id)
+            .map(|(name, _)| name.clone())
+            .collect::<Vec<_>>();
+        if !exact_names.is_empty() {
+            return select_unique(exact_names, "local bookmarks pointing exactly at @:");
         }
 
-        // No bookmark points to @
-        Ok(None)
+        if local_bookmarks.is_empty() {
+            return Ok(None);
+        }
+
+        let bookmark_commit_ids = local_bookmarks
+            .iter()
+            .map(|(_, commit_id)| commit_id.clone())
+            .collect();
+        let nearest_bookmarks = ResolvedRevsetExpression::commit(wc_commit_id.clone())
+            .ancestors()
+            .intersection(&ResolvedRevsetExpression::commits(bookmark_commit_ids))
+            .heads()
+            .evaluate(self.repo.as_ref())
+            .map_err(|error| {
+                VcsError::Other(format!(
+                    "failed to find the nearest local jj bookmark: {}",
+                    error
+                ))
+            })?;
+        let nearest_commit_ids = nearest_bookmarks
+            .iter()
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| {
+                VcsError::Other(format!(
+                    "failed to inspect the nearest local jj bookmark: {}",
+                    error
+                ))
+            })?;
+        let nearest_names = local_bookmarks
+            .into_iter()
+            .filter(|(_, commit_id)| nearest_commit_ids.contains(commit_id))
+            .map(|(name, _)| name)
+            .collect();
+
+        select_unique(nearest_names, "nearest local bookmarks reachable from @:")
+    }
+
+    fn origin_url(&self) -> Result<Option<String>, VcsError> {
+        let backend = jj_lib::git::get_git_backend(self.repo.store())
+            .map_err(|error| VcsError::Other(error.to_string()))?;
+        let repository = git2::Repository::open(backend.git_repo_path())
+            .map_err(|error| VcsError::Other(format!("failed to open jj Git store: {}", error)))?;
+        let origin = match repository.find_remote("origin") {
+            Ok(remote) => Ok(remote.url().map(str::to_owned)),
+            Err(error) if error.code() == git2::ErrorCode::NotFound => Ok(None),
+            Err(error) => Err(VcsError::Other(format!(
+                "failed to read jj origin remote: {}",
+                error
+            ))),
+        };
+        origin
     }
 
     fn resolve_ref(&self, reference: &str) -> Result<String, VcsError> {
@@ -1307,8 +1377,112 @@ mod tests {
         // Default jj repo has no bookmarks
         assert!(
             branch.unwrap().is_none(),
-            "should return None when no bookmark points to @"
+            "should return None when no bookmark is reachable from @"
         );
+    }
+
+    #[test]
+    fn test_get_current_branch_prefers_unique_bookmark_at_working_copy() {
+        let Some(repo) = JjRepoGuard::new() else {
+            eprintln!("Skipping test: jj not available");
+            return;
+        };
+
+        assert!(crate::vcs::test_utils::jj(
+            &repo.dir,
+            &["bookmark", "create", "parent"]
+        ));
+        assert!(crate::vcs::test_utils::jj(&repo.dir, &["new"]));
+        assert!(crate::vcs::test_utils::jj(
+            &repo.dir,
+            &["bookmark", "create", "current"]
+        ));
+
+        let backend = JjBackend::new(&repo.dir).expect("should load backend");
+        assert_eq!(
+            backend.get_current_branch().expect("should get bookmark"),
+            Some("current".to_string())
+        );
+    }
+
+    #[test]
+    fn test_get_current_branch_finds_nearest_unique_ancestor_bookmark() {
+        let Some(repo) = JjRepoGuard::new() else {
+            eprintln!("Skipping test: jj not available");
+            return;
+        };
+
+        assert!(crate::vcs::test_utils::jj(
+            &repo.dir,
+            &["bookmark", "create", "older"]
+        ));
+        assert!(crate::vcs::test_utils::jj(&repo.dir, &["new"]));
+        assert!(crate::vcs::test_utils::jj(
+            &repo.dir,
+            &["bookmark", "create", "feature"]
+        ));
+        assert!(crate::vcs::test_utils::jj(&repo.dir, &["new"]));
+
+        let backend = JjBackend::new(&repo.dir).expect("should load backend");
+        assert_eq!(
+            backend.get_current_branch().expect("should get bookmark"),
+            Some("feature".to_string())
+        );
+    }
+
+    #[test]
+    fn test_get_current_branch_rejects_ambiguous_exact_bookmarks() {
+        let Some(repo) = JjRepoGuard::new() else {
+            eprintln!("Skipping test: jj not available");
+            return;
+        };
+
+        assert!(crate::vcs::test_utils::jj(
+            &repo.dir,
+            &["bookmark", "create", "feature-b"]
+        ));
+        assert!(crate::vcs::test_utils::jj(
+            &repo.dir,
+            &["bookmark", "create", "feature-a"]
+        ));
+
+        let backend = JjBackend::new(&repo.dir).expect("should load backend");
+        let error = backend
+            .get_current_branch()
+            .expect_err("ambiguous bookmarks should fail");
+        let VcsError::Other(message) = error else {
+            panic!("expected VcsError::Other, got {error:?}");
+        };
+        assert!(message.contains("feature-a, feature-b"), "{message}");
+        assert!(message.contains("pointing exactly at @"), "{message}");
+    }
+
+    #[test]
+    fn test_get_current_branch_rejects_ambiguous_nearest_bookmarks() {
+        let Some(repo) = JjRepoGuard::new() else {
+            eprintln!("Skipping test: jj not available");
+            return;
+        };
+
+        assert!(crate::vcs::test_utils::jj(
+            &repo.dir,
+            &["bookmark", "create", "feature-b"]
+        ));
+        assert!(crate::vcs::test_utils::jj(
+            &repo.dir,
+            &["bookmark", "create", "feature-a"]
+        ));
+        assert!(crate::vcs::test_utils::jj(&repo.dir, &["new"]));
+
+        let backend = JjBackend::new(&repo.dir).expect("should load backend");
+        let error = backend
+            .get_current_branch()
+            .expect_err("ambiguous bookmarks should fail");
+        let VcsError::Other(message) = error else {
+            panic!("expected VcsError::Other, got {error:?}");
+        };
+        assert!(message.contains("feature-a, feature-b"), "{message}");
+        assert!(message.contains("nearest local bookmarks"), "{message}");
     }
 
     #[test]

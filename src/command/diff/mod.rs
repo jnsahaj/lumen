@@ -25,8 +25,8 @@ use crate::commit_reference::CommitReference;
 use crate::vcs::VcsBackend;
 
 pub use pr_provider::{
-    fetch_viewed_files, mark_file_as_viewed_async, unmark_file_as_viewed_async, PrProvider,
-    ProviderData,
+    fetch_viewed_files, mark_file_as_viewed_async, supports_viewed_files,
+    unmark_file_as_viewed_async, PrProvider,
 };
 
 pub struct DiffOptions {
@@ -44,7 +44,7 @@ pub struct DiffOptions {
 
 #[derive(Clone)]
 pub struct PrInfo {
-    pub provider: &'static dyn PrProvider,
+    pub provider: PrProvider,
     pub number: u64,
     pub repo_owner: String,
     pub repo_name: String,
@@ -52,11 +52,12 @@ pub struct PrInfo {
     pub head_ref: String,
     pub base_repo_owner: String,
     pub head_repo_owner: Option<String>, // None if head repo was deleted (fork deleted)
-    /// Provider-specific data (GitHub node id, or Azure org URL + project).
-    pub data: ProviderData,
 }
 
-pub fn run_diff_ui(mut options: DiffOptions, backend: &dyn VcsBackend) -> io::Result<()> {
+pub fn run_diff_ui(mut options: DiffOptions, backend: Option<&dyn VcsBackend>) -> io::Result<()> {
+    let repository_context =
+        pr_provider::RepositoryContext::resolve(backend, options.origin.as_deref());
+
     // Resolve --detect-pr into options.pr
     if options.detect_pr && options.pr.is_none() {
         let mut spinner = Spinner::new(
@@ -64,7 +65,7 @@ pub fn run_diff_ui(mut options: DiffOptions, backend: &dyn VcsBackend) -> io::Re
             "Detecting PR for current branch",
             Color::Cyan,
         );
-        match pr_provider::detect_current_branch_pr(options.origin.as_deref()) {
+        match pr_provider::detect_current_branch_pr(&repository_context) {
             Ok(number) => {
                 spinner.success(&format!("Detected PR #{}", number));
                 options.pr = Some(number);
@@ -79,7 +80,7 @@ pub fn run_diff_ui(mut options: DiffOptions, backend: &dyn VcsBackend) -> io::Re
     // Handle PR mode
     if let Some(ref pr_input) = options.pr {
         let mut spinner = Spinner::new(spinners::Dots, "Fetching PR metadata", Color::Cyan);
-        match pr_provider::fetch_pr_info(pr_input, options.origin.as_deref()) {
+        match pr_provider::fetch_pr_info(pr_input, &repository_context) {
             Ok(pr_info) => {
                 spinner.success("Fetched PR metadata");
                 return app::run_app_with_pr(options, pr_info, backend);
@@ -95,7 +96,7 @@ pub fn run_diff_ui(mut options: DiffOptions, backend: &dyn VcsBackend) -> io::Re
     if let Some(CommitReference::Single(ref input)) = options.reference {
         if pr_provider::is_pr_reference(input) {
             let mut spinner = Spinner::new(spinners::Dots, "Fetching PR metadata", Color::Cyan);
-            match pr_provider::fetch_pr_info(input, options.origin.as_deref()) {
+            match pr_provider::fetch_pr_info(input, &repository_context) {
                 Ok(pr_info) => {
                     spinner.success("Fetched PR metadata");
                     return app::run_app_with_pr(options, pr_info, backend);
@@ -110,6 +111,7 @@ pub fn run_diff_ui(mut options: DiffOptions, backend: &dyn VcsBackend) -> io::Re
 
     // Handle stacked mode for range references
     if options.stacked {
+        let backend = require_backend(backend)?;
         if let Some(ref reference) = options.reference {
             let (from, to) = match reference {
                 CommitReference::Range { from, to } => (from.clone(), to.clone()),
@@ -150,5 +152,9 @@ pub fn run_diff_ui(mut options: DiffOptions, backend: &dyn VcsBackend) -> io::Re
         }
     }
 
-    app::run_app(options, None, backend)
+    app::run_app(options, None, require_backend(backend)?)
+}
+
+fn require_backend(backend: Option<&dyn VcsBackend>) -> io::Result<&dyn VcsBackend> {
+    backend.ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "not a repository"))
 }

@@ -13,7 +13,9 @@ use crate::command::diff::git::build_file_diff;
 use crate::command::diff::types::FileDiff;
 use crate::command::diff::PrInfo;
 
-use super::{PrError, PrProvider, ProviderData, ViewedSync};
+use super::{
+    decoded_path_segments, parse_http_url, strip_http_userinfo, HttpUrl, PrError, PrProvider,
+};
 
 /// Max concurrent `gh api` requests when fetching PR file contents.
 /// GitHub's documented secondary rate limit caps concurrent requests at 100
@@ -21,112 +23,91 @@ use super::{PrError, PrProvider, ProviderData, ViewedSync};
 /// still giving a large speedup over serial fetching.
 const PR_FETCH_CONCURRENCY: usize = 8;
 
-pub struct GitHubProvider;
-
-impl PrProvider for GitHubProvider {
-    fn matches_url(&self, input: &str) -> bool {
-        input.starts_with("http") && input.contains("/pull/")
+const VIEWED_FILES_QUERY: &str = r#"
+query($owner: String!, $name: String!, $number: Int!, $after: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      files(first: 100, after: $after) {
+        nodes { path viewerViewedState }
+        pageInfo { hasNextPage endCursor }
+      }
     }
+  }
+}
+"#;
 
-    fn matches_origin(&self, origin: &str) -> bool {
-        origin.contains("github.com")
-    }
-
-    fn fetch_pr_info(&self, input: &str, repo_override: Option<&str>) -> Result<PrInfo, PrError> {
-        fetch_pr_info(input, repo_override)
-    }
-
-    fn detect_current_branch_pr(&self, _repo_override: Option<&str>) -> Result<String, PrError> {
-        detect_current_branch_pr()
-    }
-
-    fn load_pr_file_diffs(&self, pr: &PrInfo) -> Result<Vec<FileDiff>, PrError> {
-        load_pr_file_diffs(pr)
-    }
-
-    fn file_web_url(&self, pr: &PrInfo, filename: &str) -> Option<String> {
-        Some(format!(
-            "https://github.com/{}/{}/pull/{}/files#diff-{}",
-            pr.repo_owner,
-            pr.repo_name,
-            pr.number,
-            file_anchor(filename)
-        ))
-    }
-
-    fn viewed_sync(&self) -> Option<&dyn ViewedSync> {
-        Some(self)
-    }
+#[derive(Clone, Debug)]
+pub(super) struct GitHubRepository {
+    owner: String,
+    repo: String,
 }
 
-impl ViewedSync for GitHubProvider {
-    fn fetch(&self, pr: &PrInfo) -> Result<HashSet<String>, PrError> {
-        fetch_viewed_files(pr)
-    }
-
-    fn set(&self, pr: &PrInfo, path: &str, viewed: bool) -> Result<(), PrError> {
-        let ProviderData::GitHub { node_id } = &pr.data else {
-            return Ok(()); // not a GitHub PR; nothing to sync
-        };
-        if viewed {
-            mark_file_as_viewed_sync(node_id, path)
-        } else {
-            unmark_file_as_viewed_sync(node_id, path)
+impl GitHubRepository {
+    pub(super) fn with_number(&self, number: u64) -> GitHubPrReference {
+        GitHubPrReference {
+            repository: self.clone(),
+            number,
         }
     }
 }
 
-fn parse_pr_input(input: &str) -> Option<(Option<String>, Option<String>, u64)> {
-    if input.starts_with("http://") || input.starts_with("https://") {
-        // Format: https://github.com/owner/repo/pull/123
-        let parts: Vec<&str> = input.trim_end_matches('/').split('/').collect();
-        if parts.len() >= 2 {
-            if let Some(pos) = parts.iter().position(|&p| p == "pull") {
-                if pos + 1 < parts.len() {
-                    if let Ok(num) = parts[pos + 1].parse::<u64>() {
-                        if pos >= 2 {
-                            let owner = parts[pos - 2].to_string();
-                            let repo = parts[pos - 1].to_string();
-                            return Some((Some(owner), Some(repo), num));
-                        }
-                        return Some((None, None, num));
-                    }
-                }
-            }
-        }
-        None
-    } else {
-        input.parse::<u64>().ok().map(|num| (None, None, num))
-    }
+#[derive(Clone, Debug)]
+pub(super) struct GitHubPrReference {
+    repository: GitHubRepository,
+    number: u64,
 }
 
-fn resolve_origin_repo() -> Result<String, String> {
-    let output = Command::new("git")
-        .args(["remote", "get-url", "origin"])
-        .output()
-        .map_err(|e| format!("Failed to run git: {}", e))?;
-    if !output.status.success() {
-        return Err(
-            "Could not determine repository. Set origin remote or use --origin owner/repo"
-                .to_string(),
-        );
+pub(super) fn parse_pr_url(url: HttpUrl<'_>) -> Option<GitHubPrReference> {
+    if !url.host.eq_ignore_ascii_case("github.com") {
+        return None;
     }
-    let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let url = url.strip_suffix(".git").unwrap_or(&url);
-    let path = url
-        .split("github.com")
-        .nth(1)
-        .ok_or_else(|| format!("Origin URL is not a GitHub URL: {}", url))?;
-    let path = path.trim_start_matches(':').trim_start_matches('/');
-    let parts: Vec<&str> = path.split('/').collect();
-    if parts.len() >= 2 {
-        Ok(format!("{}/{}", parts[0], parts[1]))
-    } else {
-        Err(format!(
-            "Could not parse owner/repo from origin URL: {}",
-            url
-        ))
+    let parts = decoded_path_segments(url.path)?;
+    if parts.len() < 4 || parts.len() > 5 || parts[2] != "pull" {
+        return None;
     }
+    if parts.len() == 5 && parts[4] != "files" && parts[4] != "commits" {
+        return None;
+    }
+    Some(GitHubPrReference {
+        repository: GitHubRepository {
+            owner: parts[0].clone(),
+            repo: parts[1].clone(),
+        },
+        number: parts[3].parse().ok()?,
+    })
+}
+
+pub(super) fn parse_repository(input: &str) -> Option<GitHubRepository> {
+    let input = input.trim().trim_end_matches('/');
+    let normalized = strip_http_userinfo(input);
+    if let Some(url) = parse_http_url(normalized.as_ref()) {
+        if !url.host.eq_ignore_ascii_case("github.com") {
+            return None;
+        }
+        return repository_from_path(url.path);
+    }
+
+    if let Some(path) = input.strip_prefix("git@github.com:") {
+        return repository_from_path(&format!("/{}", path));
+    }
+    if let Some(path) = input.strip_prefix("ssh://git@github.com/") {
+        return repository_from_path(&format!("/{}", path));
+    }
+
+    repository_from_path(&format!("/{}", input))
+}
+
+fn repository_from_path(path: &str) -> Option<GitHubRepository> {
+    let mut parts = decoded_path_segments(path)?;
+    if parts.len() != 2 {
+        return None;
+    }
+    let repo = parts.pop()?.trim_end_matches(".git").to_string();
+    let owner = parts.pop()?;
+    if owner.is_empty() || repo.is_empty() {
+        return None;
+    }
+    Some(GitHubRepository { owner, repo })
 }
 
 /// The `gh api graphql` response envelope: `{ "data": { ... } }`.
@@ -166,33 +147,10 @@ struct Owner {
     login: String,
 }
 
-fn fetch_pr_info(pr_input: &str, repo_override: Option<&str>) -> Result<PrInfo, PrError> {
-    let (owner, repo, number) = parse_pr_input(pr_input).ok_or_else(|| {
-        PrError::InvalidRef(format!(
-            "Invalid PR reference: {}. Use a PR number or URL.",
-            pr_input
-        ))
-    })?;
-
-    let repo_full = match (&owner, &repo, repo_override) {
-        (Some(o), Some(r), _) => format!("{}/{}", o, r),
-        (_, _, Some(r)) => r.to_string(),
-        _ => resolve_origin_repo()?,
-    };
-
-    let (repo_owner, repo_name) = {
-        let parts: Vec<&str> = repo_full.split('/').collect();
-        if parts.len() != 2 {
-            return Err(PrError::InvalidRef(format!(
-                "Invalid repo format: {}",
-                repo_full
-            )));
-        }
-        (
-            owner.unwrap_or_else(|| parts[0].to_string()),
-            repo.unwrap_or_else(|| parts[1].to_string()),
-        )
-    };
+pub(super) fn fetch_pr_info(reference: &GitHubPrReference) -> Result<PrInfo, PrError> {
+    let number = reference.number;
+    let repo_owner = reference.repository.owner.clone();
+    let repo_name = reference.repository.repo.clone();
 
     // Use GraphQL to get the PR node ID, branch refs, and repo owners
     let query = format!(
@@ -222,7 +180,7 @@ fn fetch_pr_info(pr_input: &str, repo_override: Option<&str>) -> Result<PrInfo, 
         .ok_or_else(|| PrError::NotFound(format!("PR #{} not found", number)))?;
 
     Ok(PrInfo {
-        provider: &GitHubProvider,
+        provider: PrProvider::GitHub { node_id: pr.id },
         number,
         repo_owner: repo_owner.clone(),
         repo_name,
@@ -233,13 +191,18 @@ fn fetch_pr_info(pr_input: &str, repo_override: Option<&str>) -> Result<PrInfo, 
             .map(|r| r.owner.login)
             .unwrap_or(repo_owner),
         head_repo_owner: pr.head_repository.map(|r| r.owner.login),
-        data: ProviderData::GitHub { node_id: pr.id },
     })
 }
 
-fn detect_current_branch_pr() -> Result<String, PrError> {
+pub(super) fn detect_current_branch_pr(
+    repository: &GitHubRepository,
+    branch: &str,
+) -> Result<String, PrError> {
+    let repo = format!("{}/{}", repository.owner, repository.repo);
     let output = Command::new("gh")
-        .args(["pr", "view", "--json", "number", "-q", ".number"])
+        .args([
+            "pr", "view", branch, "--repo", &repo, "--json", "number", "-q", ".number",
+        ])
         .output()
         .map_err(|e| format!("Failed to run gh: {}", e))?;
     if !output.status.success() {
@@ -261,6 +224,16 @@ fn detect_current_branch_pr() -> Result<String, PrError> {
     Ok(number)
 }
 
+pub(super) fn file_web_url(pr: &PrInfo, filename: &str) -> String {
+    format!(
+        "https://github.com/{}/{}/pull/{}/files#diff-{}",
+        pr.repo_owner,
+        pr.repo_name,
+        pr.number,
+        file_anchor(filename)
+    )
+}
+
 /// SHA-256 file anchor used by GitHub's PR "Files changed" deep links
 /// (`#diff-<sha256(path)>`).
 fn file_anchor(filename: &str) -> String {
@@ -276,8 +249,17 @@ struct PrFiles {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct FileConnection {
     nodes: Vec<FileNode>,
+    page_info: PageInfo,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PageInfo {
+    has_next_page: bool,
+    end_cursor: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -288,14 +270,27 @@ struct FileNode {
 }
 
 /// Fetch the list of files that are marked as viewed on GitHub
-fn fetch_viewed_files(pr_info: &PrInfo) -> Result<HashSet<String>, PrError> {
-    let query = format!(
-        r#"query {{ repository(owner: "{}", name: "{}") {{ pullRequest(number: {}) {{ files(first: 100) {{ nodes {{ path viewerViewedState }} }} }} }} }}"#,
-        pr_info.repo_owner, pr_info.repo_name, pr_info.number
-    );
+pub(super) fn fetch_viewed_files(pr_info: &PrInfo) -> Result<HashSet<String>, PrError> {
+    fetch_all_viewed_files(|after| fetch_viewed_files_page(pr_info, after))
+}
 
-    let output = Command::new("gh")
-        .args(["api", "graphql", "-f", &format!("query={}", query)])
+fn fetch_viewed_files_page(pr_info: &PrInfo, after: Option<&str>) -> Result<Vec<u8>, PrError> {
+    let mut command = Command::new("gh");
+    command
+        .args(["api", "graphql"])
+        .arg("-f")
+        .arg(format!("query={VIEWED_FILES_QUERY}"))
+        .arg("-f")
+        .arg(format!("owner={}", pr_info.repo_owner))
+        .arg("-f")
+        .arg(format!("name={}", pr_info.repo_name))
+        .arg("-F")
+        .arg(format!("number={}", pr_info.number));
+    if let Some(cursor) = after {
+        command.arg("-f").arg(format!("after={cursor}"));
+    }
+
+    let output = command
         .output()
         .map_err(|e| format!("Failed to run gh api graphql: {}", e))?;
 
@@ -307,20 +302,63 @@ fn fetch_viewed_files(pr_info: &PrInfo) -> Result<HashSet<String>, PrError> {
         )));
     }
 
-    let resp: GraphQl<RepoNode<PrFiles>> = serde_json::from_slice(&output.stdout)
+    Ok(output.stdout)
+}
+
+fn fetch_all_viewed_files<F>(mut fetch_page: F) -> Result<HashSet<String>, PrError>
+where
+    F: FnMut(Option<&str>) -> Result<Vec<u8>, PrError>,
+{
+    let mut viewed_paths = HashSet::new();
+    let mut cursor = None;
+
+    loop {
+        let body = fetch_page(cursor.as_deref())?;
+        let next_cursor = accumulate_viewed_files_page(&body, &mut viewed_paths)?;
+        if next_cursor.is_none() {
+            return Ok(viewed_paths);
+        }
+        if next_cursor == cursor {
+            return Err(PrError::Other(
+                "github graphql returned a repeated file-page cursor".to_string(),
+            ));
+        }
+        cursor = next_cursor;
+    }
+}
+
+fn accumulate_viewed_files_page(
+    body: &[u8],
+    viewed_paths: &mut HashSet<String>,
+) -> Result<Option<String>, PrError> {
+    let resp: GraphQl<RepoNode<PrFiles>> = serde_json::from_slice(body)
         .map_err(|e| PrError::Other(format!("could not parse gh graphql response: {}", e)))?;
-    let nodes = resp
+    let files = resp
         .data
         .and_then(|d| d.repository)
         .and_then(|r| r.pull_request)
-        .map(|p| p.files.nodes)
-        .unwrap_or_default();
+        .map(|p| p.files)
+        .ok_or_else(|| {
+            PrError::NotFound(
+                "github graphql response did not include pull request files".to_string(),
+            )
+        })?;
 
-    Ok(nodes
-        .into_iter()
-        .filter(|n| n.viewer_viewed_state == "VIEWED")
-        .map(|n| n.path)
-        .collect())
+    viewed_paths.extend(
+        files
+            .nodes
+            .into_iter()
+            .filter(|node| node.viewer_viewed_state == "VIEWED")
+            .map(|node| node.path),
+    );
+
+    if files.page_info.has_next_page {
+        files.page_info.end_cursor.map(Some).ok_or_else(|| {
+            PrError::Other("github graphql file page is missing its end cursor".to_string())
+        })
+    } else {
+        Ok(None)
+    }
 }
 
 /// Mark a file as viewed on GitHub PR (blocking)
@@ -363,7 +401,15 @@ fn unmark_file_as_viewed_sync(node_id: &str, file_path: &str) -> Result<(), PrEr
     Ok(())
 }
 
-fn load_pr_file_diffs(pr_info: &PrInfo) -> Result<Vec<FileDiff>, PrError> {
+pub(super) fn set_file_viewed(node_id: &str, file_path: &str, viewed: bool) -> Result<(), PrError> {
+    if viewed {
+        mark_file_as_viewed_sync(node_id, file_path)
+    } else {
+        unmark_file_as_viewed_sync(node_id, file_path)
+    }
+}
+
+pub(super) fn load_pr_file_diffs(pr_info: &PrInfo) -> Result<Vec<FileDiff>, PrError> {
     let repo_arg = format!("{}/{}", pr_info.repo_owner, pr_info.repo_name);
 
     let mut spinner = Spinner::new(
@@ -428,7 +474,7 @@ fn load_pr_file_diffs(pr_info: &PrInfo) -> Result<Vec<FileDiff>, PrError> {
 
     let file_diffs: Vec<FileDiff> = changed_files
         .into_iter()
-        .zip(contents.into_iter())
+        .zip(contents)
         .map(|(filename, (old_content, new_content))| {
             build_file_diff(filename, old_content, new_content)
         })
@@ -567,10 +613,8 @@ fn format_fetch_progress(
 ) -> String {
     let current = if let Some(name) = in_flight.last() {
         name.as_str()
-    } else if let Some(name) = last_finished {
-        name
     } else {
-        ""
+        last_finished.unwrap_or_default()
     };
     if current.is_empty() {
         format!("Fetching files [{}/{}]", done, total)
@@ -621,10 +665,51 @@ mod tests {
     use super::*;
 
     #[test]
-    fn github_matches_pull_urls() {
-        assert!(GitHubProvider.matches_url("https://github.com/owner/repo/pull/123"));
-        assert!(!GitHubProvider.matches_url("https://dev.azure.com/o/p/_git/r/pullrequest/1"));
-        assert!(GitHubProvider.matches_origin("git@github.com:owner/repo.git"));
+    fn parses_only_exact_github_pull_urls() {
+        let reference = parse_http_url("https://github.com/owner/repo/pull/123")
+            .and_then(parse_pr_url)
+            .expect("should parse");
+        assert_eq!(reference.repository.owner, "owner");
+        assert_eq!(reference.repository.repo, "repo");
+        assert_eq!(reference.number, 123);
+        assert!(parse_http_url("https://notgithub.com/owner/repo/pull/123")
+            .and_then(parse_pr_url)
+            .is_none());
+        assert!(parse_http_url("https://github.com/owner/repo/issues/123")
+            .and_then(parse_pr_url)
+            .is_none());
+        assert!(
+            parse_http_url("https://github.com/owner/repo/pull/123/unknown")
+                .and_then(parse_pr_url)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn parses_github_pull_subpage_urls() {
+        for url in [
+            "https://github.com/owner/repo/pull/123/files",
+            "https://github.com/owner/repo/pull/123/commits",
+        ] {
+            let reference = parse_http_url(url)
+                .and_then(parse_pr_url)
+                .expect("supported PR subpage");
+            assert_eq!(reference.number, 123);
+        }
+    }
+
+    #[test]
+    fn parses_github_https_and_ssh_repositories() {
+        let https = parse_repository("https://github.com/owner/repo.git").expect("https");
+        let credentialed =
+            parse_repository("https://user:TOKEN@github.com/owner/repo.git").expect("credentials");
+        let ssh = parse_repository("git@github.com:owner/repo.git").expect("ssh");
+        assert_eq!(https.owner, "owner");
+        assert_eq!(https.repo, "repo");
+        assert_eq!(credentialed.owner, "owner");
+        assert_eq!(credentialed.repo, "repo");
+        assert_eq!(ssh.owner, "owner");
+        assert_eq!(ssh.repo, "repo");
     }
 
     #[test]
@@ -651,7 +736,7 @@ mod tests {
             "data": { "repository": { "pullRequest": { "files": { "nodes": [
                 { "path": "a.rs", "viewerViewedState": "VIEWED" },
                 { "path": "b.rs", "viewerViewedState": "UNVIEWED" }
-            ]}}}}
+            ], "pageInfo": { "hasNextPage": false, "endCursor": null }}}}}
         });
         let resp: GraphQl<RepoNode<PrFiles>> = serde_json::from_value(body).unwrap();
         let nodes = resp
@@ -664,5 +749,62 @@ mod tests {
             .files
             .nodes;
         assert_eq!(nodes[0].viewer_viewed_state, "VIEWED");
+    }
+
+    #[test]
+    fn accumulates_viewed_files_across_graphql_pages() {
+        let pages = [
+            serde_json::json!({
+                "data": { "repository": { "pullRequest": { "files": {
+                    "nodes": [
+                        { "path": "a.rs", "viewerViewedState": "VIEWED" },
+                        { "path": "b.rs", "viewerViewedState": "UNVIEWED" }
+                    ],
+                    "pageInfo": { "hasNextPage": true, "endCursor": "cursor-1" }
+                }}}}
+            })
+            .to_string()
+            .into_bytes(),
+            serde_json::json!({
+                "data": { "repository": { "pullRequest": { "files": {
+                    "nodes": [
+                        { "path": "c.rs", "viewerViewedState": "VIEWED" }
+                    ],
+                    "pageInfo": { "hasNextPage": false, "endCursor": "cursor-2" }
+                }}}}
+            })
+            .to_string()
+            .into_bytes(),
+        ];
+        let mut pages = pages.into_iter();
+        let mut cursors = Vec::new();
+
+        let viewed = fetch_all_viewed_files(|cursor| {
+            cursors.push(cursor.map(str::to_owned));
+            Ok(pages.next().expect("requested page"))
+        })
+        .expect("all pages");
+
+        assert_eq!(cursors, vec![None, Some("cursor-1".to_string())]);
+        assert_eq!(
+            viewed,
+            HashSet::from(["a.rs".to_string(), "c.rs".to_string()])
+        );
+    }
+
+    #[test]
+    fn rejects_partial_graphql_page_without_next_cursor() {
+        let page = serde_json::json!({
+            "data": { "repository": { "pullRequest": { "files": {
+                "nodes": [{ "path": "a.rs", "viewerViewedState": "VIEWED" }],
+                "pageInfo": { "hasNextPage": true, "endCursor": null }
+            }}}}
+        })
+        .to_string()
+        .into_bytes();
+
+        let error = fetch_all_viewed_files(|_| Ok(page.clone())).expect_err("missing cursor");
+
+        assert!(error.to_string().contains("missing its end cursor"));
     }
 }

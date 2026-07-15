@@ -142,7 +142,7 @@ pub enum Commands {
         #[arg(long)]
         focus: Option<String>,
 
-        /// Origin repository in owner/repo format (default: origin git remote)
+        /// Repository override: GitHub owner/repo, or a full Azure DevOps repository remote URL
         #[arg(long)]
         origin: Option<String>,
 
