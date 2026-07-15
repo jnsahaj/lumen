@@ -157,17 +157,21 @@ jobs:
         with:
           name: release-manifests
 
-      # Retried because transient mirror outages (ports.ubuntu.com) have
-      # failed this step before; a release shouldn't die on an apt blip.
+      # ports.ubuntu.com (the only apt mirror for ARM runners) has flapping
+      # outages on port 80; use https and retry hard so a release doesn't
+      # die on an apt blip.
       - name: Install musl toolchain
         if: ${{ contains(matrix.target, 'musl') }}
         run: |
-          for attempt in 1 2 3; do
+          sudo sed -i 's|http://ports.ubuntu.com|https://ports.ubuntu.com|g' \
+            /etc/apt/sources.list /etc/apt/sources.list.d/*.list \
+            /etc/apt/sources.list.d/*.sources 2>/dev/null || true
+          for attempt in 1 2 3 4 5; do
             sudo apt-get update -o Acquire::Retries=3 \
               && sudo apt-get install -y -o Acquire::Retries=3 musl-tools \
               && break
-            echo "apt attempt $attempt failed; retrying in 30s"
-            sleep 30
+            echo "apt attempt $attempt failed; retrying in 45s"
+            sleep 45
           done
           command -v musl-gcc
 
