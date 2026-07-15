@@ -1,5 +1,6 @@
 mod annotation;
 mod app;
+mod app_mode;
 mod context;
 mod coordinates;
 mod diff_algo;
@@ -24,10 +25,7 @@ use spinoff::{spinners, Color, Spinner};
 use crate::commit_reference::CommitReference;
 use crate::vcs::VcsBackend;
 
-pub use pr_provider::{
-    fetch_viewed_files, mark_file_as_viewed_async, supports_viewed_files,
-    unmark_file_as_viewed_async, PrProvider,
-};
+pub use pr_provider::PrInfo;
 
 pub struct DiffOptions {
     pub reference: Option<CommitReference>,
@@ -42,19 +40,7 @@ pub struct DiffOptions {
     pub wrap: bool,
 }
 
-#[derive(Clone)]
-pub struct PrInfo {
-    pub provider: PrProvider,
-    pub number: u64,
-    pub repo_owner: String,
-    pub repo_name: String,
-    pub base_ref: String,
-    pub head_ref: String,
-    pub base_repo_owner: String,
-    pub head_repo_owner: Option<String>, // None if head repo was deleted (fork deleted)
-}
-
-pub fn run_diff_ui(mut options: DiffOptions, backend: Option<&dyn VcsBackend>) -> io::Result<()> {
+pub fn run_diff_ui(options: DiffOptions, backend: Option<&dyn VcsBackend>) -> io::Result<()> {
     let repository_context =
         pr_provider::RepositoryContext::resolve(backend, options.origin.as_deref());
 
@@ -65,10 +51,10 @@ pub fn run_diff_ui(mut options: DiffOptions, backend: Option<&dyn VcsBackend>) -
             "Detecting PR for current branch",
             Color::Cyan,
         );
-        match pr_provider::detect_current_branch_pr(&repository_context) {
-            Ok(number) => {
-                spinner.success(&format!("Detected PR #{}", number));
-                options.pr = Some(number);
+        match pr_provider::detect_current_branch_pr(&repository_context, backend) {
+            Ok(pr_info) => {
+                spinner.success(&format!("Detected PR #{}", pr_info.number()));
+                return app::run_app_with_pr(options, pr_info);
             }
             Err(e) => {
                 spinner.fail(&e.to_string());
@@ -83,7 +69,7 @@ pub fn run_diff_ui(mut options: DiffOptions, backend: Option<&dyn VcsBackend>) -
         match pr_provider::fetch_pr_info(pr_input, &repository_context) {
             Ok(pr_info) => {
                 spinner.success("Fetched PR metadata");
-                return app::run_app_with_pr(options, pr_info, backend);
+                return app::run_app_with_pr(options, pr_info);
             }
             Err(e) => {
                 spinner.fail(&e.to_string());
@@ -99,7 +85,7 @@ pub fn run_diff_ui(mut options: DiffOptions, backend: Option<&dyn VcsBackend>) -
             match pr_provider::fetch_pr_info(input, &repository_context) {
                 Ok(pr_info) => {
                     spinner.success("Fetched PR metadata");
-                    return app::run_app_with_pr(options, pr_info, backend);
+                    return app::run_app_with_pr(options, pr_info);
                 }
                 Err(e) => {
                     spinner.fail(&e.to_string());
@@ -152,7 +138,7 @@ pub fn run_diff_ui(mut options: DiffOptions, backend: Option<&dyn VcsBackend>) -
         }
     }
 
-    app::run_app(options, None, require_backend(backend)?)
+    app::run_app(options, require_backend(backend)?)
 }
 
 fn require_backend(backend: Option<&dyn VcsBackend>) -> io::Result<&dyn VcsBackend> {

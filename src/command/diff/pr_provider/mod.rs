@@ -2,18 +2,18 @@
 
 mod azure;
 mod github;
+mod viewed;
 
 use std::borrow::Cow;
 use std::collections::HashSet;
 use std::fmt;
-use std::thread;
 
 use super::types::FileDiff;
-use super::PrInfo;
 use crate::vcs::VcsBackend;
 
 use azure::{AzurePrReference, AzureRepository};
 use github::{GitHubPrReference, GitHubRepository};
+pub(crate) use viewed::ViewedFileSync;
 
 #[derive(Debug, thiserror::Error)]
 pub enum PrError {
@@ -39,11 +39,83 @@ impl From<&str> for PrError {
     }
 }
 
-/// Provider-specific coordinates for a resolved pull request.
-#[derive(Clone, Debug)]
-pub enum PrProvider {
-    GitHub { node_id: String },
-    Azure { org_url: String, project: String },
+#[derive(Clone)]
+pub enum PrInfo {
+    GitHub(github::GitHubPr),
+    Azure(azure::AzurePr),
+}
+
+impl PrInfo {
+    pub fn number(&self) -> u64 {
+        match self {
+            Self::GitHub(pr) => pr.number,
+            Self::Azure(pr) => pr.number,
+        }
+    }
+
+    pub fn base_ref(&self) -> &str {
+        match self {
+            Self::GitHub(pr) => &pr.base_ref,
+            Self::Azure(pr) => &pr.base_ref,
+        }
+    }
+
+    pub fn head_ref(&self) -> &str {
+        match self {
+            Self::GitHub(pr) => &pr.head_ref,
+            Self::Azure(pr) => &pr.head_ref,
+        }
+    }
+
+    pub fn base_repo_owner(&self) -> &str {
+        match self {
+            Self::GitHub(pr) => &pr.base_repo_owner,
+            Self::Azure(pr) => &pr.org,
+        }
+    }
+
+    pub fn head_repo_owner(&self) -> Option<&str> {
+        match self {
+            Self::GitHub(pr) => pr.head_repo_owner.as_deref(),
+            Self::Azure(pr) => Some(&pr.org),
+        }
+    }
+
+    pub fn load_file_diffs(&self) -> Result<Vec<FileDiff>, PrError> {
+        match self {
+            Self::GitHub(pr) => github::load_pr_file_diffs(pr),
+            Self::Azure(pr) => azure::load_pr_file_diffs(pr),
+        }
+    }
+
+    fn viewed_file_provider(&self) -> Option<ViewedFileProvider> {
+        match self {
+            Self::GitHub(pr) => Some(ViewedFileProvider { pr: pr.clone() }),
+            Self::Azure(_) => None,
+        }
+    }
+
+    pub fn file_web_url(&self, filename: &str) -> String {
+        match self {
+            Self::GitHub(pr) => github::file_web_url(pr, filename),
+            Self::Azure(pr) => azure::file_web_url(pr, filename),
+        }
+    }
+}
+
+#[derive(Clone)]
+struct ViewedFileProvider {
+    pr: github::GitHubPr,
+}
+
+impl ViewedFileProvider {
+    fn fetch(&self) -> Result<HashSet<String>, PrError> {
+        github::fetch_viewed_files(&self.pr)
+    }
+
+    fn set(&self, path: &str, viewed: bool) -> Result<(), PrError> {
+        github::set_file_viewed(&self.pr.node_id, path, viewed)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -57,31 +129,29 @@ enum Repository {
 pub struct RepositoryContext {
     origin: Option<String>,
     repository: Option<Repository>,
-    current_branch: Option<String>,
+    origin_error: Option<String>,
 }
 
 impl RepositoryContext {
     pub fn resolve(backend: Option<&dyn VcsBackend>, repository_override: Option<&str>) -> Self {
-        let origin = repository_override
-            .map(str::to_owned)
-            .or_else(|| backend.and_then(|backend| backend.origin_url().ok().flatten()));
+        let (origin, origin_error) = match repository_override {
+            Some(origin) => (Some(origin.to_owned()), None),
+            None => match backend.map(VcsBackend::origin_url).transpose() {
+                Ok(origin) => (origin.flatten(), None),
+                Err(error) => (None, Some(error.to_string())),
+            },
+        };
         let repository = origin.as_deref().and_then(parse_repository);
-        let current_branch =
-            backend.and_then(|backend| backend.get_current_branch().ok().flatten());
 
         Self {
             origin,
             repository,
-            current_branch,
+            origin_error,
         }
     }
 
     #[cfg(test)]
-    fn from_sources(
-        repository_override: Option<&str>,
-        backend_origin: Option<&str>,
-        current_branch: Option<&str>,
-    ) -> Self {
+    fn from_sources(repository_override: Option<&str>, backend_origin: Option<&str>) -> Self {
         let origin = repository_override
             .map(str::to_owned)
             .or_else(|| backend_origin.map(str::to_owned));
@@ -89,7 +159,7 @@ impl RepositoryContext {
         Self {
             origin,
             repository,
-            current_branch: current_branch.map(str::to_owned),
+            origin_error: None,
         }
     }
 }
@@ -122,14 +192,7 @@ fn resolve_pr_reference(input: &str, context: &RepositoryContext) -> Result<PrRe
         Some(PrReference::Number(number)) => match &context.repository {
             Some(Repository::GitHub(repo)) => Ok(PrReference::GitHub(repo.with_number(number))),
             Some(Repository::Azure(repo)) => Ok(PrReference::Azure(repo.with_number(number))),
-            None => Err(PrError::InvalidRef(match &context.origin {
-                Some(origin) => {
-                    format!("unsupported repository origin: {}", safe_diagnostic(origin))
-                }
-                None => {
-                    "could not determine repository; configure origin or pass --origin".to_string()
-                }
-            })),
+            None => Err(PrError::InvalidRef(repository_context_error(context))),
         },
         Some(reference) => Ok(reference),
         None => Err(PrError::InvalidRef(format!(
@@ -145,78 +208,47 @@ pub fn is_pr_reference(input: &str) -> bool {
 
 pub fn fetch_pr_info(input: &str, context: &RepositoryContext) -> Result<PrInfo, PrError> {
     match resolve_pr_reference(input, context)? {
-        PrReference::GitHub(reference) => github::fetch_pr_info(&reference),
-        PrReference::Azure(reference) => azure::fetch_pr_info(&reference),
+        PrReference::GitHub(reference) => github::fetch_pr_info(&reference).map(PrInfo::GitHub),
+        PrReference::Azure(reference) => azure::fetch_pr_info(&reference).map(PrInfo::Azure),
         PrReference::Number(_) => {
             unreachable!("bare PR numbers are resolved using repository context")
         }
     }
 }
 
-pub fn detect_current_branch_pr(context: &RepositoryContext) -> Result<String, PrError> {
-    let branch = context.current_branch.as_deref().ok_or_else(|| {
+pub fn detect_current_branch_pr(
+    context: &RepositoryContext,
+    backend: Option<&dyn VcsBackend>,
+) -> Result<PrInfo, PrError> {
+    let backend = backend.ok_or_else(|| {
         PrError::NotFound("could not determine the current branch or bookmark".to_string())
     })?;
+    let branch = backend
+        .get_pr_source_branch()
+        .map_err(|error| PrError::Other(error.to_string()))?
+        .ok_or_else(|| {
+            PrError::NotFound("could not determine the current branch or bookmark".to_string())
+        })?;
     match &context.repository {
-        Some(Repository::GitHub(repo)) => github::detect_current_branch_pr(repo, branch),
-        Some(Repository::Azure(repo)) => azure::detect_current_branch_pr(repo, branch),
-        None => Err(PrError::InvalidRef(match &context.origin {
-            Some(origin) => {
-                format!("unsupported repository origin: {}", safe_diagnostic(origin))
-            }
-            None => "could not determine repository; configure origin or pass --origin".to_string(),
-        })),
+        Some(Repository::GitHub(repo)) => {
+            let reference = github::detect_current_branch_pr(repo, &branch)?;
+            github::fetch_pr_info(&reference).map(PrInfo::GitHub)
+        }
+        Some(Repository::Azure(repo)) => {
+            azure::detect_current_branch_pr(repo, &branch).map(PrInfo::Azure)
+        }
+        None => Err(PrError::InvalidRef(repository_context_error(context))),
     }
 }
 
-pub fn load_pr_file_diffs(pr: &PrInfo) -> Result<Vec<FileDiff>, PrError> {
-    match &pr.provider {
-        PrProvider::GitHub { .. } => github::load_pr_file_diffs(pr),
-        PrProvider::Azure { org_url, project } => azure::load_pr_file_diffs(org_url, project, pr),
-    }
-}
-
-/// `None` means the provider does not support per-file viewed state.
-pub fn fetch_viewed_files(pr: &PrInfo) -> Result<Option<HashSet<String>>, PrError> {
-    match &pr.provider {
-        PrProvider::GitHub { .. } => github::fetch_viewed_files(pr).map(Some),
-        PrProvider::Azure { .. } => Ok(None),
-    }
-}
-
-pub fn supports_viewed_files(pr: &PrInfo) -> bool {
-    matches!(&pr.provider, PrProvider::GitHub { .. })
-}
-
-pub fn pr_file_web_url(pr: &PrInfo, filename: &str) -> Option<String> {
-    match &pr.provider {
-        PrProvider::GitHub { .. } => Some(github::file_web_url(pr, filename)),
-        PrProvider::Azure { org_url, project } => {
-            Some(azure::file_web_url(org_url, project, pr, filename))
+fn repository_context_error(context: &RepositoryContext) -> String {
+    match (&context.origin, &context.origin_error) {
+        (Some(origin), _) => format!("unsupported repository origin: {}", safe_diagnostic(origin)),
+        (None, Some(error)) => format!("could not read repository origin: {error}"),
+        (None, None) => {
+            "could not determine repository; configure origin or pass --origin".to_string()
         }
     }
-}
-
-pub fn mark_file_as_viewed_async(pr: &PrInfo, file_path: &str) {
-    set_file_viewed_async(pr, file_path, true);
-}
-
-pub fn unmark_file_as_viewed_async(pr: &PrInfo, file_path: &str) {
-    set_file_viewed_async(pr, file_path, false);
-}
-
-fn set_file_viewed_async(pr: &PrInfo, file_path: &str, viewed: bool) {
-    if !matches!(&pr.provider, PrProvider::GitHub { .. }) {
-        return;
-    }
-    let pr = pr.clone();
-    let path = file_path.to_string();
-    thread::spawn(move || {
-        let PrProvider::GitHub { node_id } = &pr.provider else {
-            return;
-        };
-        let _ = github::set_file_viewed(node_id, &path, viewed);
-    });
 }
 
 #[derive(Clone, Copy)]
@@ -280,6 +312,23 @@ pub(super) fn decoded_path_segments(path: &str) -> Option<Vec<String>> {
     path.split('/').map(decode_path_segment).collect()
 }
 
+pub(super) fn percent_encode(segment: &str) -> String {
+    use std::fmt::Write;
+
+    let mut encoded = String::with_capacity(segment.len());
+    for byte in segment.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                encoded.push(byte as char)
+            }
+            _ => {
+                let _ = write!(encoded, "%{byte:02X}");
+            }
+        }
+    }
+    encoded
+}
+
 fn decode_path_segment(segment: &str) -> Option<String> {
     if segment.is_empty() {
         return None;
@@ -333,11 +382,9 @@ mod tests {
         let context = RepositoryContext::from_sources(
             Some("https://dev.azure.com/org/project/_git/repo"),
             Some("git@github.com:owner/repo.git"),
-            Some("feature"),
         );
 
         assert!(matches!(context.repository, Some(Repository::Azure(_))));
-        assert_eq!(context.current_branch.as_deref(), Some("feature"));
     }
 
     #[test]
@@ -345,7 +392,6 @@ mod tests {
         let context = RepositoryContext::from_sources(
             None,
             Some("https://user:TOKEN@github.com/owner/repo.git"),
-            Some("feature"),
         );
 
         assert!(matches!(context.repository, Some(Repository::GitHub(_))));
@@ -356,7 +402,6 @@ mod tests {
         let context = RepositoryContext::from_sources(
             None,
             Some("https://user:SECRET@example.com/owner/repo.git"),
-            Some("feature"),
         );
 
         let error = resolve_pr_reference("12", &context).expect_err("unsupported origin");
@@ -369,7 +414,7 @@ mod tests {
 
     #[test]
     fn invalid_reference_error_redacts_https_credentials() {
-        let context = RepositoryContext::from_sources(None, None, None);
+        let context = RepositoryContext::from_sources(None, None);
 
         let error = resolve_pr_reference(
             "https://user:SECRET@example.com/owner/repo/pull/1",

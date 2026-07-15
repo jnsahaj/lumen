@@ -23,8 +23,7 @@ use std::thread;
 use reqwest::header::ACCEPT;
 use serde::Deserialize;
 
-use crate::command::diff::git::percent_encode;
-use crate::command::diff::pr_provider::PrError;
+use crate::command::diff::pr_provider::{percent_encode, PrError};
 use crate::command::diff::types::{is_binary_content, FileDiff, FileStatus};
 
 const API_VERSION: &str = "7.1";
@@ -51,7 +50,7 @@ enum AdoAuth {
 }
 
 #[derive(Clone)]
-struct AdoClient {
+pub(super) struct AdoClient {
     http: reqwest::blocking::Client,
     /// Organisation base URL, e.g. `https://dev.azure.com/org`.
     base: String,
@@ -78,6 +77,15 @@ impl AdoClient {
             AdoAuth::Pat(pat) => rb.basic_auth("", Some(pat)),
             AdoAuth::Bearer(token) => rb.bearer_auth(token),
         }
+    }
+
+    fn with_repo(mut self, repo: &str) -> Self {
+        self.repo = repo.to_string();
+        self
+    }
+
+    fn refreshed(&self) -> Result<Self, PrError> {
+        Self::new(&self.base, &self.project, &self.repo)
     }
 
     /// `{base}/{project}/_apis/git/...` with project URL-encoded.
@@ -294,6 +302,37 @@ impl AdoClient {
             })
             .collect()
     }
+
+    fn fetch_pr_metadata(&self, pr_id: u64) -> Result<AzurePrMeta, PrError> {
+        let url = format!(
+            "{}?api-version={}",
+            self.git_url(&format!("pullrequests/{}", pr_id)),
+            API_VERSION
+        );
+        let detail: PrDetail = self.get(&url)?;
+        Ok(AzurePrMeta {
+            source_ref: detail.source_ref_name,
+            target_ref: detail.target_ref_name,
+            repo_name: detail
+                .repository
+                .and_then(|repository| repository.name)
+                .unwrap_or_else(|| self.repo.clone()),
+        })
+    }
+
+    fn detect_active_pr(&self, branch: &str) -> Result<u64, PrError> {
+        let url = format!(
+            "{}?searchCriteria.status=active&searchCriteria.sourceRefName={}&api-version={}",
+            self.git_url(&format!(
+                "repositories/{}/pullrequests",
+                percent_encode(&self.repo)
+            )),
+            percent_encode(&format!("refs/heads/{}", branch)),
+            API_VERSION
+        );
+        let list: PrList = self.get(&url)?;
+        unique_active_pr(branch, &list.value)
+    }
 }
 
 /// The PR iterations list; we only need each iteration's numeric id.
@@ -472,33 +511,7 @@ struct RepoRef {
     name: Option<String>,
 }
 
-pub fn fetch_pr_metadata(
-    org_url: &str,
-    project: &str,
-    repo: &str,
-    pr_id: u64,
-) -> Result<AzurePrMeta, PrError> {
-    on_http_thread(|| {
-        let client = AdoClient::new(org_url, project, repo)?;
-        // PR detail is project-scoped (not repo-scoped) in the REST API.
-        let url = format!(
-            "{}?api-version={}",
-            client.git_url(&format!("pullrequests/{}", pr_id)),
-            API_VERSION
-        );
-        let detail: PrDetail = client.get(&url)?;
-        Ok(AzurePrMeta {
-            source_ref: detail.source_ref_name,
-            target_ref: detail.target_ref_name,
-            repo_name: detail
-                .repository
-                .and_then(|r| r.name)
-                .unwrap_or_else(|| repo.to_string()),
-        })
-    })
-}
-
-/// The active-PR search result; we take the first match's id.
+/// Active PRs matching a source branch.
 #[derive(Deserialize)]
 struct PrList {
     value: Vec<PrId>,
@@ -508,6 +521,46 @@ struct PrList {
 #[serde(rename_all = "camelCase")]
 struct PrId {
     pull_request_id: u64,
+    target_ref_name: Option<String>,
+}
+
+fn unique_active_pr(branch: &str, prs: &[PrId]) -> Result<u64, PrError> {
+    match prs {
+        [] => Err(PrError::NotFound(format!(
+            "No active PR found for branch {}",
+            branch
+        ))),
+        [pr] => Ok(pr.pull_request_id),
+        prs => Err(PrError::Other(format!(
+            "multiple active PRs found for branch {}: {}. Specify the PR explicitly",
+            branch,
+            prs.iter()
+                .map(|pr| match pr.target_ref_name.as_deref() {
+                    Some(target) => format!("#{} ({})", pr.pull_request_id, target),
+                    None => format!("#{}", pr.pull_request_id),
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))),
+    }
+}
+
+pub fn resolve_pr(
+    org_url: &str,
+    project: &str,
+    repo: &str,
+    pr_id: u64,
+) -> Result<(AdoClient, AzurePrMeta), PrError> {
+    on_http_thread(|| {
+        let client = AdoClient::new(org_url, project, repo)?;
+        let metadata = client.fetch_pr_metadata(pr_id)?;
+        let client = if metadata.repo_name.is_empty() || metadata.repo_name == repo {
+            client
+        } else {
+            client.with_repo(&metadata.repo_name)
+        };
+        Ok((client, metadata))
+    })
 }
 
 pub fn detect_active_pr(
@@ -515,33 +568,26 @@ pub fn detect_active_pr(
     project: &str,
     repo: &str,
     branch: &str,
-) -> Result<u64, PrError> {
+) -> Result<(AdoClient, u64, AzurePrMeta), PrError> {
     on_http_thread(|| {
         let client = AdoClient::new(org_url, project, repo)?;
-        let url = format!(
-            "{}?searchCriteria.status=active&searchCriteria.sourceRefName={}&api-version={}",
-            client.git_url(&format!(
-                "repositories/{}/pullrequests",
-                percent_encode(repo)
-            )),
-            percent_encode(&format!("refs/heads/{}", branch)),
-            API_VERSION
-        );
-        let list: PrList = client.get(&url)?;
-        list.value
-            .first()
-            .map(|pr| pr.pull_request_id)
-            .ok_or_else(|| PrError::NotFound(format!("No active PR found for branch {}", branch)))
+        let pr_id = client.detect_active_pr(branch)?;
+        let metadata = client.fetch_pr_metadata(pr_id)?;
+        let client = if metadata.repo_name.is_empty() || metadata.repo_name == repo {
+            client
+        } else {
+            client.with_repo(&metadata.repo_name)
+        };
+        Ok((client, pr_id, metadata))
     })
 }
 
-pub fn load_pr_file_diffs(
-    org_url: &str,
-    project: &str,
-    repo: &str,
-    pr_id: u64,
-) -> Result<Vec<FileDiff>, PrError> {
-    on_http_thread(|| AdoClient::new(org_url, project, repo)?.load_file_diffs(pr_id))
+pub fn load_pr_file_diffs(client: &AdoClient, pr_id: u64) -> Result<Vec<FileDiff>, PrError> {
+    let client = client.clone();
+    on_http_thread(move || match client.load_file_diffs(pr_id) {
+        Err(PrError::Auth(_)) => client.refreshed()?.load_file_diffs(pr_id),
+        result => result,
+    })
 }
 
 /// Keep reqwest's blocking client outside any transitive async runtime.
@@ -798,6 +844,35 @@ mod tests {
         let diff = build_file_diff(&change, Some(String::new()), None);
 
         assert_eq!(diff.status, FileStatus::Deleted);
+    }
+
+    #[test]
+    fn active_pr_detection_rejects_ambiguous_matches() {
+        let prs = [
+            PrId {
+                pull_request_id: 12,
+                target_ref_name: Some("refs/heads/main".to_string()),
+            },
+            PrId {
+                pull_request_id: 18,
+                target_ref_name: Some("refs/heads/release".to_string()),
+            },
+        ];
+
+        let error = unique_active_pr("feature", &prs).expect_err("ambiguous PRs");
+
+        assert!(error.to_string().contains("#12 (refs/heads/main)"));
+        assert!(error.to_string().contains("#18 (refs/heads/release)"));
+    }
+
+    #[test]
+    fn active_pr_detection_accepts_one_match() {
+        let prs = [PrId {
+            pull_request_id: 12,
+            target_ref_name: None,
+        }];
+
+        assert_eq!(unique_active_pr("feature", &prs).unwrap(), 12);
     }
 
     #[test]

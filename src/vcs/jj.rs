@@ -717,6 +717,21 @@ impl VcsBackend for JjBackend {
     fn get_current_branch(&self) -> Result<Option<String>, VcsError> {
         let wc_commit = self.resolve_single_commit("@")?;
         let wc_commit_id = wc_commit.id();
+        Ok(self
+            .repo
+            .view()
+            .local_bookmarks()
+            .find_map(|(name, target)| {
+                target
+                    .as_normal()
+                    .filter(|commit_id| *commit_id == wc_commit_id)
+                    .map(|_| name.as_str().to_string())
+            }))
+    }
+
+    fn get_pr_source_branch(&self) -> Result<Option<String>, VcsError> {
+        let wc_commit = self.resolve_single_commit("@")?;
+        let wc_commit_id = wc_commit.id();
         let local_bookmarks: Vec<_> = self
             .repo
             .view()
@@ -1406,7 +1421,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_current_branch_finds_nearest_unique_ancestor_bookmark() {
+    fn test_get_pr_source_branch_finds_nearest_unique_ancestor_bookmark() {
         let Some(repo) = JjRepoGuard::new() else {
             eprintln!("Skipping test: jj not available");
             return;
@@ -1425,13 +1440,13 @@ mod tests {
 
         let backend = JjBackend::new(&repo.dir).expect("should load backend");
         assert_eq!(
-            backend.get_current_branch().expect("should get bookmark"),
+            backend.get_pr_source_branch().expect("should get bookmark"),
             Some("feature".to_string())
         );
     }
 
     #[test]
-    fn test_get_current_branch_rejects_ambiguous_exact_bookmarks() {
+    fn test_get_pr_source_branch_rejects_ambiguous_exact_bookmarks() {
         let Some(repo) = JjRepoGuard::new() else {
             eprintln!("Skipping test: jj not available");
             return;
@@ -1448,7 +1463,7 @@ mod tests {
 
         let backend = JjBackend::new(&repo.dir).expect("should load backend");
         let error = backend
-            .get_current_branch()
+            .get_pr_source_branch()
             .expect_err("ambiguous bookmarks should fail");
         let VcsError::Other(message) = error else {
             panic!("expected VcsError::Other, got {error:?}");
@@ -1458,7 +1473,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_current_branch_rejects_ambiguous_nearest_bookmarks() {
+    fn test_get_pr_source_branch_rejects_ambiguous_nearest_bookmarks() {
         let Some(repo) = JjRepoGuard::new() else {
             eprintln!("Skipping test: jj not available");
             return;
@@ -1476,7 +1491,7 @@ mod tests {
 
         let backend = JjBackend::new(&repo.dir).expect("should load backend");
         let error = backend
-            .get_current_branch()
+            .get_pr_source_branch()
             .expect_err("ambiguous bookmarks should fail");
         let VcsError::Other(message) = error else {
             panic!("expected VcsError::Other, got {error:?}");

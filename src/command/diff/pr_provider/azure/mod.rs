@@ -2,11 +2,11 @@
 
 mod client;
 
-use crate::command::diff::git::percent_encode;
 use crate::command::diff::types::FileDiff;
-use crate::command::diff::PrInfo;
 
-use super::{decoded_path_segments, parse_http_url, HttpUrl, PrError, PrProvider};
+use super::{
+    decoded_path_segments, parse_http_url, percent_encode, strip_http_userinfo, HttpUrl, PrError,
+};
 
 #[derive(Clone, Debug)]
 pub(super) struct AzureRepository {
@@ -29,6 +29,42 @@ impl AzureRepository {
 pub(super) struct AzurePrReference {
     repository: AzureRepository,
     id: u64,
+}
+
+#[derive(Clone)]
+pub(crate) struct AzurePr {
+    client: client::AdoClient,
+    pub(super) number: u64,
+    pub(super) org: String,
+    pub(super) repo_name: String,
+    pub(super) base_ref: String,
+    pub(super) head_ref: String,
+    org_url: String,
+    project: String,
+}
+
+impl AzurePr {
+    fn resolved(
+        repository: &AzureRepository,
+        client: client::AdoClient,
+        number: u64,
+        meta: client::AzurePrMeta,
+    ) -> Self {
+        Self {
+            client,
+            number,
+            org: repository.org.clone(),
+            repo_name: if meta.repo_name.is_empty() {
+                repository.repo.clone()
+            } else {
+                meta.repo_name
+            },
+            base_ref: strip_ref_prefix(&meta.target_ref),
+            head_ref: strip_ref_prefix(&meta.source_ref),
+            org_url: repository.org_url.clone(),
+            project: repository.project.clone(),
+        }
+    }
 }
 
 pub(super) fn parse_pr_url(url: HttpUrl<'_>) -> Option<AzurePrReference> {
@@ -151,68 +187,36 @@ fn parse_ssh_repository(input: &str) -> Option<AzureRepository> {
     })
 }
 
-fn strip_http_userinfo(input: &str) -> std::borrow::Cow<'_, str> {
-    let Some((scheme, rest)) = input.split_once("://") else {
-        return input.into();
-    };
-    let authority_end = rest.find('/').unwrap_or(rest.len());
-    let authority = &rest[..authority_end];
-    let Some((_, host)) = authority.rsplit_once('@') else {
-        return input.into();
-    };
-    format!("{}://{}{}", scheme, host, &rest[authority_end..]).into()
-}
-
-pub(super) fn fetch_pr_info(reference: &AzurePrReference) -> Result<PrInfo, PrError> {
+pub(super) fn fetch_pr_info(reference: &AzurePrReference) -> Result<AzurePr, PrError> {
     let az = &reference.repository;
     let id = reference.id;
-    let meta = client::fetch_pr_metadata(&az.org_url, &az.project, &az.repo, id)?;
+    let (client, meta) = client::resolve_pr(&az.org_url, &az.project, &az.repo, id)?;
 
-    Ok(PrInfo {
-        provider: PrProvider::Azure {
-            org_url: az.org_url.clone(),
-            project: az.project.clone(),
-        },
-        number: id,
-        repo_owner: az.org.clone(),
-        repo_name: if meta.repo_name.is_empty() {
-            az.repo.clone()
-        } else {
-            meta.repo_name
-        },
-        base_ref: strip_ref_prefix(&meta.target_ref),
-        head_ref: strip_ref_prefix(&meta.source_ref),
-        base_repo_owner: az.org.clone(),
-        head_repo_owner: Some(az.org.clone()),
-    })
+    Ok(AzurePr::resolved(az, client, id, meta))
 }
 
 pub(super) fn detect_current_branch_pr(
     repository: &AzureRepository,
     branch: &str,
-) -> Result<String, PrError> {
-    let id = client::detect_active_pr(
+) -> Result<AzurePr, PrError> {
+    let (client, id, meta) = client::detect_active_pr(
         &repository.org_url,
         &repository.project,
         &repository.repo,
         branch,
     )?;
-    Ok(id.to_string())
+    Ok(AzurePr::resolved(repository, client, id, meta))
 }
 
-pub(super) fn load_pr_file_diffs(
-    org_url: &str,
-    project: &str,
-    pr: &PrInfo,
-) -> Result<Vec<FileDiff>, PrError> {
-    client::load_pr_file_diffs(org_url, project, &pr.repo_name, pr.number)
+pub(super) fn load_pr_file_diffs(pr: &AzurePr) -> Result<Vec<FileDiff>, PrError> {
+    client::load_pr_file_diffs(&pr.client, pr.number)
 }
 
-pub(super) fn file_web_url(org_url: &str, project: &str, pr: &PrInfo, filename: &str) -> String {
+pub(super) fn file_web_url(pr: &AzurePr, filename: &str) -> String {
     format!(
         "{}/{}/_git/{}/pullrequest/{}?path={}",
-        org_url,
-        project,
+        pr.org_url,
+        pr.project,
         pr.repo_name,
         pr.number,
         percent_encode(&format!("/{}", filename))
