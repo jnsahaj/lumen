@@ -157,9 +157,19 @@ jobs:
         with:
           name: release-manifests
 
+      # Retried because transient mirror outages (ports.ubuntu.com) have
+      # failed this step before; a release shouldn't die on an apt blip.
       - name: Install musl toolchain
         if: ${{ contains(matrix.target, 'musl') }}
-        run: sudo apt-get update && sudo apt-get install -y musl-tools
+        run: |
+          for attempt in 1 2 3; do
+            sudo apt-get update -o Acquire::Retries=3 \
+              && sudo apt-get install -y -o Acquire::Retries=3 musl-tools \
+              && break
+            echo "apt attempt $attempt failed; retrying in 30s"
+            sleep 30
+          done
+          command -v musl-gcc
 
       # The runner's preinstalled rustup is used directly rather than a
       # third-party toolchain action — one less supply-chain dependency.
