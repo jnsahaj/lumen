@@ -6,13 +6,28 @@
 #   - dry_run: build everything and upload artifacts, but do NOT push a tag,
 #     create a release, or publish anywhere. Use this to test the pipeline.
 #
-# One-time setup required for the publish steps:
-#   - crates.io: either add a CARGO_REGISTRY_TOKEN repo secret, or configure
-#     Trusted Publishing on crates.io (Settings -> Trusted Publishing) for
-#     repository jnsahaj/lumen and workflow file release.yml.
-#   - Homebrew: add a TAP_GITHUB_TOKEN repo secret — a fine-grained PAT with
-#     "Contents: read and write" on jnsahaj/homebrew-lumen. If missing, the
-#     Homebrew step is skipped (everything else still works).
+# One-time setup required for the publish steps (all publish jobs run in the
+# "release" environment — restricted to main — so add secrets as environment
+# secrets on that environment, not repo secrets):
+#   - crates.io: either add a CARGO_REGISTRY_TOKEN environment secret, or
+#     configure Trusted Publishing on crates.io (Settings -> Trusted
+#     Publishing) for repository jnsahaj/lumen, workflow file release.yml,
+#     environment "release".
+#   - Homebrew: add a TAP_GITHUB_TOKEN environment secret — a fine-grained
+#     PAT with "Contents: read and write" on jnsahaj/homebrew-lumen. If
+#     missing, the Homebrew step is skipped (everything else still works).
+#
+# Supply-chain hardening applied here (keep these invariants when editing):
+#   - Every action is pinned to a full commit SHA (mutable tags can be
+#     repointed by a compromised action maintainer — tj-actions, March 2025).
+#   - No build caches: release binaries are always built from pristine
+#     sources so a poisoned cache entry can never reach a shipped artifact.
+#   - GITHUB_TOKEN starts from zero permissions; each job requests only what
+#     it needs, and checkouts don't persist credentials unless the job pushes.
+#   - Untrusted input (the version string) is validated first and only ever
+#     reaches shell via env vars, never ${{ }} interpolation in run scripts.
+#   - Each tarball gets a signed build provenance attestation; verify with:
+#     gh attestation verify lumen-<target>.tar.gz --repo jnsahaj/lumen
 
 name: Release
 
@@ -45,9 +60,20 @@ jobs:
     name: Prepare v${{ inputs.version }}
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: write # push the release commit and tag
     steps:
-      - uses: actions/checkout@v6
+      # persist-credentials is needed here: this job pushes the release
+      # commit and tag.
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # zizmor: ignore[artipacked,ref-version-mismatch] # v6.0.3
+        with:
+          persist-credentials: true
+
+      - name: Ensure release is dispatched from main
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Releases must be dispatched from main (got $GITHUB_REF)"
+            exit 1
+          fi
 
       - name: Validate version
         run: |
@@ -73,7 +99,7 @@ jobs:
           grep -A1 '^name = "lumen"$' Cargo.lock
 
       - name: Upload bumped manifests
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-manifests
           path: |
@@ -114,15 +140,20 @@ jobs:
             os: ubuntu-22.04-arm
     runs-on: ${{ matrix.os }}
     permissions:
-      contents: read
+      contents: read # checkout only
+      id-token: write # sign build provenance attestations (Sigstore OIDC)
+      attestations: write # store the attestations
     env:
+      TARGET: ${{ matrix.target }}
       CC_x86_64_unknown_linux_musl: musl-gcc
       CC_aarch64_unknown_linux_musl: musl-gcc
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
 
       - name: Use bumped manifests
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: release-manifests
 
@@ -130,23 +161,20 @@ jobs:
         if: ${{ contains(matrix.target, 'musl') }}
         run: sudo apt-get update && sudo apt-get install -y musl-tools
 
+      # The runner's preinstalled rustup is used directly rather than a
+      # third-party toolchain action — one less supply-chain dependency.
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-
-      # Vendored OpenSSL + libgit2 + tree-sitter grammars make cold builds
-      # slow; the cache mostly pays off when a dry run precedes the release.
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: ${{ matrix.target }}
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+          rustup target add "$TARGET"
 
       - name: Build
-        run: cargo build --release --locked --target ${{ matrix.target }}
+        run: cargo build --release --locked --target "$TARGET"
 
       - name: Smoke test
         run: |
-          out=$(./target/${{ matrix.target }}/release/lumen --version)
+          out=$("./target/$TARGET/release/lumen" --version)
           echo "$out"
           echo "$out" | grep -qF "$VERSION" || {
             echo "::error::Binary reports wrong version"
@@ -155,8 +183,8 @@ jobs:
 
       - name: Package
         run: |
-          tarball="lumen-${{ matrix.target }}.tar.gz"
-          tar -czf "$tarball" -C "target/${{ matrix.target }}/release" lumen
+          tarball="lumen-$TARGET.tar.gz"
+          tar -czf "$tarball" -C "target/$TARGET/release" lumen
           if command -v sha256sum >/dev/null; then
             sha256sum "$tarball" > "$tarball.sha256"
           else
@@ -164,8 +192,13 @@ jobs:
           fi
           cat "$tarball.sha256"
 
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-path: lumen-${{ matrix.target }}.tar.gz
+
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: lumen-${{ matrix.target }}
           path: |
@@ -178,13 +211,12 @@ jobs:
     if: ${{ !inputs.dry_run }}
     needs: [prepare, build]
     runs-on: ubuntu-latest
+    environment: release
     permissions:
-      contents: write
+      contents: write # create the GitHub release and upload assets
     steps:
-      - uses: actions/checkout@v6
-
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: lumen-*
           path: dist
@@ -195,6 +227,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release create "v$VERSION" \
+            --repo "$GITHUB_REPOSITORY" \
             --title "v$VERSION" \
             --generate-notes \
             --verify-tag \
@@ -205,24 +238,28 @@ jobs:
     if: ${{ !inputs.dry_run }}
     needs: [prepare, build]
     runs-on: ubuntu-latest
+    environment: release
     permissions:
-      contents: read
+      contents: read # checkout only
       id-token: write # for crates.io Trusted Publishing
     env:
       HAS_CLASSIC_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN != '' }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           ref: v${{ inputs.version }}
+          persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
 
       # Prefer a classic token if configured; otherwise use Trusted Publishing.
       - name: Authenticate with crates.io (Trusted Publishing)
         if: ${{ env.HAS_CLASSIC_TOKEN != 'true' }}
         id: auth
-        uses: rust-lang/crates-io-auth-action@v1
-
+        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1
       - name: Publish
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN || steps.auth.outputs.token }}
@@ -233,33 +270,35 @@ jobs:
     if: ${{ !inputs.dry_run }}
     needs: [prepare, release]
     runs-on: ubuntu-latest
+    environment: release
     permissions: {}
+    env:
+      HAS_TAP_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN != '' }}
     steps:
-      - name: Check for tap token
-        id: token
-        run: echo "have=${{ secrets.TAP_GITHUB_TOKEN != '' }}" >> "$GITHUB_OUTPUT"
-
       - name: Skip notice
-        if: ${{ steps.token.outputs.have != 'true' }}
+        if: ${{ env.HAS_TAP_TOKEN != 'true' }}
         run: echo "::warning::TAP_GITHUB_TOKEN not set — skipping Homebrew tap update"
 
+      # persist-credentials is needed here: this job pushes the updated
+      # formula to the tap repo (using the fine-grained tap token only).
       - name: Checkout tap
-        if: ${{ steps.token.outputs.have == 'true' }}
-        uses: actions/checkout@v6
+        if: ${{ env.HAS_TAP_TOKEN == 'true' }}
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # zizmor: ignore[artipacked,ref-version-mismatch] # v6.0.3
         with:
           repository: jnsahaj/homebrew-lumen
           token: ${{ secrets.TAP_GITHUB_TOKEN }}
+          persist-credentials: true
 
       - name: Download checksums
-        if: ${{ steps.token.outputs.have == 'true' }}
-        uses: actions/download-artifact@v4
+        if: ${{ env.HAS_TAP_TOKEN == 'true' }}
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: lumen-*
           path: dist
           merge-multiple: true
 
       - name: Update formula
-        if: ${{ steps.token.outputs.have == 'true' }}
+        if: ${{ env.HAS_TAP_TOKEN == 'true' }}
         run: |
           sha() { awk '{print $1}' "dist/lumen-$1.tar.gz.sha256"; }
           url() { echo "https://github.com/jnsahaj/lumen/releases/download/v$VERSION/lumen-$1.tar.gz"; }
