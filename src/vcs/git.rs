@@ -137,16 +137,15 @@ impl GitBackend {
     /// Open a git repository at the given path.
     /// Uses git2::Repository::discover to find the repo from any subdirectory.
     pub fn new(path: &Path) -> Result<Self, VcsError> {
-        let discover_result = Repository::discover(path);//map_err(|_| VcsError::NotARepository)?;
+        let discover_result = Repository::discover(path); //map_err(|_| VcsError::NotARepository)?;
         return match discover_result {
-            Ok(repo) =>  Ok(GitBackend { repo }),
+            Ok(repo) => Ok(GitBackend { repo }),
             Err(error) => {
                 // Print libgit2 so there is a chance to diagnose any errors with git
                 println!("Error on repository discovery: {error:?}");
-                return Err(VcsError::NotARepository)
-            },
+                return Err(VcsError::NotARepository);
+            }
         };
-
     }
 
     /// Open a git repository from the current working directory.
@@ -537,6 +536,17 @@ impl VcsBackend for GitBackend {
         }
     }
 
+    fn origin_url(&self) -> Result<Option<String>, VcsError> {
+        match self.repo.find_remote("origin") {
+            Ok(remote) => Ok(remote.url().map(str::to_owned)),
+            Err(error) if error.code() == git2::ErrorCode::NotFound => Ok(None),
+            Err(error) => Err(VcsError::Other(format!(
+                "failed to read origin remote: {}",
+                error
+            ))),
+        }
+    }
+
     fn get_commit_log_for_fzf(&self) -> Result<String, VcsError> {
         let mut revwalk = self
             .repo
@@ -841,6 +851,21 @@ mod tests {
 
         let branch = backend.get_current_branch().expect("should get branch");
         assert!(branch.is_some());
+    }
+
+    #[test]
+    fn test_origin_url_reads_origin_remote() {
+        let repo = RepoGuard::new();
+        let raw_repo = Repository::open(&repo.dir).expect("should open repo");
+        raw_repo
+            .remote("origin", "git@github.com:owner/repo.git")
+            .expect("should add origin");
+        let backend = GitBackend::from_cwd().expect("should open repo");
+
+        assert_eq!(
+            backend.origin_url().expect("should read origin").as_deref(),
+            Some("git@github.com:owner/repo.git")
+        );
     }
 
     #[test]

@@ -83,6 +83,17 @@ pub trait VcsBackend {
     /// Get current branch name (or bookmark for jj).
     fn get_current_branch(&self) -> Result<Option<String>, VcsError>;
 
+    /// Resolve the source branch used to detect a pull request.
+    /// Backends may infer a nearby branch when the working copy is detached
+    /// from the branch ref itself.
+    fn get_pr_source_branch(&self) -> Result<Option<String>, VcsError> {
+        self.get_current_branch()
+    }
+
+    /// Get the canonical URL of the `origin` remote, when the backend exposes
+    /// remotes. Backends without a remote concept return `None`.
+    fn origin_url(&self) -> Result<Option<String>, VcsError>;
+
     /// Get commit log formatted for fzf selection.
     fn get_commit_log_for_fzf(&self) -> Result<String, VcsError>;
 

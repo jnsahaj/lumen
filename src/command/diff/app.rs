@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::io::{self, IsTerminal, Write};
 use std::sync::mpsc::TryRecvError;
 use std::time::Duration;
@@ -36,11 +36,11 @@ fn open_tui_writer() -> io::Result<Box<dyn Write + Send>> {
 }
 
 use super::annotation::{AnnotationEditor, AnnotationEditorResult};
+use super::app_mode::AppMode;
 use super::coordinates::{extract_selected_text, PanelLayout};
-use super::git::{
-    get_current_branch, load_file_diffs, load_pr_file_diffs, load_single_commit_diffs,
-};
+use super::git::{get_current_branch, load_file_diffs, load_single_commit_diffs};
 use super::highlight;
+use super::pr_provider::{PrError, ViewedFileSync};
 use super::render::{
     render_diff, render_empty_state, truncate_path, FilePickerItem, KeyBind, KeyBindSection, Modal,
     ModalContent, ModalFileStatus, ModalResult,
@@ -52,9 +52,7 @@ use super::types::{
     SelectionMode, SidebarItem,
 };
 use super::watcher::{setup_watcher, WatchEvent};
-use super::{
-    fetch_viewed_files, mark_file_as_viewed_async, unmark_file_as_viewed_async, DiffOptions, PrInfo,
-};
+use super::{DiffOptions, PrInfo};
 use spinoff::{spinners, Color, Spinner};
 
 use crate::commit_reference::CommitReference;
@@ -250,24 +248,32 @@ fn format_annotation_preview(annotation: &super::state::Annotation) -> String {
     }
 }
 
-pub fn run_app_with_pr(
-    options: DiffOptions,
-    pr_info: PrInfo,
-    backend: &dyn VcsBackend,
-) -> io::Result<()> {
-    match load_pr_file_diffs(&pr_info) {
-        Ok(file_diffs) => run_app_internal(options, Some(pr_info), file_diffs, None, backend),
-        Err(_) => std::process::exit(1),
-    }
+pub fn run_app_with_pr(options: DiffOptions, pr_info: PrInfo) -> io::Result<()> {
+    let file_diffs = load_filtered_pr_diffs(&pr_info, options.file.as_deref())
+        .map_err(|error| io::Error::other(format!("failed to load PR diffs: {error}")))?;
+    run_app_internal(
+        options,
+        file_diffs,
+        AppMode::PullRequest {
+            pr: Box::new(pr_info),
+        },
+    )
 }
 
-pub fn run_app(
-    options: DiffOptions,
-    pr_info: Option<PrInfo>,
-    backend: &dyn VcsBackend,
-) -> io::Result<()> {
+fn load_filtered_pr_diffs(
+    pr: &PrInfo,
+    filter: Option<&[String]>,
+) -> Result<Vec<super::types::FileDiff>, PrError> {
+    let mut diffs = pr.load_file_diffs()?;
+    if let Some(filter) = filter {
+        diffs.retain(|diff| filter.contains(&diff.filename));
+    }
+    Ok(diffs)
+}
+
+pub fn run_app(options: DiffOptions, backend: &dyn VcsBackend) -> io::Result<()> {
     let file_diffs = load_file_diffs(&options, backend);
-    run_app_internal(options, pr_info, file_diffs, None, backend)
+    run_app_internal(options, file_diffs, AppMode::Local { backend })
 }
 
 pub fn run_app_stacked(
@@ -278,27 +284,80 @@ pub fn run_app_stacked(
     // Load the first commit's diff
     let first_commit = &commits[0];
     let file_diffs = load_single_commit_diffs(&first_commit.commit_id, &options.file, backend);
-    run_app_internal(options, None, file_diffs, Some(commits), backend)
+    run_app_internal(
+        options,
+        file_diffs,
+        AppMode::Stacked {
+            backend,
+            initial_commits: commits,
+        },
+    )
 }
 
-/// Sync viewed files from GitHub to local state
-fn sync_viewed_files_from_github(pr_info: &PrInfo, state: &mut AppState) {
-    if let Ok(viewed_paths) = fetch_viewed_files(pr_info) {
-        state.viewed_files.clear();
-        for (idx, diff) in state.file_diffs.iter().enumerate() {
-            if viewed_paths.contains(&diff.filename) {
-                state.viewed_files.insert(idx);
-            }
+fn apply_viewed_paths(
+    state: &mut AppState,
+    viewed_paths: Option<&HashSet<String>>,
+) -> Option<usize> {
+    let viewed_paths = viewed_paths?;
+    state.viewed_files = state
+        .file_diffs
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, diff)| viewed_paths.contains(&diff.filename).then_some(idx))
+        .collect();
+    Some(state.viewed_files.len())
+}
+
+/// Sync per-file viewed state from the hosting provider into local state.
+/// `None` means the provider does not support viewed-file synchronization.
+fn sync_viewed_files_from_provider(
+    state: &mut AppState,
+    viewed_sync: Option<&ViewedFileSync>,
+) -> Result<Option<usize>, String> {
+    let Some(sync) = viewed_sync else {
+        return Ok(None);
+    };
+    let viewed_paths = sync.viewed_paths().map_err(|error| error.to_string())?;
+    Ok(apply_viewed_paths(state, Some(&viewed_paths)))
+}
+
+fn sync_viewed_files_on_startup(state: &mut AppState, viewed_sync: Option<&ViewedFileSync>) {
+    if viewed_sync.is_none() {
+        return;
+    }
+
+    let mut spinner = Spinner::new(
+        spinners::Dots,
+        format!("Syncing viewed status for {} files", state.file_diffs.len()),
+        Color::Cyan,
+    );
+    match sync_viewed_files_from_provider(state, viewed_sync) {
+        Ok(Some(viewed_count)) => {
+            spinner.success(&format!("{} files marked as viewed", viewed_count));
+        }
+        Ok(None) => {
+            spinner.fail("Viewed status sync is unavailable");
+        }
+        Err(error) => {
+            spinner.fail(&format!("Failed to sync viewed status: {error}"));
         }
     }
 }
 
+fn apply_pr_reload(
+    state: &mut AppState,
+    result: Result<Vec<super::types::FileDiff>, PrError>,
+    changed_files: Option<&HashSet<String>>,
+) -> Result<(), PrError> {
+    let file_diffs = result?;
+    state.reload(file_diffs, changed_files);
+    Ok(())
+}
+
 fn run_app_internal(
     options: DiffOptions,
-    pr_info: Option<PrInfo>,
     file_diffs: Vec<super::types::FileDiff>,
-    stacked_commits: Option<Vec<StackedCommitInfo>>,
-    backend: &dyn VcsBackend,
+    mut mode: AppMode<'_>,
 ) -> io::Result<()> {
     theme::init(options.theme.as_deref());
     highlight::init();
@@ -306,13 +365,15 @@ fn run_app_internal(
     // Initialize state before TUI so we can sync viewed files
     let mut state = AppState::new(file_diffs, options.focus.as_deref());
     state.settings.wrap = options.wrap;
-    state.set_vcs_name(backend.name());
+    state.set_vcs_name(mode.backend().map_or("pr", VcsBackend::name));
 
     // Set diff reference for annotation export context
-    let diff_ref_str = if let Some(pr) = &pr_info {
+    let diff_ref_str = if let Some(pr) = mode.pr() {
         Some(format!(
             "PR #{} ({}...{})",
-            pr.number, pr.base_ref, pr.head_ref
+            pr.number(),
+            pr.base_ref(),
+            pr.head_ref()
         ))
     } else {
         options.reference.as_ref().map(|r| match r {
@@ -325,20 +386,15 @@ fn run_app_internal(
     state.set_diff_reference(diff_ref_str);
 
     // Initialize stacked mode if commits were provided
-    if let Some(commits) = stacked_commits {
+    if let Some(commits) = mode.take_initial_commits() {
         state.init_stacked_mode(commits);
     }
 
-    // Load viewed files from GitHub on startup in PR mode (before TUI starts)
-    if let Some(ref pr) = pr_info {
-        let mut spinner = Spinner::new(
-            spinners::Dots,
-            format!("Syncing viewed status for {} files", state.file_diffs.len()),
-            Color::Cyan,
-        );
-        sync_viewed_files_from_github(pr, &mut state);
-        let viewed_count = state.viewed_files.len();
-        spinner.success(&format!("{} files marked as viewed", viewed_count));
+    let mut viewed_sync = mode.pr().and_then(ViewedFileSync::new);
+
+    // Load viewed files from the provider on startup in PR mode (before TUI starts).
+    if mode.pr().is_some() {
+        sync_viewed_files_on_startup(&mut state, viewed_sync.as_ref());
     }
 
     // Now enter TUI mode. Use /dev/tty when stdout is captured so the
@@ -357,8 +413,8 @@ fn run_app_internal(
 
     let mut terminal = Terminal::new(CrosstermBackend::new(tui_writer))?;
 
-    state.watching = options.watch && pr_info.is_none();
-    let (mut _watch_handle, mut watch_rx) = if state.watching && pr_info.is_none() {
+    state.watching = options.watch && !mode.is_pull_request();
+    let (mut _watch_handle, mut watch_rx) = if state.watching {
         if let Some((handle, rx)) = setup_watcher() {
             (Some(handle), Some(rx))
         } else {
@@ -374,8 +430,31 @@ fn run_app_internal(
     let mut pending_watch_event: Option<WatchEvent> = None;
     let mut pending_events: VecDeque<Event> = VecDeque::new();
     let mut send_annotations_on_exit = false;
+    let branch_fallback = mode
+        .backend()
+        .map(get_current_branch)
+        .unwrap_or_else(|| "unknown".to_string());
 
     'main: loop {
+        if let Some(sync) = viewed_sync.as_mut() {
+            for completion in sync.drain() {
+                if let Err(error) = completion.result {
+                    let reconciliation =
+                        sync_viewed_files_from_provider(&mut state, Some(sync)).err();
+                    let reconciliation = reconciliation
+                        .map(|error| format!("\n\nCould not refresh viewed status: {error}"))
+                        .unwrap_or_default();
+                    active_modal = Some(Modal::info(
+                        "Viewed status update failed",
+                        format!(
+                            "Could not update {}.\n\n{error}{reconciliation}",
+                            completion.path
+                        ),
+                    ));
+                }
+            }
+        }
+
         if let Some(ref rx) = watch_rx {
             match rx.try_recv() {
                 Ok(event) => {
@@ -388,26 +467,46 @@ fn run_app_internal(
         }
 
         if state.needs_reload {
-            let file_diffs = if let Some(ref pr) = pr_info {
-                // In PR mode, reload from GitHub
-                match load_pr_file_diffs(pr) {
-                    Ok(diffs) => diffs,
-                    Err(e) => {
-                        eprintln!("Warning: failed to reload PR diffs: {}", e);
-                        Vec::new()
+            // Clear this before loading so a provider failure does not retry every frame.
+            state.needs_reload = false;
+            match &mode {
+                AppMode::PullRequest { pr } => {
+                    let changed_files = pending_watch_event
+                        .as_ref()
+                        .map(|event| &event.changed_files);
+                    match apply_pr_reload(
+                        &mut state,
+                        load_filtered_pr_diffs(pr, options.file.as_deref()),
+                        changed_files,
+                    ) {
+                        Ok(()) => {
+                            pending_watch_event.take();
+                            if let Err(error) =
+                                sync_viewed_files_from_provider(&mut state, viewed_sync.as_ref())
+                            {
+                                active_modal = Some(Modal::info(
+                                    "Viewed status sync failed",
+                                    format!(
+                                        "The diff was reloaded, but viewed status could not be synced.\n\n{error}"
+                                    ),
+                                ));
+                            }
+                        }
+                        Err(error) => {
+                            active_modal = Some(Modal::info(
+                                "Reload failed",
+                                format!(
+                                    "Could not reload PR diffs. The current diff and review state were preserved.\n\n{error}"
+                                ),
+                            ));
+                        }
                     }
                 }
-            } else {
-                load_file_diffs(&options, backend)
-            };
-
-            // Pass changed files to reload so it can unmark them from viewed
-            let changed_files = pending_watch_event.take().map(|e| e.changed_files);
-            state.reload(file_diffs, changed_files.as_ref());
-
-            // Re-sync viewed files from GitHub in PR mode
-            if let Some(ref pr) = pr_info {
-                sync_viewed_files_from_github(pr, &mut state);
+                AppMode::Local { backend } | AppMode::Stacked { backend, .. } => {
+                    let file_diffs = load_file_diffs(&options, *backend);
+                    let changed_files = pending_watch_event.take().map(|event| event.changed_files);
+                    state.reload(file_diffs, changed_files.as_ref());
+                }
             }
         }
 
@@ -434,12 +533,12 @@ fn run_app_internal(
                 .viewed_hunks
                 .get(&diff.filename)
                 .unwrap_or(&empty_viewed_hunks);
-            let branch_fallback = get_current_branch(backend);
             let commit_ref = state.diff_reference.as_deref().unwrap_or(&branch_fallback);
             let row_offset = std::cell::Cell::new(0usize);
             let gaps_cell = std::cell::RefCell::new(Vec::new());
             let rects_cell = std::cell::RefCell::new(Vec::new());
-            let editor_rect_cell: std::cell::Cell<Option<ratatui::layout::Rect>> = std::cell::Cell::new(None);
+            let editor_rect_cell: std::cell::Cell<Option<ratatui::layout::Rect>> =
+                std::cell::Cell::new(None);
             terminal.draw(|frame| {
                 let (offset, gaps, rects, er) = render_diff(
                     frame,
@@ -468,14 +567,14 @@ fn run_app_internal(
                     state.diff_fullscreen,
                     &state.search_state,
                     commit_ref,
-                    pr_info.as_ref(),
+                    mode.pr(),
                     state.focused_hunk,
-                    &hunks,
+                    hunks,
                     state.stacked_mode,
                     state.current_commit(),
                     state.current_commit_index,
                     state.stacked_commits.len(),
-                    &side_by_side,
+                    side_by_side,
                     state.vcs_name,
                     &state.annotations,
                     &state.selection,
@@ -949,9 +1048,11 @@ fn run_app_internal(
                                 // Left arrow click (first 4 columns to cover " < ")
                                 if mouse.column < 4 && state.current_commit_index > 0 {
                                     let new_index = state.current_commit_index - 1;
-                                    navigate_stacked_commit(
-                                        &mut state, new_index, &options, backend,
-                                    );
+                                    if let Some(backend) = mode.stacked_backend() {
+                                        navigate_stacked_commit(
+                                            &mut state, new_index, &options, backend,
+                                        );
+                                    }
                                 }
                                 // Right arrow click (last 4 columns to cover " > ")
                                 else if mouse.column >= term_size.width.saturating_sub(4)
@@ -959,9 +1060,11 @@ fn run_app_internal(
                                         < state.stacked_commits.len().saturating_sub(1)
                                 {
                                     let new_index = state.current_commit_index + 1;
-                                    navigate_stacked_commit(
-                                        &mut state, new_index, &options, backend,
-                                    );
+                                    if let Some(backend) = mode.stacked_backend() {
+                                        navigate_stacked_commit(
+                                            &mut state, new_index, &options, backend,
+                                        );
+                                    }
                                 }
                             } else if state.show_sidebar
                                 && mouse.column < sidebar_width
@@ -1332,14 +1435,22 @@ fn run_app_internal(
                                 && state.current_commit_index < state.stacked_commits.len() - 1
                             {
                                 let new_index = state.current_commit_index + 1;
-                                navigate_stacked_commit(&mut state, new_index, &options, backend);
+                                if let Some(backend) = mode.stacked_backend() {
+                                    navigate_stacked_commit(
+                                        &mut state, new_index, &options, backend,
+                                    );
+                                }
                             }
                         }
                         // Stacked mode: navigate to previous commit
                         KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                             if state.stacked_mode && state.current_commit_index > 0 {
                                 let new_index = state.current_commit_index - 1;
-                                navigate_stacked_commit(&mut state, new_index, &options, backend);
+                                if let Some(backend) = mode.stacked_backend() {
+                                    navigate_stacked_commit(
+                                        &mut state, new_index, &options, backend,
+                                    );
+                                }
                             }
                         }
                         KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -1453,7 +1564,7 @@ fn run_app_internal(
                             }
                         }
                         KeyCode::Char('w') => {
-                            if pr_info.is_some() {
+                            if mode.is_pull_request() {
                                 // PR mode doesn't support watching
                             } else {
                                 state.watching = !state.watching;
@@ -1543,13 +1654,8 @@ fn run_app_internal(
                                                 state.viewed_files.insert(file_idx);
                                             }
 
-                                            // Fire off async API call if in PR mode
-                                            if let Some(ref pr) = pr_info {
-                                                if was_viewed {
-                                                    unmark_file_as_viewed_async(pr, &filename);
-                                                } else {
-                                                    mark_file_as_viewed_async(pr, &filename);
-                                                }
+                                            if let Some(sync) = viewed_sync.as_mut() {
+                                                sync.set(&filename, !was_viewed);
                                             }
                                         }
                                         SidebarItem::Directory { path, .. } => {
@@ -1587,15 +1693,10 @@ fn run_app_internal(
                                                 }
                                             }
 
-                                            // Fire off async API calls if in PR mode
-                                            if let Some(ref pr) = pr_info {
+                                            if let Some(sync) = viewed_sync.as_mut() {
                                                 for &idx in &child_indices {
                                                     let filename = &state.file_diffs[idx].filename;
-                                                    if all_viewed {
-                                                        unmark_file_as_viewed_async(pr, filename);
-                                                    } else {
-                                                        mark_file_as_viewed_async(pr, filename);
-                                                    }
+                                                    sync.set(filename, !all_viewed);
                                                 }
                                             }
                                         }
@@ -1654,13 +1755,8 @@ fn run_app_internal(
                                     }
                                 }
 
-                                // Fire off async API call if in PR mode
-                                if let Some(ref pr) = pr_info {
-                                    if was_viewed {
-                                        unmark_file_as_viewed_async(pr, &filename);
-                                    } else {
-                                        mark_file_as_viewed_async(pr, &filename);
-                                    }
+                                if let Some(sync) = viewed_sync.as_mut() {
+                                    sync.set(&filename, !was_viewed);
                                 }
                             }
                         }
@@ -1904,10 +2000,8 @@ fn run_app_internal(
                         }
                         KeyCode::Char('e') => {
                             if !state.file_diffs.is_empty() {
-                                let _ = execute!(
-                                    terminal.backend_mut(),
-                                    PopKeyboardEnhancementFlags
-                                );
+                                let _ =
+                                    execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags);
                                 execute!(
                                     terminal.backend_mut(),
                                     DisableMouseCapture,
@@ -1956,23 +2050,18 @@ fn run_app_internal(
                                 )?;
                                 let _ = execute!(
                                     terminal.backend_mut(),
-                                    PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+                                    PushKeyboardEnhancementFlags(
+                                        KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                                    )
                                 );
                                 terminal.clear()?;
                             }
                         }
                         KeyCode::Char('o') => {
-                            if let Some(ref pr) = pr_info {
+                            if let Some(pr) = mode.pr() {
                                 if !state.file_diffs.is_empty() {
                                     let filename = &state.file_diffs[state.current_file].filename;
-                                    let file_url = format!(
-                                        "https://github.com/{}/{}/pull/{}/files#diff-{}",
-                                        pr.repo_owner,
-                                        pr.repo_name,
-                                        pr.number,
-                                        generate_file_anchor(filename)
-                                    );
-                                    let _ = open_url(&file_url);
+                                    let _ = open_url(&pr.file_web_url(filename));
                                 }
                             }
                         }
@@ -2110,10 +2199,10 @@ fn run_app_internal(
                                                 key: "h/l or left/right",
                                                 description: "Scroll horizontally",
                                             },
-                                        KeyBind {
-                                            key: "w",
-                                            description: "Toggle watch mode",
-                                        },
+                                            KeyBind {
+                                                key: "w",
+                                                description: "Toggle watch mode",
+                                            },
                                             KeyBind {
                                                 key: "gg / G",
                                                 description: "Scroll to top / bottom",
@@ -2157,7 +2246,8 @@ fn run_app_internal(
                                             },
                                             KeyBind {
                                                 key: "ctrl+f",
-                                                description: "Global fuzzy search (all files, with preview)",
+                                                description:
+                                                    "Global fuzzy search (all files, with preview)",
                                             },
                                             KeyBind {
                                                 key: "n or down",
@@ -2242,10 +2332,57 @@ fn open_url(url: &str) -> io::Result<()> {
     Ok(())
 }
 
-fn generate_file_anchor(filename: &str) -> String {
-    use sha2::{Digest, Sha256};
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::command::diff::types::FileDiff;
 
-    let mut hasher = Sha256::new();
-    hasher.update(filename.as_bytes());
-    format!("{:x}", hasher.finalize())
+    fn state_with_one_viewed_file() -> AppState {
+        let mut state = AppState::new(
+            vec![FileDiff {
+                filename: "src/lib.rs".to_string(),
+                old_content: String::new(),
+                new_content: String::new(),
+                status: FileStatus::Modified,
+                is_binary: false,
+            }],
+            None,
+        );
+        state.viewed_files.insert(0);
+        state
+    }
+
+    #[test]
+    fn apply_viewed_paths_preserves_local_state_when_unsupported() {
+        let mut state = state_with_one_viewed_file();
+
+        let result = apply_viewed_paths(&mut state, None);
+
+        assert_eq!((result, state.viewed_files), (None, HashSet::from([0])));
+    }
+
+    #[test]
+    fn apply_viewed_paths_treats_empty_set_as_authoritative() {
+        let mut state = state_with_one_viewed_file();
+        let viewed_paths = HashSet::new();
+
+        let result = apply_viewed_paths(&mut state, Some(&viewed_paths));
+
+        assert_eq!((result, state.viewed_files), (Some(0), HashSet::new()));
+    }
+
+    #[test]
+    fn failed_pr_reload_preserves_current_state() {
+        let mut state = state_with_one_viewed_file();
+
+        let result = apply_pr_reload(
+            &mut state,
+            Err(PrError::Other("temporary failure".to_string())),
+            None,
+        );
+
+        assert!(result.is_err());
+        assert_eq!(state.file_diffs[0].filename, "src/lib.rs");
+        assert_eq!(state.viewed_files, HashSet::from([0]));
+    }
 }
