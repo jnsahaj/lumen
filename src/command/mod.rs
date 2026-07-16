@@ -21,6 +21,7 @@ pub enum CommandType<'a> {
     Explain {
         git_entity: GitEntity,
         query: Option<String>,
+        grouped: bool,
     },
     List {
         backend: &'a dyn VcsBackend,
@@ -46,10 +47,18 @@ impl LumenCommand {
 
     pub async fn execute(&self, command_type: CommandType<'_>) -> Result<(), LumenError> {
         match command_type {
-            CommandType::Explain { git_entity, query } => {
-                ExplainCommand { git_entity, query }
-                    .execute(&self.provider)
-                    .await
+            CommandType::Explain {
+                git_entity,
+                query,
+                grouped,
+            } => {
+                ExplainCommand {
+                    git_entity,
+                    query,
+                    grouped,
+                }
+                .execute(&self.provider)
+                .await
             }
             CommandType::List { backend } => ListCommand.execute(&self.provider, backend).await,
             CommandType::Draft {

@@ -96,6 +96,64 @@ impl AIPrompt {
         })
     }
 
+    pub fn build_grouped_explain_prompt(command: &ExplainCommand) -> Result<Self, AIPromptError> {
+        let system_prompt = String::from(indoc! {r#"
+            You are a code-review assistant that clusters a Git diff into logical groups
+            based on purpose (feature, refactor, tests, config, docs, chore, etc.).
+            Prefer more, smaller, focused groups over fewer large ones — split unrelated
+            changes into separate groups even within the same purpose.
+            Test files must be grouped together with the implementation they test, not
+            split out into a separate "tests" group.
+            Respond with ONLY a single valid JSON object. Do not use markdown code fences.
+            Do not include any prose before or after the JSON object.
+        "#});
+
+        let diff_block = match &command.git_entity {
+            GitEntity::Commit(commit) => {
+                formatdoc! {"
+                    Context - Commit:
+
+                    Message: {msg}
+                    Changes:
+                    ```diff
+                    {diff}
+                    ```
+                    ",
+                    msg = commit.message,
+                    diff = commit.diff
+                }
+            }
+            GitEntity::Diff(Diff::WorkingTree { diff, .. } | Diff::CommitsRange { diff, .. }) => {
+                formatdoc! {"
+                    Context - Changes:
+
+                    ```diff
+                    {diff}
+                    ```
+                    "
+                }
+            }
+        };
+
+        let user_prompt = formatdoc! {r#"
+            {diff_block}
+
+            Group the changes above into logical clusters and respond with ONLY a JSON object
+            matching this exact shape:
+            {{"groups":[{{"title":"string","files":["path/to/file",...],"summary":"1-3 sentence prose summary"}}],"overall_summary":"2-4 sentence prose summary, omit or use empty string if the diff is a single logical change"}}
+
+            `files` must be exact repo-relative paths copied verbatim from the diff's file headers.
+            Every changed file must appear in exactly one group. If the diff represents a single
+            logical change, return exactly one group.
+            "#
+        };
+
+        Ok(AIPrompt {
+            system_prompt,
+            user_prompt,
+        })
+    }
+
     pub fn build_draft_prompt(command: &DraftCommand) -> Result<Self, AIPromptError> {
         let GitEntity::Diff(Diff::WorkingTree { diff, .. }) = &command.git_entity else {
             return Err(AIPromptError(
@@ -167,5 +225,60 @@ impl AIPrompt {
             system_prompt,
             user_prompt,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn working_tree_command(diff: &str, grouped: bool) -> ExplainCommand {
+        ExplainCommand {
+            git_entity: GitEntity::Diff(Diff::WorkingTree {
+                staged: false,
+                diff: diff.to_string(),
+            }),
+            query: None,
+            grouped,
+        }
+    }
+
+    #[test]
+    fn build_explain_prompt_produces_plain_prompt_shape() {
+        let command = working_tree_command("diff --git a/src/a.rs b/src/a.rs", false);
+
+        let prompt = AIPrompt::build_explain_prompt(&command).unwrap();
+
+        assert!(prompt
+            .user_prompt
+            .contains("diff --git a/src/a.rs b/src/a.rs"));
+        assert!(prompt.user_prompt.contains("Key changes"));
+    }
+
+    #[test]
+    fn build_grouped_explain_prompt_embeds_diff_and_json_contract() {
+        let diff = "diff --git a/src/a.rs b/src/a.rs\n+++ b/src/a.rs";
+        let command = working_tree_command(diff, true);
+
+        let prompt = AIPrompt::build_grouped_explain_prompt(&command).unwrap();
+
+        assert!(prompt.user_prompt.contains(diff));
+        assert!(prompt.user_prompt.contains("JSON"));
+        assert!(prompt.user_prompt.contains("groups"));
+        assert!(prompt.user_prompt.contains("overall_summary"));
+    }
+
+    #[test]
+    fn build_grouped_explain_prompt_instructs_smaller_groups_and_colocated_tests() {
+        let command = working_tree_command("diff --git a/src/a.rs b/src/a.rs", true);
+
+        let prompt = AIPrompt::build_grouped_explain_prompt(&command).unwrap();
+
+        assert!(prompt
+            .system_prompt
+            .contains("more, smaller, focused groups"));
+        assert!(prompt
+            .system_prompt
+            .contains("Test files must be grouped together with the implementation they test"));
     }
 }
