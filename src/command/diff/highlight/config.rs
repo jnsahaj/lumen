@@ -233,5 +233,69 @@ pub static CONFIGS: Lazy<Vec<(&'static str, LanguageConfig)>> = Lazy::new(|| {
         &mut configs,
     );
 
+    load_config(
+        tree_sitter_c::LANGUAGE.into(),
+        "c",
+        C_HIGHLIGHTS,
+        "c",
+        &mut configs,
+    );
+
+    load_config(
+        tree_sitter_c::LANGUAGE.into(),
+        "c",
+        C_HIGHLIGHTS,
+        "h",
+        &mut configs,
+    );
+
+    load_config(
+        tree_sitter_cpp::LANGUAGE.into(),
+        "cpp",
+        CPP_HIGHLIGHTS,
+        "cpp",
+        &mut configs,
+    );
+
+    load_config(
+        tree_sitter_cpp::LANGUAGE.into(),
+        "cpp",
+        CPP_HIGHLIGHTS,
+        "cc",
+        &mut configs,
+    );
+
+    load_config(
+        tree_sitter_cpp::LANGUAGE.into(),
+        "cpp",
+        CPP_HIGHLIGHTS,
+        "cxx",
+        &mut configs,
+    );
+
+    load_config(
+        tree_sitter_cpp::LANGUAGE.into(),
+        "cpp",
+        CPP_HIGHLIGHTS,
+        "hpp",
+        &mut configs,
+    );
+
+    load_config(
+        tree_sitter_cpp::LANGUAGE.into(),
+        "cpp",
+        CPP_HIGHLIGHTS,
+        "hh",
+        &mut configs,
+    );
+
+    load_config(
+        tree_sitter_cpp::LANGUAGE.into(),
+        "cpp",
+        CPP_HIGHLIGHTS,
+        "hxx",
+        &mut configs,
+    );
+
     configs
 });

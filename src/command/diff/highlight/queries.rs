@@ -1028,3 +1028,271 @@ pub const ZIG_HIGHLIGHTS: &str = r#"
 ; Comments
 (comment) @comment
 "#;
+
+pub const C_HIGHLIGHTS: &str = r##"
+; Comments
+(comment) @comment
+
+; Strings and literals
+(string_literal) @string
+(system_lib_string) @string
+(char_literal) @string
+(number_literal) @number
+(true) @constant.builtin
+(false) @constant.builtin
+(null) @constant.builtin
+((identifier) @constant
+ (#match? @constant "^[A-Z][A-Z0-9_]*$"))
+
+; Types
+(type_identifier) @type
+(primitive_type) @type.builtin
+(sized_type_specifier) @type.builtin
+
+; Fields
+(field_identifier) @variable.member
+
+; Labels
+(statement_identifier) @label
+
+; Functions
+(call_expression function: (identifier) @function)
+(call_expression function: (field_expression field: (field_identifier) @function.method))
+(function_declarator declarator: (identifier) @function)
+(function_declarator declarator: (field_identifier) @function.method)
+(preproc_function_def name: (identifier) @function.macro)
+
+; Preprocessor directives
+"#define" @function.macro
+"#include" @function.macro
+"#if" @function.macro
+"#ifdef" @function.macro
+"#ifndef" @function.macro
+"#else" @function.macro
+"#elif" @function.macro
+"#endif" @function.macro
+(preproc_directive) @function.macro
+
+; Keywords
+"break" @keyword
+"case" @keyword
+"const" @keyword
+"continue" @keyword
+"default" @keyword
+"do" @keyword
+"else" @keyword
+"enum" @keyword
+"extern" @keyword
+"for" @keyword
+"goto" @keyword
+"if" @keyword
+"inline" @keyword
+"register" @keyword
+"restrict" @keyword
+"return" @keyword
+"sizeof" @keyword
+"static" @keyword
+"struct" @keyword
+"switch" @keyword
+"typedef" @keyword
+"union" @keyword
+"volatile" @keyword
+"while" @keyword
+
+; Operators
+"+" @operator
+"-" @operator
+"*" @operator
+"/" @operator
+"%" @operator
+"=" @operator
+"==" @operator
+"!=" @operator
+"<" @operator
+">" @operator
+"<=" @operator
+">=" @operator
+"&&" @operator
+"||" @operator
+"!" @operator
+"&" @operator
+"|" @operator
+"^" @operator
+"~" @operator
+"<<" @operator
+">>" @operator
+"+=" @operator
+"-=" @operator
+"*=" @operator
+"/=" @operator
+"++" @operator
+"--" @operator
+"->" @operator
+"?" @operator
+
+; Punctuation
+"(" @punctuation.bracket
+")" @punctuation.bracket
+"[" @punctuation.bracket
+"]" @punctuation.bracket
+"{" @punctuation.bracket
+"}" @punctuation.bracket
+"." @punctuation.delimiter
+"," @punctuation.delimiter
+";" @punctuation.delimiter
+":" @punctuation.delimiter
+"##;
+
+pub const CPP_HIGHLIGHTS: &str = r##"
+; Comments
+(comment) @comment
+
+; Strings and literals
+(string_literal) @string
+(raw_string_literal) @string
+(system_lib_string) @string
+(char_literal) @string
+(number_literal) @number
+(true) @constant.builtin
+(false) @constant.builtin
+(null) @constant.builtin
+((identifier) @constant
+ (#match? @constant "^[A-Z][A-Z0-9_]*$"))
+
+; Types
+(type_identifier) @type
+(primitive_type) @type.builtin
+(sized_type_specifier) @type.builtin
+(auto) @type.builtin
+((namespace_identifier) @type
+ (#match? @type "^[A-Z]"))
+(namespace_identifier) @module
+
+; Fields
+(field_identifier) @variable.member
+
+; Special variables
+(this) @variable.builtin
+
+; Functions
+(call_expression function: (identifier) @function)
+(call_expression function: (field_expression field: (field_identifier) @function.method))
+(call_expression function: (qualified_identifier name: (identifier) @function))
+(template_function name: (identifier) @function)
+(template_method name: (field_identifier) @function.method)
+(function_declarator declarator: (identifier) @function)
+(function_declarator declarator: (field_identifier) @function.method)
+(function_declarator declarator: (qualified_identifier name: (identifier) @function))
+(preproc_function_def name: (identifier) @function.macro)
+
+; Preprocessor directives
+"#define" @function.macro
+"#include" @function.macro
+"#if" @function.macro
+"#ifdef" @function.macro
+"#ifndef" @function.macro
+"#else" @function.macro
+"#elif" @function.macro
+"#endif" @function.macro
+(preproc_directive) @function.macro
+
+; Keywords
+"break" @keyword
+"case" @keyword
+"catch" @keyword
+"class" @keyword
+"co_await" @keyword
+"co_return" @keyword
+"co_yield" @keyword
+"concept" @keyword
+"const" @keyword
+"constexpr" @keyword
+"consteval" @keyword
+"constinit" @keyword
+"continue" @keyword
+"decltype" @keyword
+"default" @keyword
+"delete" @keyword
+"do" @keyword
+"else" @keyword
+"enum" @keyword
+"explicit" @keyword
+"extern" @keyword
+"final" @keyword
+"for" @keyword
+"friend" @keyword
+"goto" @keyword
+"if" @keyword
+"inline" @keyword
+"mutable" @keyword
+"namespace" @keyword
+"new" @keyword
+"noexcept" @keyword
+"operator" @keyword
+"override" @keyword
+"private" @keyword
+"protected" @keyword
+"public" @keyword
+"register" @keyword
+"requires" @keyword
+"return" @keyword
+"sizeof" @keyword
+"static" @keyword
+"static_assert" @keyword
+"struct" @keyword
+"switch" @keyword
+"template" @keyword
+"throw" @keyword
+"try" @keyword
+"typedef" @keyword
+"typename" @keyword
+"union" @keyword
+"using" @keyword
+"virtual" @keyword
+"volatile" @keyword
+"while" @keyword
+
+; Operators
+"+" @operator
+"-" @operator
+"*" @operator
+"/" @operator
+"%" @operator
+"=" @operator
+"==" @operator
+"!=" @operator
+"<" @operator
+">" @operator
+"<=" @operator
+">=" @operator
+"&&" @operator
+"||" @operator
+"!" @operator
+"&" @operator
+"|" @operator
+"^" @operator
+"~" @operator
+"<<" @operator
+">>" @operator
+"+=" @operator
+"-=" @operator
+"*=" @operator
+"/=" @operator
+"++" @operator
+"--" @operator
+"->" @operator
+"?" @operator
+
+; Punctuation
+"(" @punctuation.bracket
+")" @punctuation.bracket
+"[" @punctuation.bracket
+"]" @punctuation.bracket
+"{" @punctuation.bracket
+"}" @punctuation.bracket
+"::" @punctuation.delimiter
+"." @punctuation.delimiter
+"," @punctuation.delimiter
+";" @punctuation.delimiter
+":" @punctuation.delimiter
+"##;
