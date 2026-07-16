@@ -326,6 +326,8 @@ Lumen will load configurations in the following order of priority:
   "api_key": "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
   "theme": "catppuccin-mocha",
   "wrap": true,
+  "include": ["**/*.rs"],
+  "exclude": ["*.lock", "**/*.snap"],
   "draft": {
     "commit_types": {
       "docs": "Documentation only changes",

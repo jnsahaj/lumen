@@ -9,6 +9,7 @@ use spinoff::{spinners, Color, Spinner};
 
 use super::types::{is_binary_content, FileDiff, FileStatus};
 use super::{DiffOptions, PrInfo};
+use crate::command::diff::FilterChain;
 use crate::commit_reference::CommitReference;
 use crate::vcs::VcsBackend;
 
@@ -72,7 +73,7 @@ impl DiffRefs {
 pub fn get_changed_files(options: &DiffOptions, backend: &dyn VcsBackend) -> Vec<String> {
     let refs = DiffRefs::from_options(options, backend);
 
-    let files: Vec<String> = match refs {
+    let mut files: Vec<String> = match refs {
         DiffRefs::Single(sha) => backend.get_changed_files(&sha).unwrap_or_default(),
         DiffRefs::Range { from, to } => backend
             .get_range_changed_files(&from, &to)
@@ -95,6 +96,7 @@ pub fn get_changed_files(options: &DiffOptions, backend: &dyn VcsBackend) -> Vec
             combined
         }
     };
+    filter_files(&mut files, &options.filter);
 
     if let Some(ref filter) = options.file {
         files.into_iter().filter(|f| filter.contains(f)).collect()
@@ -141,6 +143,22 @@ pub fn get_new_content(filename: &str, refs: &DiffRefs, backend: &dyn VcsBackend
     }
 }
 
+fn filter_files(files: &mut Vec<String>, filter: &FilterChain) {
+    files.retain(|filename| {
+        for (include, exclude) in filter.criteria() {
+            if include.is_match(filename) {
+                return true;
+            }
+
+            if exclude.is_match(filename) {
+                return false;
+            }
+        }
+
+        return true;
+    });
+}
+
 pub fn load_file_diffs(options: &DiffOptions, backend: &dyn VcsBackend) -> Vec<FileDiff> {
     let refs = DiffRefs::from_options(options, backend);
     get_changed_files(options, backend)
@@ -168,7 +186,7 @@ pub fn load_file_diffs(options: &DiffOptions, backend: &dyn VcsBackend) -> Vec<F
         .collect()
 }
 
-pub fn load_pr_file_diffs(pr_info: &PrInfo) -> Result<Vec<FileDiff>, String> {
+pub fn load_pr_file_diffs(pr_info: &PrInfo, filter: &FilterChain) -> Result<Vec<FileDiff>, String> {
     let repo_arg = format!("{}/{}", pr_info.repo_owner, pr_info.repo_name);
 
     let mut spinner = Spinner::new(
@@ -208,7 +226,8 @@ pub fn load_pr_file_diffs(pr_info: &PrInfo) -> Result<Vec<FileDiff>, String> {
     }
 
     let diff_output = String::from_utf8_lossy(&output.stdout);
-    let changed_files = parse_changed_files_from_diff(&diff_output);
+    let mut changed_files = parse_changed_files_from_diff(&diff_output);
+    filter_files(&mut changed_files, filter);
     let n = changed_files.len();
 
     if n == 0 {
@@ -439,9 +458,11 @@ pub fn load_single_commit_diffs(
     commit_id: &str,
     file_filter: &Option<Vec<String>>,
     backend: &dyn VcsBackend,
+    filter_chain: &FilterChain,
 ) -> Vec<FileDiff> {
     // Get the list of changed files for this commit
-    let files = backend.get_changed_files(commit_id).unwrap_or_default();
+    let mut files = backend.get_changed_files(commit_id).unwrap_or_default();
+    filter_files(&mut files, filter_chain);
 
     let files: Vec<String> = if let Some(ref filter) = file_filter {
         files.into_iter().filter(|f| filter.contains(f)).collect()
@@ -497,6 +518,7 @@ pub fn load_single_commit_diffs(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::command::diff::{FilterChain, FilterSet};
     use crate::vcs::test_utils::{git, make_temp_dir, RepoGuard};
     use crate::vcs::GitBackend;
     use std::fs;
@@ -537,6 +559,7 @@ mod tests {
             focus: None,
             origin: None,
             wrap: false,
+            filter: FilterChain::default(),
         };
 
         let diffs = load_file_diffs(&options, &backend);
@@ -551,6 +574,91 @@ mod tests {
         assert!(
             diffs.iter().any(|d| d.filename == "new_dir/file2.txt"),
             "should include new_dir/file2.txt, got: {:?}",
+            filenames
+        );
+
+        // Verify they're detected as Added with correct content
+        let file1 = diffs
+            .iter()
+            .find(|d| d.filename == "new_dir/file1.txt")
+            .unwrap();
+        assert_eq!(file1.status, FileStatus::Added);
+        assert!(file1.old_content.is_empty());
+        assert_eq!(file1.new_content, "file 1\n");
+
+        let _ = std::env::set_current_dir(&original);
+        let _ = fs::remove_dir_all(&dir);
+    }
+    
+    #[test]
+    fn test_load_file_diffs_working_tree_untracked_in_new_dir_with_filter() {
+        let _lock = crate::vcs::test_utils::cwd_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = make_temp_dir("git-diff-wt-untracked-dir");
+        let original = std::env::current_dir().expect("get cwd");
+
+        git(&dir, &["init"]);
+        git(&dir, &["config", "user.email", "test@example.com"]);
+        git(&dir, &["config", "user.name", "Test User"]);
+
+        // Initial commit
+        fs::write(dir.join("existing.txt"), "existing content\n").expect("write existing");
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-m", "initial"]);
+
+        // Create untracked files in a NEW directory
+        fs::create_dir_all(dir.join("new_dir")).expect("create new dir");
+        fs::write(dir.join("new_dir/file1.txt"), "file 1\n").expect("write file1");
+        fs::write(dir.join("new_dir/file2.txt"), "file 2\n").expect("write file2");
+        fs::write(dir.join("new_dir/file3.txt"), "file 3\n").expect("write file3");
+        fs::write(dir.join("new_dir/file4.txt"), "file 4\n").expect("write file4");
+
+        std::env::set_current_dir(&dir).expect("set cwd");
+
+        let backend = GitBackend::from_cwd().expect("should open repo");
+        let options = super::super::DiffOptions {
+            reference: None,
+            pr: None,
+            detect_pr: false,
+            file: None,
+            watch: false,
+            theme: None,
+            stacked: false,
+            focus: None,
+            origin: None,
+            wrap: false,
+            filter: FilterChain {
+                cli: FilterSet {
+                    include: vec!["**/file1.txt".to_string(), "**/file2.txt".to_string()],
+                    exclude: vec!["**/*.txt".to_string()],
+                },
+                ..Default::default()
+            },
+        };
+
+        let diffs = load_file_diffs(&options, &backend);
+        let filenames: Vec<&str> = diffs.iter().map(|d| d.filename.as_str()).collect();
+
+        // Should have individual files from the untracked directory, not just "new_dir/"
+        assert!(
+            diffs.iter().any(|d| d.filename == "new_dir/file1.txt"),
+            "should include new_dir/file1.txt, got: {:?}",
+            filenames
+        );
+        assert!(
+            diffs.iter().any(|d| d.filename == "new_dir/file2.txt"),
+            "should include new_dir/file2.txt, got: {:?}",
+            filenames
+        );
+        assert!(
+            !diffs.iter().any(|d| d.filename == "new_dir/file3.txt"),
+            "should exclude new_dir/file3.txt, got: {:?}",
+            filenames
+        );
+        assert!(
+            !diffs.iter().any(|d| d.filename == "new_dir/file4.txt"),
+            "should exclude new_dir/file4.txt, got: {:?}",
             filenames
         );
 
@@ -609,6 +717,7 @@ mod tests {
             focus: None,
             origin: None,
             wrap: false,
+            filter: FilterChain::default(),
         };
 
         let diffs = load_file_diffs(&options, &backend);
@@ -651,7 +760,7 @@ mod tests {
         let backend = GitBackend::from_cwd().expect("should open repo");
 
         // HEAD is the initial commit with README.md added
-        let diffs = load_single_commit_diffs("HEAD", &None, &backend);
+        let diffs = load_single_commit_diffs("HEAD", &None, &backend, &FilterChain::default());
 
         assert_eq!(diffs.len(), 1, "should have 1 file diff");
         assert_eq!(diffs[0].filename, "README.md");
@@ -688,7 +797,7 @@ mod tests {
         std::env::set_current_dir(&dir).expect("set cwd");
 
         let backend = GitBackend::from_cwd().expect("should open repo");
-        let diffs = load_single_commit_diffs("HEAD", &None, &backend);
+        let diffs = load_single_commit_diffs("HEAD", &None, &backend, &FilterChain::default());
 
         assert_eq!(diffs.len(), 1);
         assert_eq!(diffs[0].filename, "file.txt");
@@ -722,7 +831,7 @@ mod tests {
         std::env::set_current_dir(&dir).expect("set cwd");
 
         let backend = GitBackend::from_cwd().expect("should open repo");
-        let diffs = load_single_commit_diffs("HEAD", &None, &backend);
+        let diffs = load_single_commit_diffs("HEAD", &None, &backend, &FilterChain::default());
 
         assert_eq!(diffs.len(), 3, "should have 3 file diffs");
 
@@ -756,7 +865,7 @@ mod tests {
 
         let backend = GitBackend::from_cwd().expect("should open repo");
         let filter = Some(vec!["wanted.txt".to_string()]);
-        let diffs = load_single_commit_diffs("HEAD", &filter, &backend);
+        let diffs = load_single_commit_diffs("HEAD", &filter, &backend, &FilterChain::default());
 
         assert_eq!(diffs.len(), 1, "filter should limit to 1 file");
         assert_eq!(diffs[0].filename, "wanted.txt");
@@ -806,12 +915,12 @@ mod tests {
         assert_eq!(commits[1].summary, "commit B");
 
         // Load diffs for each commit (as stacked diff would do)
-        let diffs_a = load_single_commit_diffs(&commits[0].commit_id, &None, &backend);
+        let diffs_a = load_single_commit_diffs(&commits[0].commit_id, &None, &backend, &FilterChain::default());
         assert_eq!(diffs_a.len(), 1);
         assert_eq!(diffs_a[0].filename, "a.txt");
         assert_eq!(diffs_a[0].new_content, "commit A\n");
 
-        let diffs_b = load_single_commit_diffs(&commits[1].commit_id, &None, &backend);
+        let diffs_b = load_single_commit_diffs(&commits[1].commit_id, &None, &backend, &FilterChain::default());
         assert_eq!(diffs_b.len(), 1);
         assert_eq!(diffs_b[0].filename, "b.txt");
         assert_eq!(diffs_b[0].new_content, "commit B\n");

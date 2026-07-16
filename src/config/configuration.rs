@@ -32,6 +32,12 @@ pub struct LumenConfig {
 
     #[serde(default)]
     pub wrap: Option<bool>,
+    
+    #[serde(default)]
+    pub include: Vec<String>,
+
+    #[serde(default)]
+    pub exclude: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -130,6 +136,8 @@ impl LumenConfig {
             draft: config.draft,
             theme: config.theme,
             wrap: config.wrap,
+            include: config.include,
+            exclude: config.exclude,
         })
     }
 
@@ -156,6 +164,8 @@ impl Default for LumenConfig {
             draft: default_draft_config(),
             theme: None,
             wrap: None,
+            include: Vec::new(),
+            exclude: Vec::new(),
         }
     }
 }

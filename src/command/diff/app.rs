@@ -74,7 +74,7 @@ fn navigate_stacked_commit(
     state.save_stacked_viewed_files();
     state.current_commit_index = new_index;
     if let Some(commit) = state.stacked_commits.get(new_index) {
-        let file_diffs = load_single_commit_diffs(&commit.commit_id, &options.file, backend);
+        let file_diffs = load_single_commit_diffs(&commit.commit_id, &options.file, backend, &options.filter);
         state.reload(file_diffs, None);
         state.load_stacked_viewed_files();
         true
@@ -255,7 +255,7 @@ pub fn run_app_with_pr(
     pr_info: PrInfo,
     backend: &dyn VcsBackend,
 ) -> io::Result<()> {
-    match load_pr_file_diffs(&pr_info) {
+    match load_pr_file_diffs(&pr_info, &options.filter) {
         Ok(file_diffs) => run_app_internal(options, Some(pr_info), file_diffs, None, backend),
         Err(_) => std::process::exit(1),
     }
@@ -277,7 +277,7 @@ pub fn run_app_stacked(
 ) -> io::Result<()> {
     // Load the first commit's diff
     let first_commit = &commits[0];
-    let file_diffs = load_single_commit_diffs(&first_commit.commit_id, &options.file, backend);
+    let file_diffs = load_single_commit_diffs(&first_commit.commit_id, &options.file, backend, &options.filter);
     run_app_internal(options, None, file_diffs, Some(commits), backend)
 }
 
@@ -390,7 +390,7 @@ fn run_app_internal(
         if state.needs_reload {
             let file_diffs = if let Some(ref pr) = pr_info {
                 // In PR mode, reload from GitHub
-                match load_pr_file_diffs(pr) {
+                match load_pr_file_diffs(pr, &options.filter) {
                     Ok(diffs) => diffs,
                     Err(e) => {
                         eprintln!("Warning: failed to reload PR diffs: {}", e);

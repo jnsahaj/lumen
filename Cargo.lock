@@ -2550,6 +2550,7 @@ dependencies = [
  "futures",
  "genai",
  "git2",
+ "globset",
  "indoc",
  "inquire",
  "jj-lib",
