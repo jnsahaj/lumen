@@ -784,6 +784,29 @@ fn run_app_internal(
                                     }
                                     active_modal = None;
                                 }
+                                ModalResult::AnnotationCopyDeleteAll => {
+                                    let formatted = state.format_annotations_for_export();
+                                    let copy_result = arboard::Clipboard::new()
+                                        .and_then(|mut clipboard| clipboard.set_text(&formatted));
+                                    match copy_result {
+                                        Ok(()) => {
+                                            state.annotations.clear();
+                                            active_modal = None;
+                                        }
+                                        Err(e) => {
+                                            if let Some(ref mut modal) = active_modal {
+                                                if let ModalContent::Annotations {
+                                                    error_message,
+                                                    ..
+                                                } = &mut modal.content
+                                                {
+                                                    *error_message =
+                                                        Some(format!("Failed to copy: {}", e));
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                                 ModalResult::AnnotationExport(filename) => {
                                     // Write annotations to file
                                     let formatted = state.format_annotations_for_export();
