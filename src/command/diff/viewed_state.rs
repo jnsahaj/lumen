@@ -1,16 +1,20 @@
-//! Local, PR-independent persistence of viewed-file state for `lumen diff --watch`.
+//! Local persistence of viewed-file state for `lumen diff --watch` and PR review.
 //!
-//! State is keyed by `host/owner/repo/branch` (or a path-derived slug when there's
-//! no parseable origin remote) and content-hashed per file, so it survives
-//! quitting `--watch`, rebases, and force-pushes as long as the file's blob
-//! contents are unchanged. This module never talks to GitHub/`gh` — it is a
-//! purely local cache, opt-in via `--save-viewed`.
+//! State is keyed by `host/owner/repo/<session-key>` (or a path-derived slug when
+//! there's no parseable origin remote), where the session key is the PR number
+//! when known, else the current branch name, and content-hashed per file, so it
+//! survives quitting `--watch`, rebases, and force-pushes as long as the file's
+//! blob contents are unchanged. Keying by PR number (when available) also means
+//! a local branch rename can't orphan or destroy previously saved state. This
+//! module never talks to GitHub/`gh` — it is a purely local cache, opt-in via
+//! `--save-viewed`.
 
 use std::collections::BTreeMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
 
@@ -107,12 +111,6 @@ pub fn sanitize_branch_name(branch: &str) -> Option<String> {
     Some(branch.replace('/', "__"))
 }
 
-/// Reverse of `sanitize_branch_name`, for matching saved state files back to
-/// real branch names during pruning.
-fn desanitize_branch_name(sanitized: &str) -> String {
-    sanitized.replace("__", "/")
-}
-
 /// Build the `local__<sanitized-path>` fallback slug used when there's no
 /// parseable origin remote.
 fn local_fallback_slug(worktree_root: &Path) -> String {
@@ -136,15 +134,24 @@ fn state_base_dir_from(xdg_state_home: Option<&str>, home_dir: Option<PathBuf>) 
 
 /// Resolve the on-disk storage path for viewed state, given already-resolved
 /// origin info (or `None` for the local-slug fallback), the worktree root,
-/// and the current branch. Returns `None` if there's no branch to key on
+/// the current branch, and an optional PR number.
+///
+/// `pr_number` takes priority as the session key when present — state then
+/// converges on `pr-<n>.json` regardless of branch, surviving local branch
+/// renames (mirrors `annotation_store::resolve_annotation_store_path`'s
+/// PR-first key priority). When `pr_number` is `None`, falls back to the
+/// branch-keyed behavior, returning `None` if there's no branch to key on
 /// (e.g. detached HEAD) — callers should skip persistence entirely.
 pub fn resolve_storage_path(
     origin: Option<(&str, &str, &str)>,
     worktree_root: &Path,
     branch: Option<&str>,
+    pr_number: Option<u64>,
 ) -> Option<PathBuf> {
-    let branch = branch?;
-    let sanitized_branch = sanitize_branch_name(branch)?;
+    let session_key = match pr_number {
+        Some(n) => format!("pr-{}", n),
+        None => sanitize_branch_name(branch?)?,
+    };
 
     let (host, owner, repo) = match origin {
         Some((host, owner, repo)) => (host.to_string(), owner.to_string(), repo.to_string()),
@@ -159,7 +166,7 @@ pub fn resolve_storage_path(
     if !owner.is_empty() {
         path = path.join(owner);
     }
-    path = path.join(repo).join(format!("{}.json", sanitized_branch));
+    path = path.join(repo).join(format!("{}.json", session_key));
     Some(path)
 }
 
@@ -189,30 +196,12 @@ pub fn git_worktree_root() -> PathBuf {
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
 }
 
-/// List local branch names via `git for-each-ref`. Returns `None` (rather
-/// than an empty list) on any failure, so callers can distinguish "no
-/// branches" from "couldn't ask git" and skip pruning in the latter case —
-/// pruning off an empty-by-error list would wipe every saved branch.
-pub fn list_local_branches() -> Option<Vec<String>> {
-    let output = Command::new("git")
-        .args(["for-each-ref", "--format=%(refname:short)", "refs/heads"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    Some(
-        String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .map(|l| l.trim().to_string())
-            .filter(|l| !l.is_empty())
-            .collect(),
-    )
-}
-
 /// Full resolution glue for the current repo: resolves origin remote and
 /// worktree root, then delegates to `resolve_storage_path`.
-pub fn resolve_path_for_current_repo(branch: Option<&str>) -> Option<PathBuf> {
+pub fn resolve_path_for_current_repo(
+    branch: Option<&str>,
+    pr_number: Option<u64>,
+) -> Option<PathBuf> {
     let origin = resolve_origin_host_owner_repo();
     let worktree_root = git_worktree_root();
     resolve_storage_path(
@@ -221,6 +210,7 @@ pub fn resolve_path_for_current_repo(branch: Option<&str>) -> Option<PathBuf> {
             .map(|(h, o, r)| (h.as_str(), o.as_str(), r.as_str())),
         &worktree_root,
         branch,
+        pr_number,
     )
 }
 
@@ -264,23 +254,30 @@ pub fn save_merged(path: &Path, updates: impl FnOnce(&mut ViewedState)) -> io::R
     Ok(())
 }
 
-/// Best-effort pruning of state files for branches that no longer exist.
-/// Swallows all I/O errors — pruning failures must never fail the command.
-pub fn prune_stale_branches(repo_viewed_dir: &Path, existing_branches: &[String]) {
+/// Best-effort pruning of state files whose mtime is older than
+/// `max_age_days`. Branch renames (`git branch -m`) no longer orphan or
+/// destroy saved state — age, not local branch existence, is the only
+/// pruning signal. Swallows all I/O errors — pruning failures must never
+/// fail the command.
+pub fn prune_stale_branches(repo_viewed_dir: &Path, max_age_days: u64) {
     let Ok(entries) = fs::read_dir(repo_viewed_dir) else {
+        return;
+    };
+    let Some(cutoff) = SystemTime::now().checked_sub(Duration::from_secs(max_age_days * 86_400))
+    else {
         return;
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
-            continue;
-        };
         if path.extension().and_then(|e| e.to_str()) != Some("json") {
             continue;
         }
-        let branch = desanitize_branch_name(stem);
-        if !existing_branches.contains(&branch) {
-            let _ = fs::remove_file(&path);
+        if let Ok(meta) = entry.metadata() {
+            if let Ok(modified) = meta.modified() {
+                if modified < cutoff {
+                    let _ = fs::remove_file(&path);
+                }
+            }
         }
     }
 }
@@ -422,6 +419,7 @@ mod tests {
             Some(("github.com", "jnsahaj", "lumen")),
             &worktree,
             Some("feature/foo"),
+            None,
         )
         .unwrap();
 
@@ -431,7 +429,7 @@ mod tests {
     #[test]
     fn resolve_storage_path_falls_back_to_local_slug_without_origin() {
         let worktree = PathBuf::from("/home/user/code/scratch");
-        let path = resolve_storage_path(None, &worktree, Some("main")).unwrap();
+        let path = resolve_storage_path(None, &worktree, Some("main"), None).unwrap();
 
         let path_str = path.to_string_lossy();
         assert!(path_str.contains("local__"));
@@ -442,9 +440,55 @@ mod tests {
     #[test]
     fn resolve_storage_path_returns_none_without_branch() {
         let worktree = PathBuf::from("/home/user/code/lumen");
-        let path = resolve_storage_path(Some(("github.com", "a", "b")), &worktree, None);
+        let path = resolve_storage_path(Some(("github.com", "a", "b")), &worktree, None, None);
 
         assert_eq!(path, None);
+    }
+
+    #[test]
+    fn resolve_storage_path_uses_pr_number_when_present() {
+        let worktree = PathBuf::from("/home/user/code/lumen");
+        let path = resolve_storage_path(
+            Some(("github.com", "jnsahaj", "lumen")),
+            &worktree,
+            Some("feature/foo"),
+            Some(42),
+        )
+        .unwrap();
+
+        assert!(path.ends_with("lumen/viewed/github.com/jnsahaj/lumen/pr-42.json"));
+    }
+
+    #[test]
+    fn resolve_storage_path_pr_number_takes_priority_over_branch_rename() {
+        // Same PR, two different local branch names (as if renamed via
+        // `git branch -m`) must resolve to the same storage path.
+        let worktree = PathBuf::from("/home/user/code/lumen");
+        let origin = Some(("github.com", "jnsahaj", "lumen"));
+
+        let before =
+            resolve_storage_path(origin, &worktree, Some("regargeting-measurement"), Some(42));
+        let after = resolve_storage_path(
+            origin,
+            &worktree,
+            Some("feat/retargeting-efficacy-measurement"),
+            Some(42),
+        );
+
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn resolve_storage_path_pr_number_works_without_a_branch() {
+        let worktree = PathBuf::from("/home/user/code/lumen");
+        let path = resolve_storage_path(
+            Some(("github.com", "jnsahaj", "lumen")),
+            &worktree,
+            None,
+            Some(7),
+        );
+
+        assert!(path.unwrap().ends_with("pr-7.json"));
     }
 
     #[test]
@@ -564,26 +608,47 @@ mod tests {
         assert!(!leftover_tmp);
     }
 
-    #[test]
-    fn prune_stale_branches_removes_files_for_deleted_branches() {
-        let dir = TempDir::new().unwrap();
-        fs::write(dir.path().join("main.json"), "{}").unwrap();
-        fs::write(dir.path().join("feature__gone.json"), "{}").unwrap();
-
-        prune_stale_branches(dir.path(), &["main".to_string()]);
-
-        assert!(dir.path().join("main.json").exists());
-        assert!(!dir.path().join("feature__gone.json").exists());
+    fn set_mtime(path: &Path, when: SystemTime) {
+        let file = fs::OpenOptions::new().write(true).open(path).unwrap();
+        file.set_modified(when).unwrap();
     }
 
     #[test]
-    fn prune_stale_branches_keeps_existing_branches() {
+    fn prune_stale_branches_removes_files_older_than_max_age() {
         let dir = TempDir::new().unwrap();
-        fs::write(dir.path().join("feature__foo.json"), "{}").unwrap();
+        let stale = dir.path().join("regargeting-measurement.json");
+        fs::write(&stale, "{}").unwrap();
+        set_mtime(&stale, SystemTime::now() - Duration::from_secs(31 * 86_400));
 
-        prune_stale_branches(dir.path(), &["feature/foo".to_string()]);
+        prune_stale_branches(dir.path(), 30);
 
-        assert!(dir.path().join("feature__foo.json").exists());
+        assert!(!stale.exists());
+    }
+
+    #[test]
+    fn prune_stale_branches_keeps_files_within_max_age() {
+        let dir = TempDir::new().unwrap();
+        // A branch rename orphans the old key, but it's recent — pruning
+        // by branch existence used to delete this immediately; age-based
+        // pruning must not.
+        let renamed_away = dir.path().join("regargeting-measurement.json");
+        fs::write(&renamed_away, "{}").unwrap();
+
+        prune_stale_branches(dir.path(), 30);
+
+        assert!(renamed_away.exists());
+    }
+
+    #[test]
+    fn prune_stale_branches_ignores_non_json_files_regardless_of_age() {
+        let dir = TempDir::new().unwrap();
+        let other = dir.path().join("notes.txt");
+        fs::write(&other, "hello").unwrap();
+        set_mtime(&other, SystemTime::now() - Duration::from_secs(31 * 86_400));
+
+        prune_stale_branches(dir.path(), 30);
+
+        assert!(other.exists());
     }
 
     #[test]
@@ -592,6 +657,6 @@ mod tests {
         let missing = dir.path().join("does-not-exist");
 
         // Should not panic even though the directory doesn't exist.
-        prune_stale_branches(&missing, &[]);
+        prune_stale_branches(&missing, 30);
     }
 }

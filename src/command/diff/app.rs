@@ -295,22 +295,23 @@ fn sync_viewed_files_from_github(pr_info: &PrInfo, state: &mut AppState) {
     }
 }
 
-/// Resolve local `--save-viewed` persistence for the current repo+branch and
-/// apply any previously-saved viewed state. No-op if `save_viewed` is false.
-/// Purely local — never touches GitHub/PR state.
+/// Resolve local `--save-viewed` persistence for the current repo+branch (or
+/// PR, when known) and apply any previously-saved viewed state. No-op if
+/// `save_viewed` is false. Purely local — never touches GitHub/PR state,
+/// though `pr_number` (when the caller is in PR mode) is used only as a
+/// stable local storage key so branch renames don't orphan saved state.
 fn init_viewed_state_persistence(
     state: &mut AppState,
     save_viewed: bool,
     backend: &dyn VcsBackend,
+    pr_number: Option<u64>,
 ) {
     if !save_viewed {
         return;
     }
 
     let branch = backend.get_current_branch().ok().flatten();
-    let path = branch
-        .as_deref()
-        .and_then(|b| viewed_state::resolve_path_for_current_repo(Some(b)));
+    let path = viewed_state::resolve_path_for_current_repo(branch.as_deref(), pr_number);
 
     let Some(path) = path else {
         eprintln!(
@@ -320,9 +321,7 @@ fn init_viewed_state_persistence(
     };
 
     if let Some(repo_viewed_dir) = path.parent() {
-        if let Some(branches) = viewed_state::list_local_branches() {
-            viewed_state::prune_stale_branches(repo_viewed_dir, &branches);
-        }
+        viewed_state::prune_stale_branches(repo_viewed_dir, 30);
     }
 
     state.viewed_state_path = Some(path);
@@ -385,7 +384,12 @@ fn run_app_internal(
     let mut state = AppState::new(file_diffs, options.focus.as_deref());
     state.settings.wrap = options.wrap;
     state.set_vcs_name(backend.name());
-    init_viewed_state_persistence(&mut state, options.save_viewed, backend);
+    init_viewed_state_persistence(
+        &mut state,
+        options.save_viewed,
+        backend,
+        pr_info.as_ref().map(|p| p.number),
+    );
 
     // Set diff reference for annotation export context
     let diff_ref_str = if let Some(pr) = &pr_info {
