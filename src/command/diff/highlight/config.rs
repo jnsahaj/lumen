@@ -6,6 +6,9 @@ use super::queries::*;
 // Elixir uses the bundled highlight queries from tree-sitter-elixir
 const ELIXIR_HIGHLIGHTS: &str = tree_sitter_elixir::HIGHLIGHTS_QUERY;
 
+// Java uses the bundled highlight queries from tree-sitter-java
+const JAVA_HIGHLIGHTS: &str = tree_sitter_java::HIGHLIGHTS_QUERY;
+
 pub const HIGHLIGHT_NAMES: &[&str] = &[
     "attribute",
     "comment",
@@ -211,6 +214,14 @@ pub static CONFIGS: Lazy<Vec<(&'static str, LanguageConfig)>> = Lazy::new(|| {
         "elixir",
         ELIXIR_HIGHLIGHTS,
         "exs",
+        &mut configs,
+    );
+
+    load_config(
+        tree_sitter_java::LANGUAGE.into(),
+        "java",
+        JAVA_HIGHLIGHTS,
+        "java",
         &mut configs,
     );
 
