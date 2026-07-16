@@ -42,10 +42,13 @@ use super::git::{
 };
 use super::highlight;
 use super::render::{
-    render_diff, render_empty_state, truncate_path, FilePickerItem, KeyBind, KeyBindSection, Modal,
-    ModalContent, ModalFileStatus, ModalResult,
+    render_diff, render_empty_state, truncate_path, FilePickerItem, GuideStatus, KeyBind,
+    KeyBindSection, Modal, ModalContent, ModalFileStatus, ModalResult,
 };
-use super::state::{adjust_scroll_for_hunk, adjust_scroll_to_line, AppState, PendingKey};
+use super::state::{
+    adjust_scroll_for_hunk, adjust_scroll_to_line, mark_paths_viewed, AppState, PendingKey,
+    SidebarMode,
+};
 use super::theme;
 use super::types::{
     ChangeType, CursorPosition, DiffFullscreen, DiffPanelFocus, FileStatus, FocusedPanel,
@@ -53,7 +56,8 @@ use super::types::{
 };
 use super::watcher::{setup_watcher, WatchEvent};
 use super::{
-    fetch_viewed_files, mark_file_as_viewed_async, unmark_file_as_viewed_async, DiffOptions, PrInfo,
+    combined_unified_diff, fetch_viewed_files, mark_file_as_viewed_async,
+    unmark_file_as_viewed_async, DiffOptions, GenerateRequest, GroupResult, PrInfo,
 };
 use spinoff::{spinners, Color, Spinner};
 
@@ -67,6 +71,7 @@ fn navigate_stacked_commit(
     new_index: usize,
     options: &DiffOptions,
     backend: &dyn VcsBackend,
+    req_tx: &std::sync::mpsc::Sender<GenerateRequest>,
 ) -> bool {
     if new_index >= state.stacked_commits.len() {
         return false;
@@ -77,9 +82,91 @@ fn navigate_stacked_commit(
         let file_diffs = load_single_commit_diffs(&commit.commit_id, &options.file, backend);
         state.reload(file_diffs, None);
         state.load_stacked_viewed_files();
+        state.guide_group_selected = 0;
+        state.guide_file_selected = 0;
+        maybe_trigger_group_generation(state, options, req_tx);
         true
     } else {
         false
+    }
+}
+
+/// Identity of the diff currently displayed, used to key the grouped-summary
+/// cache. Stacked mode identifies by commit SHA (stable across content
+/// changes to the same commit during a session); every other mode hashes
+/// the combined unified diff, so any content change produces a new key.
+fn current_diff_identity(state: &AppState) -> String {
+    if state.stacked_mode {
+        return state
+            .current_commit()
+            .map(|c| c.commit_id.clone())
+            .unwrap_or_default();
+    }
+    use sha2::{Digest, Sha256};
+    let combined = combined_unified_diff(&state.file_diffs);
+    let mut hasher = Sha256::new();
+    hasher.update(combined.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+/// Kick off a grouped-summary request for the current diff if the Guide
+/// feature is enabled and no cached/in-flight result already covers it.
+/// Always refreshes `state.current_diff_identity` first, even when
+/// `--guide` is off, so other code can rely on it being current.
+fn maybe_trigger_group_generation(
+    state: &mut AppState,
+    options: &DiffOptions,
+    req_tx: &std::sync::mpsc::Sender<GenerateRequest>,
+) {
+    if state.file_diffs.is_empty() {
+        return;
+    }
+    let identity = current_diff_identity(state);
+    state.current_diff_identity = identity.clone();
+    if !options.guide {
+        return;
+    }
+    if state.groups_cache.contains_key(&identity) || state.groups_pending.contains(&identity) {
+        return;
+    }
+    let combined = combined_unified_diff(&state.file_diffs);
+    let ground_truth: Vec<String> = state
+        .file_diffs
+        .iter()
+        .map(|f| f.filename.clone())
+        .collect();
+    state.groups_pending.insert(identity.clone());
+    let _ = req_tx.send(GenerateRequest {
+        identity,
+        combined_diff: combined,
+        ground_truth,
+    });
+}
+
+/// Files in the group currently selected in Guide mode, if the grouped
+/// summary for the active diff has already been generated.
+fn current_guide_group_files(state: &AppState) -> Option<&Vec<String>> {
+    state
+        .groups_cache
+        .get(&state.current_diff_identity)?
+        .groups
+        .get(state.guide_group_selected)
+        .map(|g| &g.files)
+}
+
+/// Switch the diff view to the file at `index_in_group` within the
+/// currently selected Guide-mode group, using the same selection mechanism
+/// as jumping to a file from the picker or an annotation
+/// (`AppState::select_file`). No-op if the group/file no longer resolves to
+/// a known path.
+fn select_guide_file(state: &mut AppState, index_in_group: usize) {
+    let path = current_guide_group_files(state)
+        .and_then(|files| files.get(index_in_group))
+        .cloned();
+    if let Some(path) = path {
+        if let Some(idx) = state.file_index_for_path(&path) {
+            state.select_file(idx);
+        }
     }
 }
 
@@ -254,9 +341,19 @@ pub fn run_app_with_pr(
     options: DiffOptions,
     pr_info: PrInfo,
     backend: &dyn VcsBackend,
+    req_tx: std::sync::mpsc::Sender<GenerateRequest>,
+    res_rx: std::sync::mpsc::Receiver<GroupResult>,
 ) -> io::Result<()> {
     match load_pr_file_diffs(&pr_info) {
-        Ok(file_diffs) => run_app_internal(options, Some(pr_info), file_diffs, None, backend),
+        Ok(file_diffs) => run_app_internal(
+            options,
+            Some(pr_info),
+            file_diffs,
+            None,
+            backend,
+            req_tx,
+            res_rx,
+        ),
         Err(_) => std::process::exit(1),
     }
 }
@@ -265,20 +362,32 @@ pub fn run_app(
     options: DiffOptions,
     pr_info: Option<PrInfo>,
     backend: &dyn VcsBackend,
+    req_tx: std::sync::mpsc::Sender<GenerateRequest>,
+    res_rx: std::sync::mpsc::Receiver<GroupResult>,
 ) -> io::Result<()> {
     let file_diffs = load_file_diffs(&options, backend);
-    run_app_internal(options, pr_info, file_diffs, None, backend)
+    run_app_internal(options, pr_info, file_diffs, None, backend, req_tx, res_rx)
 }
 
 pub fn run_app_stacked(
     options: DiffOptions,
     commits: Vec<StackedCommitInfo>,
     backend: &dyn VcsBackend,
+    req_tx: std::sync::mpsc::Sender<GenerateRequest>,
+    res_rx: std::sync::mpsc::Receiver<GroupResult>,
 ) -> io::Result<()> {
     // Load the first commit's diff
     let first_commit = &commits[0];
     let file_diffs = load_single_commit_diffs(&first_commit.commit_id, &options.file, backend);
-    run_app_internal(options, None, file_diffs, Some(commits), backend)
+    run_app_internal(
+        options,
+        None,
+        file_diffs,
+        Some(commits),
+        backend,
+        req_tx,
+        res_rx,
+    )
 }
 
 /// Sync viewed files from GitHub to local state
@@ -299,6 +408,8 @@ fn run_app_internal(
     file_diffs: Vec<super::types::FileDiff>,
     stacked_commits: Option<Vec<StackedCommitInfo>>,
     backend: &dyn VcsBackend,
+    req_tx: std::sync::mpsc::Sender<GenerateRequest>,
+    res_rx: std::sync::mpsc::Receiver<GroupResult>,
 ) -> io::Result<()> {
     theme::init(options.theme.as_deref());
     highlight::init();
@@ -375,7 +486,11 @@ fn run_app_internal(
     let mut pending_events: VecDeque<Event> = VecDeque::new();
     let mut send_annotations_on_exit = false;
 
+    maybe_trigger_group_generation(&mut state, &options, &req_tx);
+
     'main: loop {
+        state.expire_status_message();
+
         if let Some(ref rx) = watch_rx {
             match rx.try_recv() {
                 Ok(event) => {
@@ -385,6 +500,19 @@ fn run_app_internal(
                 Err(TryRecvError::Empty) => {}
                 Err(TryRecvError::Disconnected) => {}
             }
+        }
+
+        match res_rx.try_recv() {
+            Ok((id, Ok(summary))) => {
+                state.groups_pending.remove(&id);
+                state.groups_errors.remove(&id);
+                state.groups_cache.insert(id, summary);
+            }
+            Ok((id, Err(e))) => {
+                state.groups_pending.remove(&id);
+                state.groups_errors.insert(id, e);
+            }
+            Err(_) => {}
         }
 
         if state.needs_reload {
@@ -409,6 +537,8 @@ fn run_app_internal(
             if let Some(ref pr) = pr_info {
                 sync_viewed_files_from_github(pr, &mut state);
             }
+
+            maybe_trigger_group_generation(&mut state, &options, &req_tx);
         }
 
         if state.file_diffs.is_empty() {
@@ -436,10 +566,31 @@ fn run_app_internal(
                 .unwrap_or(&empty_viewed_hunks);
             let branch_fallback = get_current_branch(backend);
             let commit_ref = state.diff_reference.as_deref().unwrap_or(&branch_fallback);
+            let guide_groups: &[crate::grouped_summary::DiffGroup] = state
+                .groups_cache
+                .get(&state.current_diff_identity)
+                .map(|s| s.groups.as_slice())
+                .unwrap_or(&[]);
+            let guide_status = if !options.guide {
+                GuideStatus::Disabled
+            } else if let Some(summary) = state.groups_cache.get(&state.current_diff_identity) {
+                if summary.groups.is_empty() {
+                    GuideStatus::Empty
+                } else {
+                    GuideStatus::Ready
+                }
+            } else if state.groups_pending.contains(&state.current_diff_identity) {
+                GuideStatus::Pending
+            } else if let Some(e) = state.groups_errors.get(&state.current_diff_identity) {
+                GuideStatus::Error(e.clone())
+            } else {
+                GuideStatus::Empty
+            };
             let row_offset = std::cell::Cell::new(0usize);
             let gaps_cell = std::cell::RefCell::new(Vec::new());
             let rects_cell = std::cell::RefCell::new(Vec::new());
-            let editor_rect_cell: std::cell::Cell<Option<ratatui::layout::Rect>> = std::cell::Cell::new(None);
+            let editor_rect_cell: std::cell::Cell<Option<ratatui::layout::Rect>> =
+                std::cell::Cell::new(None);
             terminal.draw(|frame| {
                 let (offset, gaps, rects, er) = render_diff(
                     frame,
@@ -485,6 +636,12 @@ fn run_app_internal(
                     state.total_added,
                     state.total_removed,
                     annotation_editor.as_ref(),
+                    state.sidebar_mode,
+                    guide_groups,
+                    state.guide_group_selected,
+                    state.guide_file_selected,
+                    guide_status.clone(),
+                    state.status_message.as_ref().map(|(msg, _)| msg.as_str()),
                 );
                 row_offset.set(offset);
                 *rects_cell.borrow_mut() = rects;
@@ -950,7 +1107,7 @@ fn run_app_internal(
                                 if mouse.column < 4 && state.current_commit_index > 0 {
                                     let new_index = state.current_commit_index - 1;
                                     navigate_stacked_commit(
-                                        &mut state, new_index, &options, backend,
+                                        &mut state, new_index, &options, backend, &req_tx,
                                     );
                                 }
                                 // Right arrow click (last 4 columns to cover " > ")
@@ -960,7 +1117,7 @@ fn run_app_internal(
                                 {
                                     let new_index = state.current_commit_index + 1;
                                     navigate_stacked_commit(
-                                        &mut state, new_index, &options, backend,
+                                        &mut state, new_index, &options, backend, &req_tx,
                                     );
                                 }
                             } else if state.show_sidebar
@@ -1330,14 +1487,18 @@ fn run_app_internal(
                                 && state.current_commit_index < state.stacked_commits.len() - 1
                             {
                                 let new_index = state.current_commit_index + 1;
-                                navigate_stacked_commit(&mut state, new_index, &options, backend);
+                                navigate_stacked_commit(
+                                    &mut state, new_index, &options, backend, &req_tx,
+                                );
                             }
                         }
                         // Stacked mode: navigate to previous commit
                         KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                             if state.stacked_mode && state.current_commit_index > 0 {
                                 let new_index = state.current_commit_index - 1;
-                                navigate_stacked_commit(&mut state, new_index, &options, backend);
+                                navigate_stacked_commit(
+                                    &mut state, new_index, &options, backend, &req_tx,
+                                );
                             }
                         }
                         KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -1426,7 +1587,17 @@ fn run_app_internal(
                             }
                         }
                         KeyCode::Down | KeyCode::Char('j') => {
-                            if state.focused_panel == FocusedPanel::Sidebar {
+                            if state.sidebar_mode == SidebarMode::Guide {
+                                if let Some(len) =
+                                    current_guide_group_files(&state).map(|f| f.len())
+                                {
+                                    if len > 0 && state.guide_file_selected + 1 < len {
+                                        state.guide_file_selected += 1;
+                                        let next = state.guide_file_selected;
+                                        select_guide_file(&mut state, next);
+                                    }
+                                }
+                            } else if state.focused_panel == FocusedPanel::Sidebar {
                                 if state.sidebar_selected + 1 < state.sidebar_visible_len() {
                                     state.sidebar_selected += 1;
                                 }
@@ -1438,7 +1609,13 @@ fn run_app_internal(
                             }
                         }
                         KeyCode::Up | KeyCode::Char('k') => {
-                            if state.focused_panel == FocusedPanel::Sidebar {
+                            if state.sidebar_mode == SidebarMode::Guide {
+                                if state.guide_file_selected > 0 {
+                                    state.guide_file_selected -= 1;
+                                    let next = state.guide_file_selected;
+                                    select_guide_file(&mut state, next);
+                                }
+                            } else if state.focused_panel == FocusedPanel::Sidebar {
                                 if state.sidebar_selected > 0 {
                                     state.sidebar_selected =
                                         state.sidebar_selected.saturating_sub(1);
@@ -1518,7 +1695,36 @@ fn run_app_internal(
                             }
                         }
                         KeyCode::Char(' ') => {
-                            if state.focused_panel == FocusedPanel::Sidebar
+                            if state.sidebar_mode == SidebarMode::Guide {
+                                if let Some(files) = current_guide_group_files(&state).cloned() {
+                                    if let Some(path) = files.get(state.guide_file_selected) {
+                                        if let Some(file_idx) = state.file_index_for_path(path) {
+                                            let filename =
+                                                state.file_diffs[file_idx].filename.clone();
+                                            let was_viewed = state.viewed_files.contains(&file_idx);
+
+                                            // Optimistic update - update local state immediately
+                                            if was_viewed {
+                                                state.viewed_files.remove(&file_idx);
+                                            } else {
+                                                state.viewed_files.insert(file_idx);
+                                            }
+
+                                            // Fire off async API call if in PR mode
+                                            if let Some(ref pr) = pr_info {
+                                                if was_viewed {
+                                                    unmark_file_as_viewed_async(pr, &filename);
+                                                } else {
+                                                    mark_file_as_viewed_async(pr, &filename);
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if state.guide_file_selected + 1 < files.len() {
+                                        state.guide_file_selected += 1;
+                                    }
+                                }
+                            } else if state.focused_panel == FocusedPanel::Sidebar
                                 && state.sidebar_selected < state.sidebar_visible_len()
                             {
                                 let selected = state
@@ -1746,6 +1952,55 @@ fn run_app_internal(
                                 }
                             }
                         }
+                        KeyCode::Char('a') => {
+                            if options.guide {
+                                state.sidebar_mode = match state.sidebar_mode {
+                                    SidebarMode::Directory => SidebarMode::Guide,
+                                    SidebarMode::Guide => SidebarMode::Directory,
+                                };
+                                if state.sidebar_mode == SidebarMode::Guide {
+                                    state.guide_group_selected = 0;
+                                    state.guide_file_selected = 0;
+                                    state.focused_panel = FocusedPanel::Sidebar;
+                                    select_guide_file(&mut state, 0);
+                                }
+                            } else {
+                                // Nothing to show without --guide: say so instead
+                                // of silently doing nothing.
+                                state.set_status_message("Guide requires --guide flag");
+                            }
+                        }
+                        KeyCode::Char(',') => {
+                            if state.sidebar_mode == SidebarMode::Guide
+                                && state.guide_group_selected > 0
+                            {
+                                state.guide_group_selected -= 1;
+                                state.guide_file_selected = 0;
+                                select_guide_file(&mut state, 0);
+                            }
+                        }
+                        KeyCode::Char('.') => {
+                            if state.sidebar_mode == SidebarMode::Guide {
+                                if let Some(len) = state
+                                    .groups_cache
+                                    .get(&state.current_diff_identity)
+                                    .map(|s| s.groups.len())
+                                {
+                                    if state.guide_group_selected + 1 < len {
+                                        state.guide_group_selected += 1;
+                                        state.guide_file_selected = 0;
+                                        select_guide_file(&mut state, 0);
+                                    }
+                                }
+                            }
+                        }
+                        KeyCode::Char('V') => {
+                            if state.sidebar_mode == SidebarMode::Guide {
+                                if let Some(files) = current_guide_group_files(&state).cloned() {
+                                    mark_paths_viewed(&mut state, &files, pr_info.as_ref());
+                                }
+                            }
+                        }
                         KeyCode::Char('i') => {
                             if !state.file_diffs.is_empty() {
                                 let file_index = state.current_file;
@@ -1900,10 +2155,8 @@ fn run_app_internal(
                         }
                         KeyCode::Char('e') => {
                             if !state.file_diffs.is_empty() {
-                                let _ = execute!(
-                                    terminal.backend_mut(),
-                                    PopKeyboardEnhancementFlags
-                                );
+                                let _ =
+                                    execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags);
                                 execute!(
                                     terminal.backend_mut(),
                                     DisableMouseCapture,
@@ -1952,7 +2205,9 @@ fn run_app_internal(
                                 )?;
                                 let _ = execute!(
                                     terminal.backend_mut(),
-                                    PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+                                    PushKeyboardEnhancementFlags(
+                                        KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                                    )
                                 );
                                 terminal.clear()?;
                             }
@@ -2106,10 +2361,10 @@ fn run_app_internal(
                                                 key: "h/l or left/right",
                                                 description: "Scroll horizontally",
                                             },
-                                        KeyBind {
-                                            key: "w",
-                                            description: "Toggle watch mode",
-                                        },
+                                            KeyBind {
+                                                key: "w",
+                                                description: "Toggle watch mode",
+                                            },
                                             KeyBind {
                                                 key: "gg / G",
                                                 description: "Scroll to top / bottom",
@@ -2153,7 +2408,8 @@ fn run_app_internal(
                                             },
                                             KeyBind {
                                                 key: "ctrl+f",
-                                                description: "Global fuzzy search (all files, with preview)",
+                                                description:
+                                                    "Global fuzzy search (all files, with preview)",
                                             },
                                             KeyBind {
                                                 key: "n or down",
@@ -2187,6 +2443,24 @@ fn run_app_internal(
                                             KeyBind {
                                                 key: "s",
                                                 description: "Exit & send annotations to stdout",
+                                            },
+                                        ],
+                                    },
+                                    KeyBindSection {
+                                        title: "AI Guide (--guide)",
+                                        bindings: vec![
+                                            KeyBind {
+                                                key: "a",
+                                                description: "Toggle AI guide view",
+                                            },
+                                            KeyBind {
+                                                key: ", / .",
+                                                description: "Guide: previous / next group",
+                                            },
+                                            KeyBind {
+                                                key: "V",
+                                                description:
+                                                    "Guide: mark all files in group viewed",
                                             },
                                         ],
                                     },

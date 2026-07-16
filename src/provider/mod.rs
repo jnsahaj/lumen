@@ -158,6 +158,11 @@ impl LumenProvider {
         self.complete(prompt).await
     }
 
+    pub async fn explain_grouped(&self, command: &ExplainCommand) -> Result<String, ProviderError> {
+        let prompt = AIPrompt::build_grouped_explain_prompt(command)?;
+        self.complete(prompt).await
+    }
+
     pub async fn draft(&self, command: &DraftCommand) -> Result<String, ProviderError> {
         let prompt = AIPrompt::build_draft_prompt(command)?;
         self.complete(prompt).await

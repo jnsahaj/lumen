@@ -231,6 +231,9 @@ lumen explain main..feature/A
 # Ask specific questions
 lumen explain --query "What's the performance impact of these changes?"
 
+# Group changes into logical clusters with a summary per group
+lumen explain --grouped
+
 # Interactive commit selection (requires: fzf)
 lumen explain --list
 ```
