@@ -7,6 +7,7 @@ mod detection;
 mod git;
 #[cfg(feature = "jj")]
 mod jj;
+mod noop;
 #[cfg(test)]
 pub mod test_utils;
 
@@ -15,6 +16,7 @@ pub use detection::{detect_vcs_type, VcsType};
 pub use git::GitBackend;
 #[cfg(feature = "jj")]
 pub use jj::JjBackend;
+pub use noop::NoopBackend;
 
 use std::path::Path;
 
