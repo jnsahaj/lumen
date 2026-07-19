@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 use std::io::{self, IsTerminal, Write};
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::TryRecvError;
 use std::time::Duration;
 
@@ -51,6 +52,7 @@ use super::types::{
     ChangeType, CursorPosition, DiffFullscreen, DiffPanelFocus, FileStatus, FocusedPanel,
     SelectionMode, SidebarItem,
 };
+use super::viewed_state;
 use super::watcher::{setup_watcher, WatchEvent};
 use super::{
     fetch_viewed_files, mark_file_as_viewed_async, unmark_file_as_viewed_async, DiffOptions, PrInfo,
@@ -293,6 +295,81 @@ fn sync_viewed_files_from_github(pr_info: &PrInfo, state: &mut AppState) {
     }
 }
 
+/// Resolve local `--save-viewed` persistence for the current repo+branch (or
+/// PR, when known) and apply any previously-saved viewed state. No-op if
+/// `save_viewed` is false. Purely local — never touches GitHub/PR state,
+/// though `pr_number` (when the caller is in PR mode) is used only as a
+/// stable local storage key so branch renames don't orphan saved state.
+fn init_viewed_state_persistence(
+    state: &mut AppState,
+    save_viewed: bool,
+    backend: &dyn VcsBackend,
+    pr_number: Option<u64>,
+) {
+    if !save_viewed {
+        return;
+    }
+
+    let branch = backend.get_current_branch().ok().flatten();
+    let path = viewed_state::resolve_path_for_current_repo(branch.as_deref(), pr_number);
+
+    let Some(path) = path else {
+        eprintln!(
+            "lumen: --save-viewed has no effect in detached HEAD (no branch to key state on)"
+        );
+        return;
+    };
+
+    if let Some(repo_viewed_dir) = path.parent() {
+        viewed_state::prune_stale_branches(repo_viewed_dir, 30);
+    }
+
+    state.viewed_state_path = Some(path);
+    apply_saved_viewed_state(state);
+}
+
+/// Mark files as viewed whose current working-tree content hash matches a
+/// hash previously saved to `state.viewed_state_path`. Additive: never
+/// clears existing marks, since another process may have saved entries
+/// this session hasn't seen yet.
+fn apply_saved_viewed_state(state: &mut AppState) {
+    let Some(path) = state.viewed_state_path.clone() else {
+        return;
+    };
+    let saved = viewed_state::load(&path);
+    for idx in 0..state.file_diffs.len() {
+        let filename = &state.file_diffs[idx].filename;
+        let Some(saved_hash) = saved.files.get(filename) else {
+            continue;
+        };
+        let current_hash = viewed_state::blob_hash_for_working_tree(Path::new(filename));
+        if current_hash == *saved_hash {
+            state.viewed_files.insert(idx);
+        }
+    }
+}
+
+/// Persist a single file's viewed/unviewed toggle to disk for `--save-viewed`.
+/// Called once per file, including per-file in bulk directory toggles —
+/// batching into a single write could be a followup if per-keystroke I/O
+/// ever becomes a perceptible cost.
+fn persist_viewed_toggle(viewed_state_path: &Option<PathBuf>, filename: &str, now_viewed: bool) {
+    let Some(path) = viewed_state_path else {
+        return;
+    };
+    let filename = filename.to_string();
+    if now_viewed {
+        let hash = viewed_state::blob_hash_for_working_tree(Path::new(&filename));
+        let _ = viewed_state::save_merged(path, |vs| {
+            vs.files.insert(filename, hash);
+        });
+    } else {
+        let _ = viewed_state::save_merged(path, |vs| {
+            vs.files.remove(&filename);
+        });
+    }
+}
+
 fn run_app_internal(
     options: DiffOptions,
     pr_info: Option<PrInfo>,
@@ -307,6 +384,12 @@ fn run_app_internal(
     let mut state = AppState::new(file_diffs, options.focus.as_deref());
     state.settings.wrap = options.wrap;
     state.set_vcs_name(backend.name());
+    init_viewed_state_persistence(
+        &mut state,
+        options.save_viewed,
+        backend,
+        pr_info.as_ref().map(|p| p.number),
+    );
 
     // Set diff reference for annotation export context
     let diff_ref_str = if let Some(pr) = &pr_info {
@@ -409,6 +492,10 @@ fn run_app_internal(
             if let Some(ref pr) = pr_info {
                 sync_viewed_files_from_github(pr, &mut state);
             }
+
+            // Re-apply local --save-viewed state: disk may have been updated
+            // by another process, and file indices shifted after reload anyway.
+            apply_saved_viewed_state(&mut state);
         }
 
         if state.file_diffs.is_empty() {
@@ -1543,6 +1630,12 @@ fn run_app_internal(
                                                 state.viewed_files.insert(file_idx);
                                             }
 
+                                            persist_viewed_toggle(
+                                                &state.viewed_state_path,
+                                                &filename,
+                                                !was_viewed,
+                                            );
+
                                             // Fire off async API call if in PR mode
                                             if let Some(ref pr) = pr_info {
                                                 if was_viewed {
@@ -1585,6 +1678,15 @@ fn run_app_internal(
                                                 for idx in &child_indices {
                                                     state.viewed_files.insert(*idx);
                                                 }
+                                            }
+
+                                            for idx in &child_indices {
+                                                let filename = &state.file_diffs[*idx].filename;
+                                                persist_viewed_toggle(
+                                                    &state.viewed_state_path,
+                                                    filename,
+                                                    !all_viewed,
+                                                );
                                             }
 
                                             // Fire off async API calls if in PR mode
@@ -1653,6 +1755,12 @@ fn run_app_internal(
                                         ensure_sidebar_visible(&mut state, visible_height);
                                     }
                                 }
+
+                                persist_viewed_toggle(
+                                    &state.viewed_state_path,
+                                    &filename,
+                                    !was_viewed,
+                                );
 
                                 // Fire off async API call if in PR mode
                                 if let Some(ref pr) = pr_info {

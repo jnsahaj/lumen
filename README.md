@@ -99,6 +99,9 @@ lumen diff --file src/main.rs --file src/lib.rs
 # Watch mode - auto-refresh on file changes
 lumen diff --watch
 
+# Persist viewed-file state locally across sessions (opt-in)
+lumen diff --watch --save-viewed
+
 # Stacked mode - review commits one by one
 lumen diff main..feature --stacked
 
@@ -125,6 +128,8 @@ This displays each commit individually, letting you navigate through them:
 The header shows the current commit position, SHA, and message. Viewed files are tracked per commit, so your progress is preserved when navigating.
 
 When viewing a PR, you can mark files as viewed (syncs with GitHub) using the `space` keybinding.
+
+Outside of PR mode, `--save-viewed` persists viewed-file state locally across sessions instead — it's opt-in, never talks to GitHub, and works the same whether or not the branch has an associated PR. State is keyed by repo + branch + each file's content hash, so it survives quitting `--watch` and rebases (a file only shows as viewed again if its contents match what you last saw). State files live under `$XDG_STATE_HOME/lumen/viewed/` (or `~/.local/state/lumen/viewed/` if unset).
 
 #### Theme Configuration
 
