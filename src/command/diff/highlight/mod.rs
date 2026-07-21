@@ -239,6 +239,11 @@ mod tests {
         assert!(extensions.contains(&"ex"), "Elixir config should be loaded");
         assert!(extensions.contains(&"exs"), "Elixir script config should be loaded");
         assert!(extensions.contains(&"java"), "Java config should be loaded");
+        assert!(extensions.contains(&"kt"), "Kotlin config should be loaded");
+        assert!(
+            extensions.contains(&"kts"),
+            "Kotlin script config should be loaded"
+        );
         assert!(extensions.contains(&"zig"), "Zig config should be loaded");
         assert!(extensions.contains(&"c"), "C config should be loaded");
         assert!(extensions.contains(&"h"), "C header config should be loaded");
@@ -326,6 +331,58 @@ public class Hello {
         assert!(!result.is_empty(), "Java highlighting should produce output");
         let has_highlights = result.iter().any(|(_, h)| h.is_some());
         assert!(has_highlights, "Java code should have syntax highlights");
+    }
+
+    #[test]
+    fn test_kotlin_highlighting() {
+        let code = r#"package com.example
+
+data class Point(val x: Int, val enabled: Boolean) {
+    val active = true
+    val ratio = 1.5
+    val marker = 'K'
+
+    fun scaled(scale: Double): Int {
+        if (enabled) return (x * scale).toInt()
+        return 0
+    }
+}
+"#;
+        let result = highlight_code(code, "Point.kt");
+
+        fn highlight_index(name: &str) -> usize {
+            HIGHLIGHT_NAMES
+                .iter()
+                .position(|candidate| *candidate == name)
+                .unwrap_or_else(|| panic!("missing highlight name: {name}"))
+        }
+        let has_highlight = |text: &str, name: &str| {
+            let expected = Some(highlight_index(name));
+            result
+                .iter()
+                .any(|(span_text, highlight)| span_text.trim() == text && *highlight == expected)
+        };
+
+        assert!(has_highlight("class", "keyword"));
+        assert!(has_highlight("fun", "keyword"));
+        assert!(has_highlight("if", "keyword"));
+        assert!(has_highlight("return", "keyword"));
+        assert!(has_highlight("Point", "type"));
+        assert!(has_highlight("Int", "type.builtin"));
+        assert!(has_highlight("scaled", "function"));
+        assert!(has_highlight("scale", "variable.parameter"));
+        assert!(has_highlight("true", "constant.builtin"));
+        assert!(has_highlight("1.5", "number"));
+        assert!(has_highlight("'K'", "string"));
+        assert!(has_highlight("0", "number"));
+
+        let script_result = highlight_code("val answer = 42\n", "build.gradle.kts");
+        assert!(
+            script_result
+                .iter()
+                .any(|(_, highlight)| highlight.is_some()),
+            "Kotlin script code should have syntax highlights"
+        );
     }
 
     #[test]

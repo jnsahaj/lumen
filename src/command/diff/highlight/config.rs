@@ -9,6 +9,43 @@ const ELIXIR_HIGHLIGHTS: &str = tree_sitter_elixir::HIGHLIGHTS_QUERY;
 // Java uses the bundled highlight queries from tree-sitter-java
 const JAVA_HIGHLIGHTS: &str = tree_sitter_java::HIGHLIGHTS_QUERY;
 
+// tree-sitter-kotlin-sg bundles a legacy nvim-treesitter query. Several of its
+// capture names are not present in HIGHLIGHT_NAMES, so tree-sitter-highlight
+// would silently leave them unstyled. Some dotted names are also ambiguous:
+// for example, `keyword.function` matches Lumen's earlier `function` entry
+// before `keyword`. Rewriting the captures keeps Kotlin on Lumen's existing
+// palette without adding language-specific aliases to every theme.
+//
+// Each tuple is `(capture emitted by the upstream query, capture recognized by
+// Lumen)`.
+const KOTLIN_HIGHLIGHT_MAPPINGS: &[(&str, &str)] = &[
+    // Declarations and imports.
+    ("@namespace", "@module"),
+    ("@include", "@keyword"),
+    ("@parameter", "@variable.parameter"),
+    // Literals.
+    ("@float", "@number"),
+    ("@boolean", "@constant.builtin"),
+    ("@character", "@string"),
+    ("@string.escape", "@string.special"),
+    ("@string.regex", "@string.special"),
+    // Keyword subcategories used by the legacy query.
+    ("@keyword.function", "@keyword"),
+    ("@keyword.return", "@keyword"),
+    ("@conditional", "@keyword"),
+    ("@repeat", "@keyword"),
+    ("@exception", "@keyword"),
+    // Lumen uses one punctuation style for special interpolation delimiters.
+    ("@punctuation.special", "@punctuation"),
+];
+
+fn kotlin_highlights() -> String {
+    KOTLIN_HIGHLIGHT_MAPPINGS.iter().fold(
+        tree_sitter_kotlin_sg::HIGHLIGHTS_QUERY.to_owned(),
+        |query, (from, to)| query.replace(from, to),
+    )
+}
+
 pub const HIGHLIGHT_NAMES: &[&str] = &[
     "attribute",
     "comment",
@@ -64,6 +101,7 @@ fn load_config(
 
 pub static CONFIGS: Lazy<Vec<(&'static str, LanguageConfig)>> = Lazy::new(|| {
     let mut configs = Vec::new();
+    let kotlin_highlights = kotlin_highlights();
 
     load_config(
         tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
@@ -226,6 +264,22 @@ pub static CONFIGS: Lazy<Vec<(&'static str, LanguageConfig)>> = Lazy::new(|| {
     );
 
     load_config(
+        tree_sitter_kotlin_sg::LANGUAGE.into(),
+        "kotlin",
+        &kotlin_highlights,
+        "kt",
+        &mut configs,
+    );
+
+    load_config(
+        tree_sitter_kotlin_sg::LANGUAGE.into(),
+        "kotlin",
+        &kotlin_highlights,
+        "kts",
+        &mut configs,
+    );
+
+    load_config(
         tree_sitter_zig::LANGUAGE.into(),
         "zig",
         ZIG_HIGHLIGHTS,
@@ -299,3 +353,39 @@ pub static CONFIGS: Lazy<Vec<(&'static str, LanguageConfig)>> = Lazy::new(|| {
 
     configs
 });
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn kotlin_query_only_uses_known_public_captures() {
+        // Comparing the normalized query with HIGHLIGHT_NAMES keeps the mapping
+        // exhaustive when upstream adds or changes captures.
+        let highlights = kotlin_highlights();
+        let config = HighlightConfiguration::new(
+            tree_sitter_kotlin_sg::LANGUAGE.into(),
+            "kotlin",
+            &highlights,
+            "",
+            "",
+        )
+        .expect("Kotlin highlight query should compile");
+
+        let unsupported: Vec<&str> = config
+            .names()
+            .iter()
+            .filter(|name| {
+                // `_...` captures are query-internal; `none` is the upstream
+                // query's deliberate opt-out capture for interpolation content.
+                !name.starts_with('_') && **name != "none" && !HIGHLIGHT_NAMES.contains(name)
+            })
+            .copied()
+            .collect();
+
+        assert!(
+            unsupported.is_empty(),
+            "Kotlin query has unmapped public captures: {unsupported:?}"
+        );
+    }
+}
