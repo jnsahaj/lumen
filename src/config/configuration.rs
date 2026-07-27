@@ -32,6 +32,9 @@ pub struct LumenConfig {
 
     #[serde(default)]
     pub wrap: Option<bool>,
+
+    #[serde(default)]
+    pub guide: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -130,6 +133,7 @@ impl LumenConfig {
             draft: config.draft,
             theme: config.theme,
             wrap: config.wrap,
+            guide: config.guide,
         })
     }
 
@@ -156,6 +160,7 @@ impl Default for LumenConfig {
             draft: default_draft_config(),
             theme: None,
             wrap: None,
+            guide: None,
         }
     }
 }

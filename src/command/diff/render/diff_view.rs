@@ -8,9 +8,10 @@ use ratatui::{
 use crate::command::diff::context::{compute_context_lines, ContextLine};
 use crate::command::diff::highlight::{highlight_line_spans, FileHighlighter};
 use crate::command::diff::search::{MatchPanel, SearchState};
-use crate::command::diff::state::{Annotation, AnnotationTarget};
+use crate::command::diff::state::{Annotation, AnnotationTarget, SidebarMode};
 use crate::command::diff::theme;
 use crate::command::diff::{annotation::AnnotationEditor, state::TreeCache};
+use crate::grouped_summary::DiffGroup;
 
 /// One overlay slot in the rendered diff: either a saved annotation or the
 /// active inline editor (new or editing an existing annotation).
@@ -89,7 +90,7 @@ use crate::command::diff::types::{
 use crate::command::diff::PrInfo;
 
 use super::footer::{render_footer, FooterData};
-use super::sidebar::render_sidebar;
+use super::sidebar::{render_guide_sidebar, render_sidebar, GuideStatus};
 
 /// Render the header bar for stacked diff mode showing commit info with navigation arrows
 fn render_stacked_header(
@@ -859,7 +860,6 @@ fn apply_selection_to_spans<'a>(
     result
 }
 
-
 pub fn compute_line_stats(side_by_side: &[DiffLine]) -> LineStats {
     let mut added = 0;
     let mut removed = 0;
@@ -994,7 +994,13 @@ fn compute_target_index_ranges(
 ) -> Vec<(usize, usize, DiffPanelFocus)> {
     let mut ranges = Vec::new();
     for target in targets {
-        if let AnnotationTarget::LineRange { panel, start_line, end_line, .. } = target {
+        if let AnnotationTarget::LineRange {
+            panel,
+            start_line,
+            end_line,
+            ..
+        } = target
+        {
             let mut first_idx: Option<usize> = None;
             let mut last_idx: Option<usize> = None;
             for (idx, dl) in side_by_side.iter().enumerate() {
@@ -1285,11 +1291,22 @@ pub fn render_diff(
     total_added: usize,
     total_removed: usize,
     editor: Option<&AnnotationEditor>,
+    sidebar_mode: SidebarMode,
+    guide_groups: &[DiffGroup],
+    guide_group_selected: usize,
+    guide_file_selected: usize,
+    guide_status: GuideStatus,
+    status_message: Option<&str>,
 ) -> (usize, Vec<(usize, usize)>, Vec<(u64, Rect)>, Option<Rect>) {
     let area = frame.area();
     let t = theme::get();
     let bg = t.ui.bg;
     let h_scroll = if settings.wrap { 0 } else { h_scroll };
+    // Compute before `guide_status` is potentially moved into
+    // `render_guide_sidebar` below — this drives the footer's ambient
+    // "generating" indicator, which is visible even outside the Guide
+    // sidebar.
+    let guide_pending = matches!(&guide_status, GuideStatus::Pending);
 
     // Layout: header (if stacked) + main content + footer
     let (content_area, footer_area) = if stacked_mode {
@@ -1328,22 +1345,36 @@ pub fn render_diff(
             .constraints([Constraint::Length(sidebar_width), Constraint::Min(0)])
             .split(content_area);
 
-        render_sidebar(
-            frame,
-            main_chunks[0],
-            sidebar_items,
-            sidebar_visible,
-            collapsed_dirs,
-            current_file,
-            sidebar_selected,
-            sidebar_scroll,
-            sidebar_h_scroll,
-            viewed_files,
-            focused_panel == FocusedPanel::Sidebar,
-            _file_diffs.len(),
-            total_added,
-            total_removed,
-        );
+        if sidebar_mode == SidebarMode::Guide {
+            render_guide_sidebar(
+                frame,
+                main_chunks[0],
+                guide_groups,
+                guide_group_selected,
+                guide_file_selected,
+                _file_diffs,
+                viewed_files,
+                focused_panel == FocusedPanel::Sidebar,
+                guide_status,
+            );
+        } else {
+            render_sidebar(
+                frame,
+                main_chunks[0],
+                sidebar_items,
+                sidebar_visible,
+                collapsed_dirs,
+                current_file,
+                sidebar_selected,
+                sidebar_scroll,
+                sidebar_h_scroll,
+                viewed_files,
+                focused_panel == FocusedPanel::Sidebar,
+                _file_diffs.len(),
+                total_added,
+                total_removed,
+            );
+        }
 
         main_chunks[1]
     } else {
@@ -1389,6 +1420,8 @@ pub fn render_diff(
                 focused_hunk: None,
                 search_state,
                 area_width: area.width,
+                status_message,
+                guide_pending,
             },
         );
         return (0, Vec::new(), Vec::new(), None);
@@ -1550,7 +1583,10 @@ pub fn render_diff(
 
             // Check if this line is the end_line for any line-range slot
             for slot in &line_slots {
-                if let AnnotationTarget::LineRange { panel, end_line, .. } = slot.target() {
+                if let AnnotationTarget::LineRange {
+                    panel, end_line, ..
+                } = slot.target()
+                {
                     if diff_line.line_number(*panel) == Some(*end_line) {
                         let num_ann_lines = slot.height();
                         let line_pos = new_lines.len();
@@ -1726,7 +1762,10 @@ pub fn render_diff(
 
             // Check if this line is the end_line for any line-range slot
             for slot in &line_slots {
-                if let AnnotationTarget::LineRange { panel, end_line, .. } = slot.target() {
+                if let AnnotationTarget::LineRange {
+                    panel, end_line, ..
+                } = slot.target()
+                {
                     if diff_line.line_number(*panel) == Some(*end_line) {
                         let num_ann_lines = slot.height();
                         let line_pos = old_lines.len();
@@ -2195,7 +2234,10 @@ pub fn render_diff(
 
             // Check if this line is the end_line for any line-range slot
             for slot in &line_slots {
-                if let AnnotationTarget::LineRange { panel, end_line, .. } = slot.target() {
+                if let AnnotationTarget::LineRange {
+                    panel, end_line, ..
+                } = slot.target()
+                {
                     if diff_line.line_number(*panel) == Some(*end_line) {
                         let num_lines = slot.height();
 
@@ -2392,9 +2434,15 @@ pub fn render_diff(
             focused_hunk,
             search_state,
             area_width: area.width,
+            status_message,
+            guide_pending,
         },
     );
 
-    (content_row_offset, overlay_gaps, annotation_rects, editor_rect)
+    (
+        content_row_offset,
+        overlay_gaps,
+        annotation_rects,
+        editor_rect,
+    )
 }
-

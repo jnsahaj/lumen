@@ -3,6 +3,7 @@ use explain::ExplainCommand;
 use list::ListCommand;
 use operate::OperateCommand;
 use std::process::Stdio;
+use std::sync::Arc;
 
 use crate::config::configuration::DraftConfig;
 use crate::error::LumenError;
@@ -21,6 +22,7 @@ pub enum CommandType<'a> {
     Explain {
         git_entity: GitEntity,
         query: Option<String>,
+        grouped: bool,
     },
     List {
         backend: &'a dyn VcsBackend,
@@ -36,20 +38,28 @@ pub enum CommandType<'a> {
 }
 
 pub struct LumenCommand {
-    provider: LumenProvider,
+    provider: Arc<LumenProvider>,
 }
 
 impl LumenCommand {
-    pub fn new(provider: LumenProvider) -> Self {
+    pub fn new(provider: Arc<LumenProvider>) -> Self {
         LumenCommand { provider }
     }
 
     pub async fn execute(&self, command_type: CommandType<'_>) -> Result<(), LumenError> {
         match command_type {
-            CommandType::Explain { git_entity, query } => {
-                ExplainCommand { git_entity, query }
-                    .execute(&self.provider)
-                    .await
+            CommandType::Explain {
+                git_entity,
+                query,
+                grouped,
+            } => {
+                ExplainCommand {
+                    git_entity,
+                    query,
+                    grouped,
+                }
+                .execute(&self.provider)
+                .await
             }
             CommandType::List { backend } => ListCommand.execute(&self.provider, backend).await,
             CommandType::Draft {

@@ -19,6 +19,14 @@ pub struct FooterData<'a> {
     pub focused_hunk: Option<usize>,
     pub search_state: &'a SearchState,
     pub area_width: u16,
+    /// Transient feedback for a keypress that had nothing to do (e.g. `a`
+    /// without `--guide`). Overrides the hunk-count/help hint on the right
+    /// while set; see `AppState::status_message`.
+    pub status_message: Option<&'a str>,
+    /// Whether the AI-generated Guide summary is still being computed for
+    /// the current diff — surfaced here so it's visible without toggling
+    /// into the Guide sidebar first.
+    pub guide_pending: bool,
 }
 
 /// Truncates a file path by abbreviating directory names to their first character.
@@ -112,6 +120,11 @@ pub fn render_footer(frame: &mut Frame, footer_area: Rect, data: FooterData) {
         frame.render_widget(footer, footer_area);
     } else {
         let watch_indicator = if data.watching { " watching" } else { "" };
+        let guide_indicator = if data.guide_pending {
+            " guide: generating…"
+        } else {
+            ""
+        };
         let max_filename_len = if data.search_state.has_query() {
             (data.area_width as usize).saturating_sub(80).min(40)
         } else {
@@ -184,6 +197,10 @@ pub fn render_footer(frame: &mut Frame, footer_area: Rect, data: FooterData) {
                 Span::styled(viewed_indicator, Style::default().fg(t.ui.viewed).bg(bg)),
             ];
             spans.extend(stats_spans);
+            spans.push(Span::styled(
+                guide_indicator,
+                Style::default().fg(t.ui.watching).bg(bg),
+            ));
             spans
         } else {
             // Normal diff mode: show commit reference
@@ -203,11 +220,23 @@ pub fn render_footer(frame: &mut Frame, footer_area: Rect, data: FooterData) {
                 Span::styled(viewed_indicator, Style::default().fg(t.ui.viewed).bg(bg)),
             ];
             spans.extend(stats_spans);
-            spans.push(Span::styled(watch_indicator, Style::default().fg(t.ui.watching).bg(bg)));
+            spans.push(Span::styled(
+                watch_indicator,
+                Style::default().fg(t.ui.watching).bg(bg),
+            ));
+            spans.push(Span::styled(
+                guide_indicator,
+                Style::default().fg(t.ui.watching).bg(bg),
+            ));
             spans
         };
 
-        let right_spans: Vec<Span> = if data.search_state.has_query() {
+        let right_spans: Vec<Span> = if let Some(msg) = data.status_message {
+            vec![Span::styled(
+                format!(" {} ", msg),
+                Style::default().fg(t.ui.highlight).bg(bg),
+            )]
+        } else if data.search_state.has_query() {
             let match_count = data.search_state.match_count();
             let current_idx = data
                 .search_state
@@ -223,10 +252,7 @@ pub fn render_footer(frame: &mut Frame, footer_area: Rect, data: FooterData) {
                 format!("[0/0] /{} ", data.search_state.query)
             };
             vec![
-                Span::styled(
-                    search_info,
-                    Style::default().fg(t.ui.highlight).bg(bg),
-                ),
+                Span::styled(search_info, Style::default().fg(t.ui.highlight).bg(bg)),
                 Span::styled(
                     " n/N navigate ",
                     Style::default().fg(t.ui.text_muted).bg(bg),
@@ -259,10 +285,7 @@ pub fn render_footer(frame: &mut Frame, footer_area: Rect, data: FooterData) {
                     },
                     Style::default().fg(t.ui.text_muted).bg(bg),
                 ),
-                Span::styled(
-                    " ? help ",
-                    Style::default().fg(t.ui.text_muted).bg(bg),
-                ),
+                Span::styled(" ? help ", Style::default().fg(t.ui.text_muted).bg(bg)),
             ]
         };
 
@@ -277,10 +300,7 @@ pub fn render_footer(frame: &mut Frame, footer_area: Rect, data: FooterData) {
         let padding = footer_width.saturating_sub(left_len + right_len);
 
         let mut final_spans: Vec<Span> = left_line.spans;
-        final_spans.push(Span::styled(
-            " ".repeat(padding),
-            Style::default().bg(bg),
-        ));
+        final_spans.push(Span::styled(" ".repeat(padding), Style::default().bg(bg)));
         final_spans.extend(right_line.spans);
 
         let footer = Paragraph::new(Line::from(final_spans)).style(Style::default().bg(bg));

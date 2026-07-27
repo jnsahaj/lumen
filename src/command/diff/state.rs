@@ -1,16 +1,18 @@
 use std::collections::{HashMap, HashSet};
-use std::time::SystemTime;
+use std::time::{Instant, SystemTime};
 
 use tree_sitter::{Parser, Tree};
 
 use crate::command::diff::context::get_language_context;
-use crate::command::diff::diff_algo::{compute_side_by_side, count_added_removed, find_hunk_starts};
+use crate::command::diff::diff_algo::{
+    compute_side_by_side, count_added_removed, find_hunk_starts,
+};
 use crate::command::diff::highlight::FileHighlighter;
 
 use crate::command::diff::search::SearchState;
 use crate::command::diff::types::{
-    build_file_tree, CursorPosition, DiffFullscreen, DiffLine, DiffPanelFocus,
-    DiffViewSettings, FileDiff, FocusedPanel, Selection, SelectionMode, SidebarItem,
+    build_file_tree, CursorPosition, DiffFullscreen, DiffLine, DiffPanelFocus, DiffViewSettings,
+    FileDiff, FocusedPanel, Selection, SelectionMode, SidebarItem,
 };
 use crate::vcs::StackedCommitInfo;
 
@@ -19,6 +21,15 @@ pub enum PendingKey {
     #[default]
     None,
     G,
+}
+
+/// Which content the sidebar panel is currently showing: the normal
+/// directory/file tree, or the AI-generated review guide (grouped changes).
+#[derive(Default, Clone, Copy, PartialEq)]
+pub enum SidebarMode {
+    #[default]
+    Directory,
+    Guide,
 }
 
 fn sidebar_item_path(item: &SidebarItem) -> &str {
@@ -108,7 +119,10 @@ impl Annotation {
     #[cfg(not(feature = "jj"))]
     pub fn format_time(&self) -> String {
         use std::time::UNIX_EPOCH;
-        let duration = self.created_at.duration_since(UNIX_EPOCH).unwrap_or_default();
+        let duration = self
+            .created_at
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default();
         let secs = duration.as_secs();
         let hours = (secs / 3600) % 24;
         let minutes = (secs / 60) % 60;
@@ -131,7 +145,11 @@ impl Annotation {
     pub fn line_range_display(&self) -> String {
         match &self.target {
             AnnotationTarget::File => String::new(),
-            AnnotationTarget::LineRange { start_line, end_line, .. } => {
+            AnnotationTarget::LineRange {
+                start_line,
+                end_line,
+                ..
+            } => {
                 if start_line == end_line {
                     format!("L{}", start_line)
                 } else {
@@ -227,7 +245,33 @@ pub struct AppState {
     pub total_added: usize,
     /// Total removed lines across all files in the current diff. Recomputed on reload.
     pub total_removed: usize,
+    /// AI-generated groupings, keyed by diff identity (see
+    /// `current_diff_identity` in `app.rs`). Self-invalidating: a changed
+    /// diff produces a new identity, so stale entries for old identities
+    /// are simply never looked up again — no explicit pruning needed.
+    pub groups_cache: HashMap<String, crate::grouped_summary::GroupedSummary>,
+    /// Identities with a grouped-summary request currently in flight.
+    pub groups_pending: HashSet<String>,
+    /// Error messages from failed grouped-summary requests, keyed by identity.
+    pub groups_errors: HashMap<String, String>,
+    /// Identity of the diff currently displayed; set by
+    /// `maybe_trigger_group_generation`.
+    pub current_diff_identity: String,
+    /// Whether the sidebar is showing the directory tree or the Guide.
+    pub sidebar_mode: SidebarMode,
+    /// Selected group index within the current diff's Guide.
+    pub guide_group_selected: usize,
+    /// Selected file index within the currently selected Guide group.
+    pub guide_file_selected: usize,
+    /// Transient feedback for a keypress that had nothing to do (e.g. `a`
+    /// without `--guide`), paired with when it was set so the main loop can
+    /// clear it after `STATUS_MESSAGE_TTL`. Shown in the footer.
+    pub status_message: Option<(String, Instant)>,
 }
+
+/// How long a `status_message` stays visible in the footer before the main
+/// loop clears it.
+pub const STATUS_MESSAGE_TTL: std::time::Duration = std::time::Duration::from_secs(2);
 
 fn compute_total_line_stats(file_diffs: &[FileDiff]) -> (usize, usize) {
     let mut added = 0usize;
@@ -330,6 +374,14 @@ impl AppState {
             editor_rect: None,
             total_added,
             total_removed,
+            groups_cache: HashMap::new(),
+            groups_pending: HashSet::new(),
+            groups_errors: HashMap::new(),
+            current_diff_identity: String::new(),
+            sidebar_mode: SidebarMode::default(),
+            guide_group_selected: 0,
+            guide_file_selected: 0,
+            status_message: None,
         }
     }
 
@@ -566,6 +618,23 @@ impl AppState {
         content_y - cumulative
     }
 
+    /// Set a transient footer message (e.g. feedback for a keypress that had
+    /// nothing to do). Cleared automatically by `expire_status_message` once
+    /// `STATUS_MESSAGE_TTL` has elapsed.
+    pub fn set_status_message(&mut self, message: impl Into<String>) {
+        self.status_message = Some((message.into(), Instant::now()));
+    }
+
+    /// Drop `status_message` once it has been visible for `STATUS_MESSAGE_TTL`.
+    /// Called once per main-loop iteration so the message fades on its own.
+    pub fn expire_status_message(&mut self) {
+        if let Some((_, set_at)) = &self.status_message {
+            if set_at.elapsed() >= STATUS_MESSAGE_TTL {
+                self.status_message = None;
+            }
+        }
+    }
+
     /// Clear all selection state
     pub fn clear_selection(&mut self) {
         self.diff_panel_focus = DiffPanelFocus::None;
@@ -575,7 +644,12 @@ impl AppState {
     }
 
     /// Start a new selection
-    pub fn start_selection(&mut self, panel: DiffPanelFocus, pos: CursorPosition, mode: SelectionMode) {
+    pub fn start_selection(
+        &mut self,
+        panel: DiffPanelFocus,
+        pos: CursorPosition,
+        mode: SelectionMode,
+    ) {
         self.diff_panel_focus = panel;
         self.selection = Selection {
             panel,
@@ -808,9 +882,15 @@ impl AppState {
         self.sidebar_items = build_file_tree(&self.file_diffs);
 
         // Retain annotations whose file still exists
-        let filenames: HashSet<&str> = self.file_diffs.iter().map(|f| f.filename.as_str()).collect();
-        self.annotations.retain(|ann| filenames.contains(ann.filename.as_str()));
-        self.viewed_hunks.retain(|fname, _| filenames.contains(fname.as_str()));
+        let filenames: HashSet<&str> = self
+            .file_diffs
+            .iter()
+            .map(|f| f.filename.as_str())
+            .collect();
+        self.annotations
+            .retain(|ann| filenames.contains(ann.filename.as_str()));
+        self.viewed_hunks
+            .retain(|fname, _| filenames.contains(fname.as_str()));
 
         // Convert viewed filenames back to indices in the new file_diffs
         self.viewed_files = self
@@ -838,6 +918,15 @@ impl AppState {
         self.needs_reload = false;
         self.invalidate_cache(); // Clear cache after reload
 
+        // The diff content may have changed underneath the current Guide
+        // selection; reset it rather than leaving indices dangling into a
+        // group/file list that may no longer match. The grouped-summary
+        // cache itself needs no clearing here — it's keyed by
+        // content-derived identity, so a changed diff simply gets a new
+        // key and the trigger helper re-requests it.
+        self.guide_group_selected = 0;
+        self.guide_file_selected = 0;
+
         // Preserve scroll position instead of resetting
         if !self.file_diffs.is_empty() {
             // Keep the old scroll position, but clamp to valid range
@@ -846,6 +935,11 @@ impl AppState {
             self.scroll = old_scroll.min(max_scroll as u16);
             self.h_scroll = old_h_scroll;
         }
+    }
+
+    /// Find the index into `file_diffs` for a given filename, if present.
+    pub fn file_index_for_path(&self, path: &str) -> Option<usize> {
+        self.file_diffs.iter().position(|f| f.filename == path)
     }
 
     pub fn select_file(&mut self, file_index: usize) {
@@ -879,7 +973,13 @@ impl AppState {
     }
 
     /// Add a new annotation, returns its id
-    pub fn add_annotation(&mut self, filename: String, target: AnnotationTarget, content: String, created_at: SystemTime) -> u64 {
+    pub fn add_annotation(
+        &mut self,
+        filename: String,
+        target: AnnotationTarget,
+        content: String,
+        created_at: SystemTime,
+    ) -> u64 {
         let id = self.annotation_next_id;
         self.annotation_next_id += 1;
         self.annotations.push(Annotation {
@@ -925,7 +1025,12 @@ impl AppState {
                 AnnotationTarget::File => {
                     result.push_str(&format!("**{}**\n\n", ann.filename));
                 }
-                AnnotationTarget::LineRange { panel, start_line, end_line, .. } => {
+                AnnotationTarget::LineRange {
+                    panel,
+                    start_line,
+                    end_line,
+                    ..
+                } => {
                     let side = match panel {
                         DiffPanelFocus::Old => "LEFT",
                         _ => "RIGHT",
@@ -952,6 +1057,30 @@ impl AppState {
         result.trim_end().to_string()
     }
 }
+
+/// Mark each of `paths` as viewed in `state`, set-only (never unmarks an
+/// already-viewed file). Unknown paths are silently ignored. In PR mode
+/// (`pr_info.is_some()`), newly-marked files also fire the async
+/// mark-as-viewed GitHub mutation.
+///
+/// This is a standalone helper for the AI-grouping "mark group viewed"
+/// action; it intentionally does not share code with the Space-key
+/// bulk-toggle handler in `app.rs`, which has its own toggle (not set-only)
+/// semantics.
+pub fn mark_paths_viewed(state: &mut AppState, paths: &[String], pr_info: Option<&super::PrInfo>) {
+    for path in paths {
+        let Some(idx) = state.file_index_for_path(path) else {
+            continue;
+        };
+        let newly_viewed = state.viewed_files.insert(idx);
+        if newly_viewed {
+            if let Some(pr) = pr_info {
+                super::mark_file_as_viewed_async(pr, path);
+            }
+        }
+    }
+}
+
 pub fn adjust_scroll_to_line(
     line: usize,
     scroll: u16,
@@ -1062,7 +1191,9 @@ mod tests {
 
         let state = AppState::new(diffs, Some("ccc.rs"));
 
-        if let Some(SidebarItem::File { file_index, .. }) = state.sidebar_item_at_visible(state.sidebar_selected) {
+        if let Some(SidebarItem::File { file_index, .. }) =
+            state.sidebar_item_at_visible(state.sidebar_selected)
+        {
             assert_eq!(*file_index, state.current_file);
         } else {
             panic!("sidebar_selected should point to a file");
@@ -1077,5 +1208,62 @@ mod tests {
 
         assert_eq!(state.current_file, 0);
         assert!(state.file_diffs.is_empty());
+    }
+
+    #[test]
+    fn file_index_for_path_returns_index_of_matching_file() {
+        let diffs = vec![make_file_diff("src/a.rs"), make_file_diff("src/b.rs")];
+        let state = AppState::new(diffs, None);
+
+        assert_eq!(state.file_index_for_path("src/b.rs"), Some(1));
+    }
+
+    #[test]
+    fn file_index_for_path_returns_none_for_unknown_path() {
+        let diffs = vec![make_file_diff("src/a.rs")];
+        let state = AppState::new(diffs, None);
+
+        assert_eq!(state.file_index_for_path("src/nonexistent.rs"), None);
+    }
+
+    #[test]
+    fn mark_paths_viewed_marks_known_paths_by_index() {
+        let diffs = vec![
+            make_file_diff("src/a.rs"),
+            make_file_diff("src/b.rs"),
+            make_file_diff("src/c.rs"),
+        ];
+        let mut state = AppState::new(diffs, None);
+
+        mark_paths_viewed(
+            &mut state,
+            &["src/a.rs".to_string(), "src/c.rs".to_string()],
+            None,
+        );
+
+        assert!(state.viewed_files.contains(&0));
+        assert!(!state.viewed_files.contains(&1));
+        assert!(state.viewed_files.contains(&2));
+    }
+
+    #[test]
+    fn mark_paths_viewed_ignores_unknown_paths_without_panicking() {
+        let diffs = vec![make_file_diff("src/a.rs")];
+        let mut state = AppState::new(diffs, None);
+
+        mark_paths_viewed(&mut state, &["does/not/exist.rs".to_string()], None);
+
+        assert!(state.viewed_files.is_empty());
+    }
+
+    #[test]
+    fn mark_paths_viewed_leaves_already_viewed_files_viewed() {
+        let diffs = vec![make_file_diff("src/a.rs")];
+        let mut state = AppState::new(diffs, None);
+        state.viewed_files.insert(0);
+
+        mark_paths_viewed(&mut state, &["src/a.rs".to_string()], None);
+
+        assert!(state.viewed_files.contains(&0));
     }
 }
