@@ -223,7 +223,14 @@ fn find_sbs_index_for_line(
 fn format_annotation_preview(annotation: &super::state::Annotation) -> String {
     let preview = annotation.content.lines().next().unwrap_or("");
     let preview = if preview.len() > 40 {
-        format!("{}...", &preview[..40])
+        // Find the last char boundary at or before byte 40 to avoid panicking mid-character.
+        let cutoff = preview
+            .char_indices()
+            .map(|(i, _)| i)
+            .take_while(|&i| i <= 40)
+            .last()
+            .unwrap_or(0);
+        format!("{}...", &preview[..cutoff])
     } else {
         preview.to_string()
     };
