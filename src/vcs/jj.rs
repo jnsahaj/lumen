@@ -978,7 +978,7 @@ impl VcsBackend for JjBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vcs::test_utils::JjRepoGuard;
+    use crate::{command::diff::FilterChain, vcs::test_utils::JjRepoGuard};
 
     #[test]
     fn test_jj_backend_new_succeeds_on_jj_repo() {
@@ -1888,12 +1888,12 @@ mod tests {
         );
 
         // Load diffs for each commit using VcsBackend
-        let diffs_b = load_single_commit_diffs(&commits[0].commit_id, &None, &backend);
+        let diffs_b = load_single_commit_diffs(&commits[0].commit_id, &None, &backend, &FilterChain::default());
         assert_eq!(diffs_b.len(), 1);
         assert_eq!(diffs_b[0].filename, "b.txt");
         assert_eq!(diffs_b[0].new_content, "commit B content\n");
 
-        let diffs_c = load_single_commit_diffs(&commits[1].commit_id, &None, &backend);
+        let diffs_c = load_single_commit_diffs(&commits[1].commit_id, &None, &backend, &FilterChain::default());
         assert_eq!(diffs_c.len(), 1);
         assert_eq!(diffs_c[0].filename, "c.txt");
         assert_eq!(diffs_c[0].new_content, "commit C content\n");

@@ -147,6 +147,14 @@ pub enum Commands {
         /// Soft-wrap long diff lines instead of scrolling horizontally
         #[arg(long)]
         wrap: bool,
+        
+        /// Include all files matching the specified glob pattern
+        #[arg(short, long)]
+        include: Vec<String>,
+
+        /// Exclude all files matching the specified glob pattern
+        #[arg(short = 'x', long)]
+        exclude: Vec<String>,
     },
     /// Interactively configure Lumen (provider, API key)
     Configure,

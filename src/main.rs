@@ -9,6 +9,8 @@ use std::io::Read;
 use std::process;
 use vcs::VcsBackendType;
 
+use crate::command::diff::{FilterChain, FilterSet};
+
 mod ai_prompt;
 mod command;
 mod commit_reference;
@@ -133,6 +135,8 @@ async fn run() -> Result<(), LumenError> {
             focus,
             origin,
             wrap,
+            include,
+            exclude,
         } => {
             let options = command::diff::DiffOptions {
                 reference,
@@ -145,6 +149,14 @@ async fn run() -> Result<(), LumenError> {
                 focus,
                 origin,
                 wrap: wrap || config.wrap.unwrap_or(false),
+                filter: FilterChain {
+                    cli: FilterSet { include, exclude },
+                    ignore_file: FilterSet::from_ignore_file(),
+                    global_config: FilterSet {
+                        include: config.include,
+                        exclude: config.exclude,
+                    },
+                },
             };
             command::diff::run_diff_ui(options, backend.as_ref())?;
         }
