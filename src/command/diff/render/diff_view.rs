@@ -1781,11 +1781,24 @@ pub fn render_diff(
             }
         };
 
+        let old_scroll = side_by_side
+            .iter()
+            .skip(scroll as usize)
+            .find_map(|dl| dl.old_line.as_ref().map(|(n, _)| *n))
+            .map(|n| n.saturating_sub(1))
+            .unwrap_or_else(|| diff.old_content.lines().count());
+        let new_scroll = side_by_side
+            .iter()
+            .skip(scroll as usize)
+            .find_map(|dl| dl.new_line.as_ref().map(|(n, _)| *n))
+            .map(|n| n.saturating_sub(1))
+            .unwrap_or_else(|| diff.new_content.lines().count());
+        
         let old_context = compute_context_lines(
             &diff.old_content,
             &diff.filename,
             &trees.old_file_trees,
-            scroll as usize,
+            old_scroll,
             &settings.context,
             settings.tab_width,
         );
@@ -1793,7 +1806,7 @@ pub fn render_diff(
             &diff.new_content,
             &diff.filename,
             &trees.new_file_trees,
-            scroll as usize,
+            new_scroll,
             &settings.context,
             settings.tab_width,
         );
