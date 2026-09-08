@@ -1296,3 +1296,233 @@ pub const CPP_HIGHLIGHTS: &str = r##"
 ";" @punctuation.delimiter
 ":" @punctuation.delimiter
 "##;
+
+pub const SWIFT_HIGHLIGHTS: &str = r#"
+; Comments
+[
+  (comment)
+  (multiline_comment)
+] @comment
+
+; Strings and literals
+(line_str_text) @string
+(multi_line_str_text) @string
+(raw_str_part) @string
+(raw_str_end_part) @string
+(str_escaped_char) @string.special
+[
+  "\""
+  "\"\"\""
+] @string
+(line_string_literal
+  [
+    "\\("
+    ")"
+  ] @punctuation)
+(multi_line_string_literal
+  [
+    "\\("
+    ")"
+  ] @punctuation)
+(raw_str_interpolation
+  [
+    (raw_str_interpolation_start)
+    ")"
+  ] @punctuation)
+(regex_literal) @string.special
+
+; Numbers
+[
+  (integer_literal)
+  (hex_literal)
+  (oct_literal)
+  (bin_literal)
+  (real_literal)
+] @number
+
+; Constants / builtins
+(boolean_literal) @constant.builtin
+"nil" @constant.builtin
+(wildcard_pattern) @constant.builtin
+
+; Types
+(type_identifier) @type
+((navigation_expression
+  (simple_identifier) @type)
+  (#match? @type "^[A-Z]"))
+
+; Members and properties (defined BEFORE call captures so calls win on tie)
+(class_body
+  (property_declaration
+    (pattern
+      (simple_identifier) @variable.member)))
+(protocol_property_declaration
+  (pattern
+    (simple_identifier) @variable.member))
+(navigation_expression
+  (navigation_suffix
+    (simple_identifier) @variable.member))
+
+; Functions
+(function_declaration
+  (simple_identifier) @function)
+(protocol_function_declaration
+  name: (simple_identifier) @function)
+(init_declaration
+  "init" @constructor)
+(call_expression
+  (simple_identifier) @function)
+(call_expression
+  (navigation_expression
+    (navigation_suffix
+      (simple_identifier) @function.method)))
+(call_expression
+  (prefix_expression
+    (simple_identifier) @function.method))
+
+; Parameters
+(parameter
+  external_name: (simple_identifier) @variable.parameter)
+(parameter
+  name: (simple_identifier) @variable.parameter)
+
+; Self / super
+[
+  (self_expression)
+  (super_expression)
+] @variable.builtin
+
+; Attributes
+(modifiers
+  (attribute
+    "@" @attribute
+    (user_type
+      (type_identifier) @attribute)))
+
+; Keywords
+[
+  "func"
+  "deinit"
+  "protocol"
+  "extension"
+  "indirect"
+  "nonisolated"
+  "override"
+  "convenience"
+  "required"
+  "some"
+  "any"
+  "weak"
+  "unowned"
+  "didSet"
+  "willSet"
+  "subscript"
+  "let"
+  "var"
+  "enum"
+  "struct"
+  "class"
+  "typealias"
+  "async"
+  "await"
+  "import"
+  "case"
+  "for"
+  "in"
+  "while"
+  "repeat"
+  "continue"
+  "break"
+  "guard"
+  "if"
+  "switch"
+  "fallthrough"
+  "return"
+  "do"
+  "try"
+] @keyword
+[
+  (visibility_modifier)
+  (member_modifier)
+  (function_modifier)
+  (property_modifier)
+  (parameter_modifier)
+  (inheritance_modifier)
+  (mutation_modifier)
+  (throws)
+  (where_keyword)
+  (getter_specifier)
+  (setter_specifier)
+  (modify_specifier)
+  (try_operator)
+  (throw_keyword)
+  (catch_keyword)
+  (else)
+] @keyword
+(shebang_line) @keyword
+(directive) @keyword
+
+; Operators
+(custom_operator) @operator
+[
+  "+"
+  "-"
+  "*"
+  "/"
+  "%"
+  "="
+  "+="
+  "-="
+  "*="
+  "/="
+  "<"
+  ">"
+  "<<"
+  ">>"
+  "<="
+  ">="
+  "++"
+  "--"
+  "^"
+  "&"
+  "&&"
+  "|"
+  "||"
+  "~"
+  "%="
+  "!="
+  "!=="
+  "=="
+  "==="
+  "?"
+  "??"
+  "->"
+  "..<"
+  "..."
+  (bang)
+] @operator
+
+; Labels
+(statement_label) @label
+
+; Punctuation
+[
+  "."
+  ";"
+  ":"
+  ","
+] @punctuation.delimiter
+[
+  "("
+  ")"
+  "["
+  "]"
+  "{"
+  "}"
+] @punctuation.bracket
+(type_arguments
+  [
+    "<"
+    ">"
+  ] @punctuation.bracket)
+"#;

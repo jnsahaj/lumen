@@ -248,6 +248,7 @@ mod tests {
         assert!(extensions.contains(&"hpp"), "C++ .hpp config should be loaded");
         assert!(extensions.contains(&"hh"), "C++ .hh config should be loaded");
         assert!(extensions.contains(&"hxx"), "C++ .hxx config should be loaded");
+        assert!(extensions.contains(&"swift"), "Swift config should be loaded");
     }
 
     #[test]
@@ -451,6 +452,139 @@ int main() {
         assert!(
             has_namespace_keyword,
             "C++ 'namespace' should be highlighted as keyword"
+        );
+    }
+
+    #[test]
+    fn test_swift_highlighting() {
+        use config::HIGHLIGHT_NAMES;
+        let code = r#"import Foundation
+
+// A greeting service
+public protocol Greeter {
+    var name: String { get }
+    func greet() -> String
+}
+
+public struct Person: Greeter {
+    public var name: String
+    private var age: Int
+
+    public init(name: String, age: Int) {
+        self.name = name
+        self.age = age
+    }
+
+    public func greet() -> String {
+        let message = "Hello, \\(self.name)!"
+        return message
+    }
+}
+
+let greeting = Person(name: "Jane", age: 30).greet()
+"#;
+        let result = highlight_code(code, "test.swift");
+        assert!(
+            !result.is_empty(),
+            "Swift highlighting should produce output"
+        );
+        let has_highlights = result.iter().any(|(_, h)| h.is_some());
+        assert!(
+            has_highlights,
+            "Swift code should have syntax highlights"
+        );
+
+        let idx = |name: &str| {
+            HIGHLIGHT_NAMES
+                .iter()
+                .position(|&n| n == name)
+                .unwrap_or_else(|| panic!("{} should be a valid highlight name", name))
+        };
+        let comment_idx = Some(idx("comment"));
+        let keyword_idx = Some(idx("keyword"));
+        let type_idx = Some(idx("type"));
+        let function_idx = Some(idx("function"));
+        let method_idx = Some(idx("function.method"));
+        let string_idx = Some(idx("string"));
+        let number_idx = Some(idx("number"));
+        let constructor_idx = Some(idx("constructor"));
+        let param_idx = Some(idx("variable.parameter"));
+        let builtin_idx = Some(idx("variable.builtin"));
+        let member_idx = Some(idx("variable.member"));
+
+        // Comments
+        assert!(
+            result.iter().any(|(t, h)| t.contains("A greeting service") && *h == comment_idx),
+            "Swift comment should be highlighted as 'comment'"
+        );
+
+        // Keywords
+        for kw in ["import", "protocol", "struct", "func", "var", "let", "return", "public"] {
+            assert!(
+                result.iter().any(|(t, h)| t == kw && *h == keyword_idx),
+                "Swift keyword '{}' should be highlighted as 'keyword'",
+                kw
+            );
+        }
+
+        // Types
+        assert!(
+            result.iter().any(|(t, h)| t == "Greeter" && *h == type_idx),
+            "Protocol name should be highlighted as 'type'"
+        );
+        assert!(
+            result.iter().any(|(t, h)| t == "Person" && *h == type_idx),
+            "Struct name should be highlighted as 'type'"
+        );
+        assert!(
+            result.iter().any(|(t, h)| t == "String" && *h == type_idx),
+            "'String' should be highlighted as 'type'"
+        );
+
+        // Function declarations vs. method calls (tie-break: calls win)
+        assert!(
+            result.iter().any(|(t, h)| t == "greet" && *h == function_idx),
+            "Declared function 'greet' should be highlighted as 'function'"
+        );
+        assert!(
+            result.iter().any(|(t, h)| t == "greet" && *h == method_idx),
+            "Called method 'greet' should be highlighted as 'function.method'"
+        );
+        assert!(
+            result.iter().any(|(t, h)| t == "Person" && *h == function_idx),
+            "Constructor call 'Person' should be highlighted as 'function'"
+        );
+
+        // init
+        assert!(
+            result.iter().any(|(t, h)| t == "init" && *h == constructor_idx),
+            "'init' should be highlighted as 'constructor'"
+        );
+
+        // Parameters
+        assert!(
+            result.iter().any(|(t, h)| t == "age" && *h == param_idx),
+            "Parameter 'age' should be highlighted as 'variable.parameter'"
+        );
+
+        // Self / members
+        assert!(
+            result.iter().any(|(t, h)| t == "self" && *h == builtin_idx),
+            "'self' should be highlighted as 'variable.builtin'"
+        );
+        assert!(
+            result.iter().any(|(t, h)| t == "name" && *h == member_idx),
+            "Member 'name' in 'self.name' should be highlighted as 'variable.member'"
+        );
+
+        // Strings and numbers
+        assert!(
+            result.iter().any(|(t, h)| t.contains("Jane") && *h == string_idx),
+            "String literal should be highlighted as 'string'"
+        );
+        assert!(
+            result.iter().any(|(t, h)| t == "30" && *h == number_idx),
+            "Number literal '30' should be highlighted as 'number'"
         );
     }
 
