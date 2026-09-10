@@ -249,7 +249,9 @@ lumen draft | git commit -F -
 
 [lazygit](https://github.com/jesseduffield/lazygit) integration is available — see the [user config docs](https://github.com/jesseduffield/lazygit/blob/master/docs/Config.md) for binding `lumen draft` to a custom command.
 
-### AI Providers
+---
+
+## AI Providers
 
 Configure your preferred AI provider:
 
@@ -263,7 +265,9 @@ export LUMEN_API_KEY="your-api-key"
 export LUMEN_AI_MODEL="gpt-5-mini"
 ```
 
-#### Supported Providers
+LM Studio connects to the local server at `http://localhost:1234/v1/` by default; set `LMSTUDIO_BASE_URL` to point at a different host or port.
+
+### Supported Providers
 
 | Provider | API Key Required | Models |
 |----------|-----------------|---------|
@@ -275,8 +279,87 @@ export LUMEN_AI_MODEL="gpt-5-mini"
 | [xAI](https://x.ai/) `xai` | Yes | `grok-4`, `grok-4-mini`, `grok-4-mini-fast` (default: `grok-4-mini-fast`) |
 | [OpenCode Zen](https://opencode.ai/docs/zen) `opencode-zen` | Yes | [see list](https://opencode.ai/docs/zen#models) (default: `claude-sonnet-4-5`) |
 | [Ollama](https://github.com/ollama/ollama) `ollama` | No (local) | [see list](https://ollama.com/library) (default: `llama3.2`) |
+| [LM Studio](https://lmstudio.ai) `lmstudio` | No (optional `-k` if server auth enabled) | models loaded in LM Studio (picked in `lumen configure`; default port 1234, override with `LMSTUDIO_BASE_URL`) |
 | [OpenRouter](https://openrouter.ai/) `openrouter` | Yes | [see list](https://openrouter.ai/models) (default: `anthropic/claude-sonnet-4.5`) |
 | [Vercel AI Gateway](https://vercel.com/docs/ai-gateway) `vercel` | Yes | [see list](https://vercel.com/docs/ai-gateway/supported-models) (default: `anthropic/claude-sonnet-4.5`) |
+
+---
+
+### LM Studio Model Discovery
+
+When running `lumen configure` with LM Studio, the wizard attempts to fetch the model list from the server (`GET {base}/models`). If successful, it presents a picker with available models. If the server is unreachable or has no models loaded, it falls back to free-text input.
+
+**Important:** The wizard loops until you provide a non-empty model ID. LM Studio has no default model — model IDs are arbitrary and must be explicitly specified. Saving an empty model would cause a runtime error ("no model configured").
+
+#### Troubleshooting
+
+##### Server Connection Issues
+
+###### "Failed to fetch models from server"
+The wizard cannot connect to LM Studio. Check:
+
+1. **LM Studio is running** — Look for the icon in your menu bar (macOS) or system tray (Windows/Linux)
+2. **Default port available** — The wizard uses `http://localhost:1234/v1/` by default
+   - If you changed LM Studio's port, set it via environment variable:
+     ```bash
+     export LMSTUDIO_BASE_URL="http://localhost:1242/v1/"
+     lumen configure
+     ```
+3. **Firewall blocking localhost** — Rare, but some security software may block local connections
+
+###### "Connection refused"
+- Ensure no other process is using port 1234 (`lsof -i :1234` on macOS/Linux or `netstat -ano | findstr :1234` on Windows)
+- Restart LM Studio if it crashed or froze
+
+### Model Configuration Issues
+
+#### "Model not found" error
+The model ID you entered doesn't match what's loaded in LM Studio:
+
+1. **Case-sensitive** — `qwen3-8b` ≠ `Qwen3-8B`
+2. **Verify model is loaded** — Open LM Studio UI → Models tab → check "Loaded models"
+3. **Fetch available models** — Run `lumen configure` again to see the list of loaded models
+
+##### Model availability warning
+If your configured model isn't loaded in LM Studio, the wizard warns you and selects the first available model instead. Load your preferred model in LM Studio UI before configuring.
+
+##### Config file reconfiguration guard
+When reconfiguring LM Studio without specifying a model, the wizard retains your previous model selection (LM Studio has no default). This prevents accidental config loss.
+
+### Authentication Problems
+
+#### "401 Unauthorized" or authentication required
+Some users enable server authentication in LM Studio settings (Settings → Server).
+
+**Solution:** Pass API key explicitly:
+```bash
+# CLI flag
+lumen -p lmstudio -k "your-api-key" configure
+
+# Or environment variable
+export LUMEN_API_KEY="your-api-key"
+lumen configure
+```
+
+### Port Conflicts
+
+If LM Studio won't start on port 1234:
+- Check for conflicts: `lsof -i :1234` (macOS/Linux) or `netstat -ano | findstr :1234` (Windows)
+- Change LM Studio's default port in Settings → Server
+- Update `LMSTUDIO_BASE_URL` environment variable accordingly
+
+### General Tips
+
+| Issue | Quick Fix |
+|-------|-----------|
+| Wizard hangs | Check if LM Studio is actually running |
+| Models not showing | Refresh LM Studio UI, reload models |
+| Slow response times | LM Studio may be loading a large model first time |
+| "No models loaded" | Click "Load Model" in LM Studio UI before configuring |
+
+**Need more help?** Check the [LM Studio documentation](https://lmstudio.ai/docs) for server configuration details.
+
+---
 
 ## Coding Agent Integrations 🔅
 

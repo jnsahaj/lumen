@@ -149,7 +149,7 @@ async fn run() -> Result<(), LumenError> {
             command::diff::run_diff_ui(options, backend.as_ref())?;
         }
         Commands::Configure => {
-            command::configure::ConfigureCommand::execute()?;
+            command::configure::ConfigureCommand::execute().await?;
         }
     }
 
