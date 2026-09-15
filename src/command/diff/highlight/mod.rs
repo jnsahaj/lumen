@@ -248,6 +248,7 @@ mod tests {
         assert!(extensions.contains(&"hpp"), "C++ .hpp config should be loaded");
         assert!(extensions.contains(&"hh"), "C++ .hh config should be loaded");
         assert!(extensions.contains(&"hxx"), "C++ .hxx config should be loaded");
+        assert!(extensions.contains(&"m"), "Objective-C config should be loaded");
     }
 
     #[test]
@@ -451,6 +452,65 @@ int main() {
         assert!(
             has_namespace_keyword,
             "C++ 'namespace' should be highlighted as keyword"
+        );
+    }
+
+    #[test]
+    fn test_objc_highlighting() {
+        use config::HIGHLIGHT_NAMES;
+        let code = r#"#import <Foundation/Foundation.h>
+
+@interface Foo : NSObject
+@property (nonatomic, strong) NSString *name;
+- (instancetype)initWithName:(NSString *)name;
+@end
+
+@implementation Foo
+- (instancetype)initWithName:(NSString *)name {
+    self = [super init];
+    if (self) { _name = name; }
+    return self;
+}
+@end
+"#;
+        let result = highlight_code(code, "test.m");
+        assert!(
+            !result.is_empty(),
+            "Objective-C highlighting should produce output"
+        );
+        let has_highlights = result.iter().any(|(_, h)| h.is_some());
+        assert!(
+            has_highlights,
+            "Objective-C code should have syntax highlights"
+        );
+
+        let keyword_idx = HIGHLIGHT_NAMES.iter().position(|&n| n == "keyword");
+        let has_property_keyword = result
+            .iter()
+            .any(|(t, h)| *t == "@property" && *h == keyword_idx);
+        assert!(
+            has_property_keyword,
+            "Objective-C '@property' should be highlighted as keyword"
+        );
+
+        let type_idx = HIGHLIGHT_NAMES.iter().position(|&n| n == "type");
+        let has_class_type = result
+            .iter()
+            .any(|(t, h)| *t == "Foo" && *h == type_idx);
+        assert!(
+            has_class_type,
+            "Objective-C class name should be highlighted as type"
+        );
+
+        let method_idx = HIGHLIGHT_NAMES
+            .iter()
+            .position(|&n| n == "function.method");
+        let has_message_send = result
+            .iter()
+            .any(|(t, h)| *t == "init" && *h == method_idx);
+        assert!(
+            has_message_send,
+            "Objective-C message send should be highlighted as function.method"
         );
     }
 
