@@ -20,13 +20,6 @@ Review `git diff`, commits, branches, or GitHub PRs side-by-side without leaving
 
 [![Demo](https://github.com/user-attachments/assets/dc425871-3826-4368-88d8-931b9403f0ec)](https://github.com/user-attachments/assets/70d07324-8394-423c-bbc3-9460ed84877b)
 
-## Special Thanks
-<div align="center">
-  <a href="https://coderabbit.link/lumen-oss">
-    <img width="2152" height="313" alt="image" src="https://github.com/user-attachments/assets/a2039a9d-5c9c-4a8e-a063-753c319f2e20" />
-  </a>
-</div>
-
 ## Table of Contents
 - [Getting Started](#getting-started-)
   - [Prerequisites](#prerequisites)
