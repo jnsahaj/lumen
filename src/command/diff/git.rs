@@ -155,8 +155,7 @@ pub fn load_file_diffs(options: &DiffOptions, backend: &dyn VcsBackend) -> Vec<F
             } else {
                 FileStatus::Modified
             };
-            let is_binary =
-                is_binary_content(&old_content) || is_binary_content(&new_content);
+            let is_binary = is_binary_content(&old_content) || is_binary_content(&new_content);
             FileDiff {
                 filename,
                 old_content,
@@ -244,8 +243,7 @@ pub fn load_pr_file_diffs(pr_info: &PrInfo) -> Result<Vec<FileDiff>, String> {
                 FileStatus::Modified
             };
 
-            let is_binary =
-                is_binary_content(&old_content) || is_binary_content(&new_content);
+            let is_binary = is_binary_content(&old_content) || is_binary_content(&new_content);
             FileDiff {
                 filename,
                 old_content,
@@ -481,8 +479,7 @@ pub fn load_single_commit_diffs(
                 FileStatus::Modified
             };
 
-            let is_binary =
-                is_binary_content(&old_content) || is_binary_content(&new_content);
+            let is_binary = is_binary_content(&old_content) || is_binary_content(&new_content);
             FileDiff {
                 filename,
                 old_content,
@@ -537,6 +534,7 @@ mod tests {
             focus: None,
             origin: None,
             wrap: false,
+            save_annotations: false,
         };
 
         let diffs = load_file_diffs(&options, &backend);
@@ -609,6 +607,7 @@ mod tests {
             focus: None,
             origin: None,
             wrap: false,
+            save_annotations: false,
         };
 
         let diffs = load_file_diffs(&options, &backend);

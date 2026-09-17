@@ -4,13 +4,15 @@ use std::time::SystemTime;
 use tree_sitter::{Parser, Tree};
 
 use crate::command::diff::context::get_language_context;
-use crate::command::diff::diff_algo::{compute_side_by_side, count_added_removed, find_hunk_starts};
+use crate::command::diff::diff_algo::{
+    compute_side_by_side, count_added_removed, find_hunk_starts,
+};
 use crate::command::diff::highlight::FileHighlighter;
 
 use crate::command::diff::search::SearchState;
 use crate::command::diff::types::{
-    build_file_tree, CursorPosition, DiffFullscreen, DiffLine, DiffPanelFocus,
-    DiffViewSettings, FileDiff, FocusedPanel, Selection, SelectionMode, SidebarItem,
+    build_file_tree, CursorPosition, DiffFullscreen, DiffLine, DiffPanelFocus, DiffViewSettings,
+    FileDiff, FocusedPanel, Selection, SelectionMode, SidebarItem,
 };
 use crate::vcs::StackedCommitInfo;
 
@@ -93,6 +95,8 @@ pub struct Annotation {
     pub target: AnnotationTarget,
     pub content: String,
     pub created_at: SystemTime,
+    pub anchor: Option<String>,
+    pub stale: bool,
 }
 
 impl Annotation {
@@ -108,7 +112,10 @@ impl Annotation {
     #[cfg(not(feature = "jj"))]
     pub fn format_time(&self) -> String {
         use std::time::UNIX_EPOCH;
-        let duration = self.created_at.duration_since(UNIX_EPOCH).unwrap_or_default();
+        let duration = self
+            .created_at
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default();
         let secs = duration.as_secs();
         let hours = (secs / 3600) % 24;
         let minutes = (secs / 60) % 60;
@@ -131,7 +138,11 @@ impl Annotation {
     pub fn line_range_display(&self) -> String {
         match &self.target {
             AnnotationTarget::File => String::new(),
-            AnnotationTarget::LineRange { start_line, end_line, .. } => {
+            AnnotationTarget::LineRange {
+                start_line,
+                end_line,
+                ..
+            } => {
                 if start_line == end_line {
                     format!("L{}", start_line)
                 } else {
@@ -575,7 +586,12 @@ impl AppState {
     }
 
     /// Start a new selection
-    pub fn start_selection(&mut self, panel: DiffPanelFocus, pos: CursorPosition, mode: SelectionMode) {
+    pub fn start_selection(
+        &mut self,
+        panel: DiffPanelFocus,
+        pos: CursorPosition,
+        mode: SelectionMode,
+    ) {
         self.diff_panel_focus = panel;
         self.selection = Selection {
             panel,
@@ -799,6 +815,11 @@ impl AppState {
                 viewed_filenames.remove(filename);
                 self.viewed_hunks.remove(filename);
             }
+            for ann in self.annotations.iter_mut() {
+                if changed.contains(&ann.filename) {
+                    ann.stale = true;
+                }
+            }
         }
 
         self.file_diffs = file_diffs;
@@ -808,9 +829,15 @@ impl AppState {
         self.sidebar_items = build_file_tree(&self.file_diffs);
 
         // Retain annotations whose file still exists
-        let filenames: HashSet<&str> = self.file_diffs.iter().map(|f| f.filename.as_str()).collect();
-        self.annotations.retain(|ann| filenames.contains(ann.filename.as_str()));
-        self.viewed_hunks.retain(|fname, _| filenames.contains(fname.as_str()));
+        let filenames: HashSet<&str> = self
+            .file_diffs
+            .iter()
+            .map(|f| f.filename.as_str())
+            .collect();
+        self.annotations
+            .retain(|ann| filenames.contains(ann.filename.as_str()));
+        self.viewed_hunks
+            .retain(|fname, _| filenames.contains(fname.as_str()));
 
         // Convert viewed filenames back to indices in the new file_diffs
         self.viewed_files = self
@@ -879,7 +906,14 @@ impl AppState {
     }
 
     /// Add a new annotation, returns its id
-    pub fn add_annotation(&mut self, filename: String, target: AnnotationTarget, content: String, created_at: SystemTime) -> u64 {
+    pub fn add_annotation(
+        &mut self,
+        filename: String,
+        target: AnnotationTarget,
+        content: String,
+        created_at: SystemTime,
+        anchor: Option<String>,
+    ) -> u64 {
         let id = self.annotation_next_id;
         self.annotation_next_id += 1;
         self.annotations.push(Annotation {
@@ -888,8 +922,23 @@ impl AppState {
             target,
             content,
             created_at,
+            anchor,
+            stale: false,
         });
         id
+    }
+
+    /// Get the next annotation id that will be assigned
+    pub fn annotation_next_id(&self) -> u64 {
+        self.annotation_next_id
+    }
+
+    /// Raise the next annotation id counter to at least `floor`, so ids
+    /// restored from disk never collide with newly created ones.
+    pub fn set_annotation_next_id_floor(&mut self, floor: u64) {
+        if floor > self.annotation_next_id {
+            self.annotation_next_id = floor;
+        }
     }
 
     /// Update an existing annotation's content
@@ -925,7 +974,12 @@ impl AppState {
                 AnnotationTarget::File => {
                     result.push_str(&format!("**{}**\n\n", ann.filename));
                 }
-                AnnotationTarget::LineRange { panel, start_line, end_line, .. } => {
+                AnnotationTarget::LineRange {
+                    panel,
+                    start_line,
+                    end_line,
+                    ..
+                } => {
                     let side = match panel {
                         DiffPanelFocus::Old => "LEFT",
                         _ => "RIGHT",
@@ -1062,7 +1116,9 @@ mod tests {
 
         let state = AppState::new(diffs, Some("ccc.rs"));
 
-        if let Some(SidebarItem::File { file_index, .. }) = state.sidebar_item_at_visible(state.sidebar_selected) {
+        if let Some(SidebarItem::File { file_index, .. }) =
+            state.sidebar_item_at_visible(state.sidebar_selected)
+        {
             assert_eq!(*file_index, state.current_file);
         } else {
             panic!("sidebar_selected should point to a file");

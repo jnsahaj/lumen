@@ -32,6 +32,9 @@ pub struct LumenConfig {
 
     #[serde(default)]
     pub wrap: Option<bool>,
+
+    #[serde(default)]
+    pub save_annotations: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -130,6 +133,7 @@ impl LumenConfig {
             draft: config.draft,
             theme: config.theme,
             wrap: config.wrap,
+            save_annotations: config.save_annotations,
         })
     }
 
@@ -156,6 +160,7 @@ impl Default for LumenConfig {
             draft: default_draft_config(),
             theme: None,
             wrap: None,
+            save_annotations: None,
         }
     }
 }
