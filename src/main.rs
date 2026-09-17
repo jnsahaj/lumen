@@ -75,7 +75,7 @@ async fn run() -> Result<(), LumenError> {
                     Some(CommitReference::RangeToWorkingTree { from }) => {
                         let head_ref = backend.working_copy_parent_ref();
                         let range_diff = backend
-                            .get_range_diff(&from, head_ref, false)
+                            .get_range_diff(&from, head_ref, true)
                             .unwrap_or_default();
                         let wt_diff = backend.get_working_tree_diff(false).unwrap_or_default();
                         let combined = format!("{}{}", range_diff, wt_diff);
