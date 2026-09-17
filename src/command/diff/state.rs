@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::time::SystemTime;
 
 use tree_sitter::{Parser, Tree};
@@ -227,6 +228,10 @@ pub struct AppState {
     pub total_added: usize,
     /// Total removed lines across all files in the current diff. Recomputed on reload.
     pub total_removed: usize,
+    /// On-disk path for `--save-viewed` local persistence. `None` means the
+    /// flag wasn't passed, or path resolution failed (e.g. detached HEAD) —
+    /// in either case, nothing is persisted.
+    pub viewed_state_path: Option<PathBuf>,
 }
 
 fn compute_total_line_stats(file_diffs: &[FileDiff]) -> (usize, usize) {
@@ -330,6 +335,7 @@ impl AppState {
             editor_rect: None,
             total_added,
             total_removed,
+            viewed_state_path: None,
         }
     }
 

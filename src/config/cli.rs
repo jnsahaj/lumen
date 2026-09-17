@@ -147,6 +147,11 @@ pub enum Commands {
         /// Soft-wrap long diff lines instead of scrolling horizontally
         #[arg(long)]
         wrap: bool,
+
+        /// Persist viewed-file state locally across sessions, keyed by repo+branch
+        /// and content hash (survives quitting `--watch` and rebases)
+        #[arg(long = "save-viewed")]
+        save_viewed: bool,
     },
     /// Interactively configure Lumen (provider, API key)
     Configure,
