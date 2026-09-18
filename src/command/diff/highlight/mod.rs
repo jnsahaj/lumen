@@ -176,8 +176,13 @@ impl FileHighlighter {
                     .iter()
                     .filter(|(text, _)| *text != "\n") // Skip newline markers
                     .map(|(text, highlight_idx)| {
+                        // CRLF files leave a carriage return at the end of each
+                        // highlighted line. Do not emit it to the terminal:
+                        // crossterm interprets `\r` as a cursor movement back to
+                        // column zero, which corrupts the diff layout.
+                        let text = text.strip_suffix('\r').unwrap_or(text);
                         let fg = highlight_idx.map(highlight_color).unwrap_or(default_fg);
-                        Span::styled(text.clone(), Style::default().fg(fg).bg(bg_color))
+                        Span::styled(text.to_string(), Style::default().fg(fg).bg(bg_color))
                     })
                     .collect()
             })
@@ -281,6 +286,20 @@ function hello(): string {
             has_highlights,
             "TypeScript code should have syntax highlights"
         );
+    }
+
+    #[test]
+    fn test_file_highlighter_strips_crlf_carriage_returns() {
+        let code = "const value = 1;\r\nfunction read() {\r\n  return value;\r\n}\r\n";
+        let highlighter = FileHighlighter::new(code, "test.ts");
+
+        for line_number in 1..=4 {
+            let spans = highlighter.get_line_spans(line_number, None);
+            assert!(
+                spans.iter().all(|span| !span.content.contains('\r')),
+                "line {line_number} contains a carriage return"
+            );
+        }
     }
 
     #[test]
