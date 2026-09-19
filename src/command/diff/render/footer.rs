@@ -33,7 +33,15 @@ pub fn truncate_path(path: &str, max_len: usize) -> String {
     if parts.len() <= 1 {
         // No directories, just truncate the filename at the end
         if path.len() > max_len {
-            return format!("{}...", &path[..max_len.saturating_sub(3)]);
+            // Find the last char boundary at or before the cutoff to avoid panicking mid-character.
+            let cutoff = max_len.saturating_sub(3);
+            let cutoff = path
+                .char_indices()
+                .map(|(i, _)| i)
+                .take_while(|&i| i <= cutoff)
+                .last()
+                .unwrap_or(0);
+            return format!("{}...", &path[..cutoff]);
         }
         return path.to_string();
     }
@@ -78,7 +86,15 @@ pub fn truncate_path(path: &str, max_len: usize) -> String {
 
     let remaining = max_len.saturating_sub(prefix.len());
     if remaining > 3 && filename.len() > remaining {
-        format!("{}{}...", prefix, &filename[..remaining.saturating_sub(3)])
+        // Find the last char boundary at or before the cutoff to avoid panicking mid-character.
+        let cutoff = remaining.saturating_sub(3);
+        let cutoff = filename
+            .char_indices()
+            .map(|(i, _)| i)
+            .take_while(|&i| i <= cutoff)
+            .last()
+            .unwrap_or(0);
+        format!("{}{}...", prefix, &filename[..cutoff])
     } else {
         format!("{}{}", prefix, filename)
     }
