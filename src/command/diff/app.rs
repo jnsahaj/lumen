@@ -35,6 +35,33 @@ fn open_tui_writer() -> io::Result<Box<dyn Write + Send>> {
     Ok(Box::new(io::stdout()))
 }
 
+struct TerminalGuard {
+    armed: bool,
+}
+
+impl TerminalGuard {
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let _ = disable_raw_mode();
+        if let Ok(mut out) = open_tui_writer() {
+            let _ = execute!(
+                out,
+                PopKeyboardEnhancementFlags,
+                DisableMouseCapture,
+                LeaveAlternateScreen
+            );
+        }
+    }
+}
+
 use super::annotation::{AnnotationEditor, AnnotationEditorResult};
 use super::coordinates::{extract_selected_text, PanelLayout};
 use super::git::{
@@ -270,6 +297,15 @@ pub fn run_app(
     run_app_internal(options, pr_info, file_diffs, None, backend)
 }
 
+pub fn run_app_external(
+    mut options: DiffOptions,
+    file_diffs: Vec<super::types::FileDiff>,
+    backend: &dyn VcsBackend,
+) -> io::Result<()> {
+    options.watch = false;
+    run_app_internal(options, None, file_diffs, None, backend)
+}
+
 pub fn run_app_stacked(
     options: DiffOptions,
     commits: Vec<StackedCommitInfo>,
@@ -344,6 +380,7 @@ fn run_app_internal(
     // Now enter TUI mode. Use /dev/tty when stdout is captured so the
     // alternate-screen escapes go to the real terminal, not the pipe.
     enable_raw_mode()?;
+    let mut terminal_guard = TerminalGuard { armed: true };
     let mut tui_writer = open_tui_writer()?;
     execute!(tui_writer, EnterAlternateScreen, EnableMouseCapture)?;
     // Opt into the kitty keyboard protocol so terminals that support it
@@ -439,7 +476,8 @@ fn run_app_internal(
             let row_offset = std::cell::Cell::new(0usize);
             let gaps_cell = std::cell::RefCell::new(Vec::new());
             let rects_cell = std::cell::RefCell::new(Vec::new());
-            let editor_rect_cell: std::cell::Cell<Option<ratatui::layout::Rect>> = std::cell::Cell::new(None);
+            let editor_rect_cell: std::cell::Cell<Option<ratatui::layout::Rect>> =
+                std::cell::Cell::new(None);
             terminal.draw(|frame| {
                 let (offset, gaps, rects, er) = render_diff(
                     frame,
@@ -1904,10 +1942,8 @@ fn run_app_internal(
                         }
                         KeyCode::Char('e') => {
                             if !state.file_diffs.is_empty() {
-                                let _ = execute!(
-                                    terminal.backend_mut(),
-                                    PopKeyboardEnhancementFlags
-                                );
+                                let _ =
+                                    execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags);
                                 execute!(
                                     terminal.backend_mut(),
                                     DisableMouseCapture,
@@ -1956,7 +1992,9 @@ fn run_app_internal(
                                 )?;
                                 let _ = execute!(
                                     terminal.backend_mut(),
-                                    PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+                                    PushKeyboardEnhancementFlags(
+                                        KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                                    )
                                 );
                                 terminal.clear()?;
                             }
@@ -2110,10 +2148,10 @@ fn run_app_internal(
                                                 key: "h/l or left/right",
                                                 description: "Scroll horizontally",
                                             },
-                                        KeyBind {
-                                            key: "w",
-                                            description: "Toggle watch mode",
-                                        },
+                                            KeyBind {
+                                                key: "w",
+                                                description: "Toggle watch mode",
+                                            },
                                             KeyBind {
                                                 key: "gg / G",
                                                 description: "Scroll to top / bottom",
@@ -2157,7 +2195,8 @@ fn run_app_internal(
                                             },
                                             KeyBind {
                                                 key: "ctrl+f",
-                                                description: "Global fuzzy search (all files, with preview)",
+                                                description:
+                                                    "Global fuzzy search (all files, with preview)",
                                             },
                                             KeyBind {
                                                 key: "n or down",
@@ -2205,6 +2244,7 @@ fn run_app_internal(
         }
     }
 
+    terminal_guard.disarm();
     let _ = execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags);
     execute!(
         terminal.backend_mut(),

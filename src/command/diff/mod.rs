@@ -3,6 +3,7 @@ mod app;
 mod context;
 mod coordinates;
 mod diff_algo;
+pub mod external;
 pub mod git;
 mod global_search;
 pub mod highlight;
@@ -36,6 +37,8 @@ pub struct DiffOptions {
     pub focus: Option<String>,
     pub origin: Option<String>,
     pub wrap: bool,
+    pub stdin: bool,
+    pub files: Option<Vec<String>>,
 }
 
 #[derive(Clone)]
@@ -338,7 +341,29 @@ fn detect_current_branch_pr() -> Result<String, String> {
     Ok(number)
 }
 
+pub fn is_external_source(options: &DiffOptions) -> bool {
+    options.stdin
+        || options.files.is_some()
+        || matches!(&options.reference, Some(CommitReference::Single(s)) if s == "-")
+}
+
 pub fn run_diff_ui(mut options: DiffOptions, backend: &dyn VcsBackend) -> io::Result<()> {
+    if is_external_source(&options) {
+        let file_diffs = if let Some(paths) = options.files.clone() {
+            external::load_files_diffs(&paths)
+        } else {
+            external::load_stdin_diffs()
+        };
+
+        match file_diffs {
+            Ok(diffs) => return app::run_app_external(options, diffs, backend),
+            Err(e) => {
+                eprintln!("\x1b[91merror:\x1b[0m {}", e);
+                process::exit(1);
+            }
+        }
+    }
+
     // Resolve --detect-pr into options.pr
     if options.detect_pr && options.pr.is_none() {
         let mut spinner = Spinner::new(
@@ -451,4 +476,56 @@ pub fn run_diff_ui(mut options: DiffOptions, backend: &dyn VcsBackend) -> io::Re
     }
 
     app::run_app(options, None, backend)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn opts() -> DiffOptions {
+        DiffOptions {
+            reference: None,
+            pr: None,
+            detect_pr: false,
+            file: None,
+            watch: false,
+            theme: None,
+            stacked: false,
+            focus: None,
+            origin: None,
+            wrap: false,
+            stdin: false,
+            files: None,
+        }
+    }
+
+    #[test]
+    fn test_is_external_source_stdin_flag() {
+        let mut o = opts();
+        o.stdin = true;
+        assert!(is_external_source(&o));
+    }
+
+    #[test]
+    fn test_is_external_source_files() {
+        let mut o = opts();
+        o.files = Some(vec!["a".into(), "b".into()]);
+        assert!(is_external_source(&o));
+    }
+
+    #[test]
+    fn test_is_external_source_dash_reference() {
+        let mut o = opts();
+        o.reference = Some(CommitReference::Single("-".into()));
+        assert!(is_external_source(&o));
+    }
+
+    #[test]
+    fn test_is_external_source_negative() {
+        assert!(!is_external_source(&opts()));
+
+        let mut o = opts();
+        o.reference = Some(CommitReference::Single("HEAD".into()));
+        assert!(!is_external_source(&o));
+    }
 }
