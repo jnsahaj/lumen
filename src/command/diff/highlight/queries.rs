@@ -1296,3 +1296,175 @@ pub const CPP_HIGHLIGHTS: &str = r##"
 ";" @punctuation.delimiter
 ":" @punctuation.delimiter
 "##;
+
+pub const OBJC_HIGHLIGHTS: &str = r##"
+; Comments
+(comment) @comment
+
+; Strings and literals
+(string_literal) @string
+(system_lib_string) @string
+(char_literal) @string
+(number_literal) @number
+(true) @constant.builtin
+(false) @constant.builtin
+(null) @constant.builtin
+"NULL" @constant.builtin
+((identifier) @constant
+ (#match? @constant "^[A-Z][A-Z0-9_]*$"))
+
+; ObjC literals
+(block_literal) @string
+(dictionary_literal) @string
+(array_literal) @string
+
+; Types
+(type_identifier) @type
+(primitive_type) @type.builtin
+(sized_type_specifier) @type.builtin
+"id" @type.builtin
+"Class" @type.builtin
+"SEL" @type.builtin
+"IMP" @type.builtin
+"BOOL" @type.builtin
+
+; ObjC declarations
+"@interface" @keyword
+"@implementation" @keyword
+"@protocol" @keyword
+"@end" @keyword
+"@property" @keyword
+"@optional" @keyword
+"@required" @keyword
+"@dynamic" @keyword
+"@synthesize" @keyword
+"@selector" @keyword
+"@autoreleasepool" @keyword
+"@try" @keyword
+"@catch" @keyword
+"@finally" @keyword
+"@throw" @keyword
+"@synchronized" @keyword
+"@import" @keyword
+"@encode" @keyword
+"@defs" @keyword
+"@package" @keyword
+"@private" @keyword
+"@protected" @keyword
+"@public" @keyword
+(class_interface (identifier) @type)
+(class_implementation (identifier) @type)
+(protocol_declaration (identifier) @type)
+(property_declaration
+ (struct_declaration
+  (struct_declarator
+   (pointer_declarator declarator: (identifier) @property))))
+(property_declaration
+ (struct_declaration
+  (struct_declarator (identifier) @property)))
+(property_attribute (identifier) @constant)
+(instance_variable) @variable.member
+(method_definition (identifier) @function)
+(method_declaration (identifier) @function)
+(message_expression method: (identifier) @function.method)
+(selector_expression) @function
+(objc_bridge) @keyword
+
+; Fields
+(field_identifier) @variable.member
+
+; Special variables
+((identifier) @variable.builtin
+ (#any-of? @variable.builtin "self" "super"))
+
+; Labels
+(statement_identifier) @label
+
+; Functions
+(call_expression function: (identifier) @function)
+(call_expression function: (field_expression field: (field_identifier) @function.method))
+(function_declarator declarator: (identifier) @function)
+(function_declarator declarator: (field_identifier) @function.method)
+(preproc_function_def name: (identifier) @function.macro)
+
+; Preprocessor directives
+"#define" @function.macro
+"#include" @function.macro
+"#import" @function.macro
+"#if" @function.macro
+"#ifdef" @function.macro
+"#ifndef" @function.macro
+"#else" @function.macro
+"#elif" @function.macro
+"#endif" @function.macro
+(preproc_directive) @function.macro
+
+; Keywords
+"break" @keyword
+"case" @keyword
+"const" @keyword
+"continue" @keyword
+"default" @keyword
+"do" @keyword
+"else" @keyword
+"enum" @keyword
+"extern" @keyword
+"for" @keyword
+"goto" @keyword
+"if" @keyword
+"inline" @keyword
+"register" @keyword
+"restrict" @keyword
+"return" @keyword
+"sizeof" @keyword
+"static" @keyword
+"struct" @keyword
+"switch" @keyword
+"typedef" @keyword
+"union" @keyword
+"volatile" @keyword
+"while" @keyword
+
+; Operators
+"+" @operator
+"-" @operator
+"*" @operator
+"/" @operator
+"%" @operator
+"=" @operator
+"==" @operator
+"!=" @operator
+"<" @operator
+">" @operator
+"<=" @operator
+">=" @operator
+"&&" @operator
+"||" @operator
+"!" @operator
+"&" @operator
+"|" @operator
+"^" @operator
+"~" @operator
+"<<" @operator
+">>" @operator
+"+=" @operator
+"-=" @operator
+"*=" @operator
+"/=" @operator
+"++" @operator
+"--" @operator
+"->" @operator
+"?" @operator
+
+; Punctuation
+"(" @punctuation.bracket
+")" @punctuation.bracket
+"[" @punctuation.bracket
+"]" @punctuation.bracket
+"{" @punctuation.bracket
+"}" @punctuation.bracket
+"." @punctuation.delimiter
+"," @punctuation.delimiter
+";" @punctuation.delimiter
+":" @punctuation.delimiter
+"##;
