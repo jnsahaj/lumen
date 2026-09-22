@@ -112,6 +112,14 @@ pub enum Commands {
         #[arg(value_parser = clap::value_parser!(CommitReference))]
         reference: Option<CommitReference>,
 
+        /// Show only staged changes (HEAD vs index; Git only)
+        #[arg(long, visible_alias = "cached", conflicts_with_all = ["unstaged", "reference", "pr", "detect_pr", "stacked"])]
+        staged: bool,
+
+        /// Show only unstaged tracked changes (index vs working tree; Git only)
+        #[arg(long, conflicts_with_all = ["staged", "reference", "pr", "detect_pr", "stacked"])]
+        unstaged: bool,
+
         /// View a GitHub pull request (number or URL)
         #[arg(long)]
         pr: Option<String>,
@@ -172,6 +180,42 @@ mod tests {
     fn test_vcs_not_specified() {
         let cli = Cli::try_parse_from(["lumen", "diff"]).unwrap();
         assert_eq!(cli.vcs, None);
+    }
+
+    #[test]
+    fn test_diff_index_filters() {
+        for flag in ["--staged", "--cached", "--unstaged"] {
+            let cli =
+                Cli::try_parse_from(["lumen", "diff", flag, "--watch", "--file", "a.txt"]).unwrap();
+            match cli.command {
+                Commands::Diff {
+                    staged,
+                    unstaged,
+                    watch,
+                    ..
+                } => {
+                    assert_eq!(staged, flag != "--unstaged");
+                    assert_eq!(unstaged, flag == "--unstaged");
+                    assert!(watch);
+                }
+                _ => panic!("expected diff command"),
+            }
+            for incompatible in [
+                vec!["HEAD"],
+                vec!["--pr", "142"],
+                vec!["--detect-pr"],
+                vec!["--stacked"],
+                vec![if flag == "--unstaged" {
+                    "--staged"
+                } else {
+                    "--unstaged"
+                }],
+            ] {
+                let mut args = vec!["lumen", "diff", flag];
+                args.extend(incompatible);
+                assert!(Cli::try_parse_from(args).is_err());
+            }
+        }
     }
 
     #[test]

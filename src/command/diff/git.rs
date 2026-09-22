@@ -30,6 +30,10 @@ pub fn get_current_branch(backend: &dyn VcsBackend) -> String {
 pub enum DiffRefs {
     /// Uncommitted changes (working tree vs HEAD)
     WorkingTree,
+    /// HEAD vs index.
+    Staged,
+    /// Index vs tracked working tree.
+    Unstaged,
     /// Single commit (SHA vs SHA^)
     Single(String),
     /// Range between two refs
@@ -40,6 +44,12 @@ pub enum DiffRefs {
 
 impl DiffRefs {
     pub fn from_options(options: &DiffOptions, backend: &dyn VcsBackend) -> Self {
+        if options.staged {
+            return DiffRefs::Staged;
+        }
+        if options.unstaged {
+            return DiffRefs::Unstaged;
+        }
         match &options.reference {
             None => DiffRefs::WorkingTree,
             Some(CommitReference::Single(sha)) => DiffRefs::Single(sha.clone()),
@@ -78,6 +88,8 @@ pub fn get_changed_files(options: &DiffOptions, backend: &dyn VcsBackend) -> Vec
             .get_range_changed_files(&from, &to)
             .unwrap_or_default(),
         DiffRefs::WorkingTree => backend.get_working_tree_changed_files().unwrap_or_default(),
+        DiffRefs::Staged => backend.get_index_changed_files(true).unwrap_or_default(),
+        DiffRefs::Unstaged => backend.get_index_changed_files(false).unwrap_or_default(),
         DiffRefs::RangeToWorkingTree { from } => {
             // Union of files changed in `from..HEAD` and files changed in the working tree.
             let head_ref = backend.working_copy_parent_ref();
@@ -112,7 +124,12 @@ pub fn get_old_content(filename: &str, refs: &DiffRefs, backend: &dyn VcsBackend
         }
         DiffRefs::Range { from, .. } => from.clone(),
         DiffRefs::RangeToWorkingTree { from } => from.clone(),
-        DiffRefs::WorkingTree => backend.working_copy_parent_ref().to_string(),
+        DiffRefs::WorkingTree | DiffRefs::Staged => backend.working_copy_parent_ref().to_string(),
+        DiffRefs::Unstaged => {
+            return backend
+                .get_index_file_content(Path::new(filename))
+                .unwrap_or_default();
+        }
     };
 
     // Empty ref means root commit with no parent - return empty content
@@ -134,7 +151,10 @@ pub fn get_new_content(filename: &str, refs: &DiffRefs, backend: &dyn VcsBackend
         DiffRefs::Range { to, .. } => backend
             .get_file_content_at_ref(to, Path::new(filename))
             .unwrap_or_default(),
-        DiffRefs::WorkingTree | DiffRefs::RangeToWorkingTree { .. } => {
+        DiffRefs::Staged => backend
+            .get_index_file_content(Path::new(filename))
+            .unwrap_or_default(),
+        DiffRefs::WorkingTree | DiffRefs::Unstaged | DiffRefs::RangeToWorkingTree { .. } => {
             // Read from working tree (actual filesystem)
             fs::read_to_string(filename).unwrap_or_default()
         }
@@ -502,6 +522,113 @@ mod tests {
     use std::fs;
 
     #[test]
+    fn test_index_additions_and_deletions() {
+        let repo = RepoGuard::new();
+        let backend = GitBackend::from_cwd().unwrap();
+        fs::write("deleted.txt", "original\n").unwrap();
+        git(&repo.dir, &["add", "."]);
+        git(&repo.dir, &["commit", "-m", "base"]);
+        fs::remove_file("deleted.txt").unwrap();
+        assert_eq!(
+            backend.get_index_changed_files(false).unwrap(),
+            vec!["deleted.txt"]
+        );
+        assert!(backend.get_index_changed_files(true).unwrap().is_empty());
+        let git_repo = git2::Repository::open(&repo.dir).unwrap();
+        let mut index = git_repo.index().unwrap();
+        index.remove_path(Path::new("deleted.txt")).unwrap();
+        index.write().unwrap();
+        assert_eq!(
+            backend.get_index_changed_files(true).unwrap(),
+            vec!["deleted.txt"]
+        );
+        assert!(backend.get_index_changed_files(false).unwrap().is_empty());
+        assert_eq!(
+            get_old_content("deleted.txt", &DiffRefs::Staged, &backend),
+            "original\n"
+        );
+        assert!(get_new_content("deleted.txt", &DiffRefs::Staged, &backend).is_empty());
+
+        // An unborn branch compares the index against an empty tree.
+        git_repo.set_head("refs/heads/unborn").unwrap();
+        fs::write("added.txt", "added\n").unwrap();
+        git(&repo.dir, &["add", "added.txt"]);
+        assert!(backend
+            .get_index_changed_files(true)
+            .unwrap()
+            .contains(&"added.txt".to_string()));
+        assert!(get_old_content("added.txt", &DiffRefs::Staged, &backend).is_empty());
+        assert_eq!(
+            get_new_content("added.txt", &DiffRefs::Staged, &backend),
+            "added\n"
+        );
+    }
+
+    #[test]
+    fn test_load_index_filtered_diffs() {
+        let repo = RepoGuard::new();
+        fs::write("partial.txt", "head\n").unwrap();
+        git(&repo.dir, &["add", "partial.txt"]);
+        git(&repo.dir, &["commit", "-m", "base"]);
+        fs::write("partial.txt", "index\n").unwrap();
+        fs::write("staged.txt", "staged only\n").unwrap();
+        git(&repo.dir, &["add", "."]);
+        fs::write("partial.txt", "worktree\n").unwrap();
+        fs::write("untracked.txt", "untracked\n").unwrap();
+
+        let backend = GitBackend::from_cwd().unwrap();
+        let mut options = DiffOptions {
+            staged: true,
+            unstaged: false,
+            reference: None,
+            pr: None,
+            detect_pr: false,
+            file: None,
+            watch: false,
+            theme: None,
+            stacked: false,
+            focus: None,
+            origin: None,
+            wrap: false,
+        };
+        let staged = load_file_diffs(&options, &backend);
+        assert_eq!(staged.len(), 2);
+        let partial = staged.iter().find(|d| d.filename == "partial.txt").unwrap();
+        assert_eq!(partial.old_content, "head\n");
+        assert_eq!(partial.new_content, "index\n");
+
+        options.staged = false;
+        options.unstaged = true;
+        let unstaged = load_file_diffs(&options, &backend);
+        assert_eq!(unstaged.len(), 1);
+        assert_eq!(unstaged[0].filename, "partial.txt");
+        assert_eq!(unstaged[0].old_content, "index\n");
+        assert_eq!(unstaged[0].new_content, "worktree\n");
+        options.file = Some(vec!["staged.txt".to_string()]);
+        assert!(load_file_diffs(&options, &backend).is_empty());
+
+        options.file = None;
+        options.unstaged = false;
+        let all = load_file_diffs(&options, &backend);
+        assert!(all.iter().any(|d| d.filename == "untracked.txt"));
+        let partial = all.iter().find(|d| d.filename == "partial.txt").unwrap();
+        assert_eq!(partial.old_content, "head\n");
+        assert_eq!(partial.new_content, "worktree\n");
+
+        // Reloads must read the updated index, not the backend's earlier snapshot.
+        git(&repo.dir, &["add", "partial.txt"]);
+        options.unstaged = true;
+        assert!(load_file_diffs(&options, &backend).is_empty());
+        options.unstaged = false;
+        options.staged = true;
+        options.file = Some(vec!["partial.txt".to_string()]);
+        let reloaded = load_file_diffs(&options, &backend);
+        assert_eq!(reloaded.len(), 1);
+        assert_eq!(reloaded[0].old_content, "head\n");
+        assert_eq!(reloaded[0].new_content, "worktree\n");
+    }
+
+    #[test]
     fn test_load_file_diffs_working_tree_untracked_in_new_dir() {
         let _lock = crate::vcs::test_utils::cwd_lock()
             .lock()
@@ -527,6 +654,8 @@ mod tests {
 
         let backend = GitBackend::from_cwd().expect("should open repo");
         let options = super::super::DiffOptions {
+            staged: false,
+            unstaged: false,
             reference: None,
             pr: None,
             detect_pr: false,
@@ -597,6 +726,8 @@ mod tests {
 
         let backend = crate::vcs::GitBackend::from_cwd().expect("should open repo");
         let options = super::super::DiffOptions {
+            staged: false,
+            unstaged: false,
             reference: Some(crate::commit_reference::CommitReference::RangeToWorkingTree {
                 from: "HEAD~1".to_string(),
             }),

@@ -73,6 +73,12 @@ Launch an interactive side-by-side diff viewer in your terminal:
 # View uncommitted changes
 lumen diff
 
+# View staged changes only (HEAD vs index; Git only)
+lumen diff --staged # --cached is an alias
+
+# View unstaged tracked changes only (index vs working tree; Git only)
+lumen diff --unstaged
+
 # View changes for a specific commit
 lumen diff HEAD~1
 
@@ -101,6 +107,9 @@ lumen diff --focus src/main.rs
 # Soft-wrap long lines (also settable in lumen.config.json)
 lumen diff --wrap
 ```
+
+`--staged` and `--unstaged` are mutually exclusive and cannot be combined with
+commit references, PR modes, or `--stacked`. Both support `--file` and `--watch`.
 
 #### Stacked Diff Mode
 

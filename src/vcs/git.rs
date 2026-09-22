@@ -493,6 +493,47 @@ impl VcsBackend for GitBackend {
             .collect())
     }
 
+    fn get_index_changed_files(&self, staged: bool) -> Result<Vec<String>, VcsError> {
+        let mut index = self.repo.index().map_err(|e| VcsError::Other(e.to_string()))?;
+        index.read(true).map_err(|e| VcsError::Other(e.to_string()))?;
+        let diff = if staged {
+            let head_tree = match self.repo.head() {
+                Ok(head) => Some(
+                    head.peel_to_tree()
+                        .map_err(|e| VcsError::Other(e.to_string()))?,
+                ),
+                Err(e) if e.code() == git2::ErrorCode::UnbornBranch => None,
+                Err(e) => return Err(VcsError::Other(e.to_string())),
+            };
+            self.repo
+                .diff_tree_to_index(head_tree.as_ref(), Some(&index), None)
+        } else {
+            self.repo.diff_index_to_workdir(Some(&index), None)
+        }
+        .map_err(|e| VcsError::Other(e.to_string()))?;
+        Ok(diff
+            .deltas()
+            .filter_map(|d| {
+                d.new_file()
+                    .path()
+                    .and_then(|p| p.to_str().map(String::from))
+            })
+            .collect())
+    }
+
+    fn get_index_file_content(&self, path: &Path) -> Result<String, VcsError> {
+        let mut index = self.repo.index().map_err(|e| VcsError::Other(e.to_string()))?;
+        index.read(true).map_err(|e| VcsError::Other(e.to_string()))?;
+        let entry = index
+            .get_path(path, 0)
+            .ok_or_else(|| VcsError::FileNotFound(path.display().to_string()))?;
+        let blob = self
+            .repo
+            .find_blob(entry.id)
+            .map_err(|e| VcsError::Other(e.to_string()))?;
+        Ok(String::from_utf8_lossy(blob.content()).into_owned())
+    }
+
     fn get_file_content_at_ref(&self, reference: &str, path: &Path) -> Result<String, VcsError> {
         let reference = reference.trim();
         Self::validate_ref_format(reference)?;
