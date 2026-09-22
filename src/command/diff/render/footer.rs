@@ -144,21 +144,21 @@ pub fn render_footer(frame: &mut Frame, footer_area: Rect, data: FooterData) {
 
         let left_spans = if let Some(pr) = data.pr_info {
             // PR mode: show "base <- head #123" or "owner:base <- owner:head #123" for forks
-            let is_fork = pr.head_repo_owner.as_ref() != Some(&pr.base_repo_owner);
+            let is_fork = pr.head_repo_owner() != Some(pr.base_repo_owner());
 
             let base_label = if is_fork {
-                format!(" {}:{} ", pr.base_repo_owner, pr.base_ref)
+                format!(" {}:{} ", pr.base_repo_owner(), pr.base_ref())
             } else {
-                format!(" {} ", pr.base_ref)
+                format!(" {} ", pr.base_ref())
             };
 
             let head_label = if is_fork {
-                match &pr.head_repo_owner {
-                    Some(owner) => format!(" {}:{} ", owner, pr.head_ref),
-                    None => format!(" {} ", pr.head_ref), // Fork was deleted
+                match pr.head_repo_owner() {
+                    Some(owner) => format!(" {}:{} ", owner, pr.head_ref()),
+                    None => format!(" {} ", pr.head_ref()), // Fork was deleted
                 }
             } else {
-                format!(" {} ", pr.head_ref)
+                format!(" {} ", pr.head_ref())
             };
 
             let mut spans = vec![

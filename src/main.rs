@@ -40,7 +40,7 @@ async fn run() -> Result<(), LumenError> {
     // Get VCS backend based on CLI override or auto-detection
     let cwd = std::env::current_dir()?;
     let vcs_override = cli.vcs.map(VcsBackendType::from);
-    let backend = vcs::get_backend(&cwd, vcs_override)?;
+    let backend = vcs::get_backend(&cwd, vcs_override);
 
     match cli.command {
         Commands::Explain {
@@ -49,6 +49,7 @@ async fn run() -> Result<(), LumenError> {
             query,
             list,
         } => {
+            let backend = backend?;
             let git_entity = if list {
                 let sha = LumenCommand::get_sha_from_fzf(backend.as_ref())?;
                 let info = backend.get_commit(&sha)?;
@@ -98,6 +99,7 @@ async fn run() -> Result<(), LumenError> {
                 .await?;
         }
         Commands::List => {
+            let backend = backend?;
             eprintln!("Warning: 'lumen list' is deprecated. Use 'lumen explain --list' instead.");
             command
                 .execute(command::CommandType::List {
@@ -106,6 +108,7 @@ async fn run() -> Result<(), LumenError> {
                 .await?
         }
         Commands::Draft { context } => {
+            let backend = backend?;
             // Draft always uses staged diff (git convention)
             let diff = backend.get_working_tree_diff(true)?;
             let git_entity = GitEntity::Diff(Diff::from_working_tree_diff(diff, true)?);
@@ -134,6 +137,11 @@ async fn run() -> Result<(), LumenError> {
             origin,
             wrap,
         } => {
+            let backend = match backend {
+                Ok(backend) => Some(backend),
+                Err(vcs::VcsError::NotARepository) => None,
+                Err(error) => return Err(error.into()),
+            };
             let options = command::diff::DiffOptions {
                 reference,
                 pr,
@@ -146,7 +154,7 @@ async fn run() -> Result<(), LumenError> {
                 origin,
                 wrap: wrap || config.wrap.unwrap_or(false),
             };
-            command::diff::run_diff_ui(options, backend.as_ref())?;
+            command::diff::run_diff_ui(options, backend.as_deref())?;
         }
         Commands::Configure => {
             command::configure::ConfigureCommand::execute()?;
