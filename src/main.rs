@@ -123,6 +123,8 @@ async fn run() -> Result<(), LumenError> {
                 .await?;
         }
         Commands::Diff {
+            staged,
+            unstaged,
             reference,
             pr,
             detect_pr,
@@ -135,6 +137,8 @@ async fn run() -> Result<(), LumenError> {
             wrap,
         } => {
             let options = command::diff::DiffOptions {
+                staged,
+                unstaged,
                 reference,
                 pr,
                 detect_pr,

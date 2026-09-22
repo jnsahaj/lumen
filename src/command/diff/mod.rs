@@ -26,6 +26,8 @@ use crate::commit_reference::CommitReference;
 use crate::vcs::VcsBackend;
 
 pub struct DiffOptions {
+    pub staged: bool,
+    pub unstaged: bool,
     pub reference: Option<CommitReference>,
     pub pr: Option<String>,
     pub detect_pr: bool,
@@ -339,6 +341,13 @@ fn detect_current_branch_pr() -> Result<String, String> {
 }
 
 pub fn run_diff_ui(mut options: DiffOptions, backend: &dyn VcsBackend) -> io::Result<()> {
+    if (options.staged || options.unstaged) && backend.name() != "git" {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "--staged/--cached and --unstaged require Git; this backend has no staging area",
+        ));
+    }
+
     // Resolve --detect-pr into options.pr
     if options.detect_pr && options.pr.is_none() {
         let mut spinner = Spinner::new(

@@ -95,6 +95,17 @@ pub trait VcsBackend {
     /// For jj: diffs @ tree vs @- tree.
     fn get_working_tree_changed_files(&self) -> Result<Vec<String>, VcsError>;
 
+    /// Get HEAD-to-index (staged) or index-to-worktree (unstaged) changed files.
+    /// Unstaged comparisons exclude untracked files.
+    fn get_index_changed_files(&self, _staged: bool) -> Result<Vec<String>, VcsError> {
+        Err(VcsError::Other(format!("{} has no staging area", self.name())))
+    }
+
+    /// Get stage-zero file content from the current index.
+    fn get_index_file_content(&self, _path: &Path) -> Result<String, VcsError> {
+        Err(VcsError::Other(format!("{} has no staging area", self.name())))
+    }
+
     /// Get the merge base (common ancestor) of two refs.
     /// Used for triple-dot diffs (A...B).
     /// For git: runs 'git merge-base <ref1> <ref2>'.

@@ -314,6 +314,10 @@ fn run_app_internal(
             "PR #{} ({}...{})",
             pr.number, pr.base_ref, pr.head_ref
         ))
+    } else if options.staged {
+        Some("staged".to_string())
+    } else if options.unstaged {
+        Some("unstaged".to_string())
     } else {
         options.reference.as_ref().map(|r| match r {
             CommitReference::Single(s) => s.clone(),
