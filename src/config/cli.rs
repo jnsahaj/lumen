@@ -44,6 +44,8 @@ pub enum ProviderType {
     Groq,
     Claude,
     Ollama,
+    #[value(rename_all = "lower", alias = "lm-studio", alias = "lm_studio")]
+    LmStudio,
     OpencodeZen,
     Openrouter,
     Deepseek,
@@ -61,6 +63,7 @@ impl FromStr for ProviderType {
             "groq" => Ok(ProviderType::Groq),
             "claude" => Ok(ProviderType::Claude),
             "ollama" => Ok(ProviderType::Ollama),
+            "lmstudio" | "lm-studio" | "lm_studio" => Ok(ProviderType::LmStudio),
             "opencode-zen" => Ok(ProviderType::OpencodeZen),
             "openrouter" => Ok(ProviderType::Openrouter),
             "deepseek" => Ok(ProviderType::Deepseek),
@@ -172,6 +175,26 @@ mod tests {
     fn test_vcs_not_specified() {
         let cli = Cli::try_parse_from(["lumen", "diff"]).unwrap();
         assert_eq!(cli.vcs, None);
+    }
+
+    #[test]
+    fn test_provider_type_lmstudio_from_str() {
+        for alias in ["lmstudio", "lm-studio", "lm_studio", "LMSTUDIO"] {
+            assert_eq!(
+                alias.parse::<ProviderType>().unwrap(),
+                ProviderType::LmStudio,
+                "alias {alias} should parse to LmStudio"
+            );
+        }
+    }
+
+    #[test]
+    fn test_provider_type_lmstudio_flag() {
+        let cli = Cli::try_parse_from(["lumen", "-p", "lmstudio", "diff"]).unwrap();
+        assert_eq!(cli.provider, Some(ProviderType::LmStudio));
+
+        let cli = Cli::try_parse_from(["lumen", "-p", "lm-studio", "diff"]).unwrap();
+        assert_eq!(cli.provider, Some(ProviderType::LmStudio));
     }
 
     #[test]

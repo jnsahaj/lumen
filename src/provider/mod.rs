@@ -34,11 +34,28 @@ pub struct LumenProvider {
     provider_name: String,
 }
 
-/// Provider configuration for custom endpoint providers (OpenCode Zen, OpenRouter, Vercel)
+/// Provider configuration for custom endpoint providers (OpenCode Zen, OpenRouter, Vercel, LM Studio)
 struct CustomProviderConfig {
-    endpoint: &'static str,
+    endpoint: String,
     env_key: &'static str,
     adapter_kind: AdapterKind,
+}
+
+/// Base URL of the LM Studio OpenAI-compatible server.
+///
+/// Defaults to `http://localhost:1234/v1/`, overridable via `LMSTUDIO_BASE_URL`.
+/// Always normalized to end with a trailing slash (required for URL joining).
+pub(crate) fn lmstudio_endpoint() -> String {
+    const DEFAULT: &str = "http://localhost:1234/v1/";
+    let raw = std::env::var("LMSTUDIO_BASE_URL").unwrap_or_default();
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        DEFAULT.to_string()
+    } else if trimmed.ends_with('/') {
+        trimmed.to_string()
+    } else {
+        format!("{trimmed}/")
+    }
 }
 
 impl LumenProvider {
@@ -48,28 +65,37 @@ impl LumenProvider {
         model: Option<String>,
     ) -> Result<Self, LumenError> {
         let (backend, provider_name) = match provider_type {
-            // Custom endpoint providers (OpenCode Zen, OpenRouter, Vercel) - use ServiceTargetResolver
-            ProviderType::OpencodeZen | ProviderType::Openrouter | ProviderType::Vercel | ProviderType::Groq => {
+            // Custom endpoint providers (OpenCode Zen, OpenRouter, Vercel, LM Studio) - use ServiceTargetResolver
+            ProviderType::OpencodeZen
+            | ProviderType::Openrouter
+            | ProviderType::Vercel
+            | ProviderType::Groq
+            | ProviderType::LmStudio => {
                 let defaults = ProviderInfo::for_provider(provider_type);
                 let config = match provider_type {
                     ProviderType::OpencodeZen => CustomProviderConfig {
-                        endpoint: "https://opencode.ai/zen/v1/",
+                        endpoint: "https://opencode.ai/zen/v1/".to_string(),
                         env_key: defaults.env_key,
                         adapter_kind: AdapterKind::OpenAI,
                     },
                     ProviderType::Openrouter => CustomProviderConfig {
-                        endpoint: "https://openrouter.ai/api/v1/",
+                        endpoint: "https://openrouter.ai/api/v1/".to_string(),
                         env_key: defaults.env_key,
                         adapter_kind: AdapterKind::OpenAI,
                     },
                     ProviderType::Vercel => CustomProviderConfig {
                         // Trailing slash is required for URL joining to work correctly
-                        endpoint: "https://ai-gateway.vercel.sh/v1/",
+                        endpoint: "https://ai-gateway.vercel.sh/v1/".to_string(),
                         env_key: defaults.env_key,
                         adapter_kind: AdapterKind::OpenAI,
                     },
                     ProviderType::Groq => CustomProviderConfig {
-                        endpoint: "https://api.groq.com/openai/v1/",
+                        endpoint: "https://api.groq.com/openai/v1/".to_string(),
+                        env_key: defaults.env_key,
+                        adapter_kind: AdapterKind::OpenAI,
+                    },
+                    ProviderType::LmStudio => CustomProviderConfig {
+                        endpoint: lmstudio_endpoint(),
                         env_key: defaults.env_key,
                         adapter_kind: AdapterKind::OpenAI,
                     },
@@ -77,23 +103,41 @@ impl LumenProvider {
                 };
 
                 let model = model.unwrap_or_else(|| defaults.default_model.to_string());
+                if model.is_empty() {
+                    return Err(LumenError::ConfigurationError(
+                        "no model configured for LM Studio. Run `lumen configure` to pick one, \
+                         or pass -m <model>. The model must be loaded in LM Studio."
+                            .to_string(),
+                    ));
+                }
                 let model_for_resolver = model.clone();
 
                 // Get API key from CLI/config or environment
                 let auth_env_key = config.env_key;
-                if let Some(key) = api_key {
-                    std::env::set_var(auth_env_key, key);
-                }
+                let auth = if auth_env_key.is_empty() {
+                    // Local provider (LM Studio): use the key from -k / config /
+                    // LUMEN_API_KEY when provided, otherwise a dummy (LM Studio
+                    // accepts any bearer token when server auth is disabled).
+                    match api_key {
+                        Some(key) if !key.is_empty() => AuthData::from_single(key),
+                        _ => AuthData::from_single("lm-studio"),
+                    }
+                } else {
+                    if let Some(key) = api_key {
+                        std::env::set_var(auth_env_key, key);
+                    }
+                    AuthData::from_env(auth_env_key)
+                };
 
-                let endpoint = config.endpoint;
+                let endpoint = Endpoint::from_owned(config.endpoint);
                 let adapter_kind = config.adapter_kind;
 
                 let target_resolver = ServiceTargetResolver::from_resolver_fn(
                     move |service_target: ServiceTarget| -> Result<ServiceTarget, genai::resolver::Error> {
                         let ServiceTarget { model, .. } = service_target;
                         Ok(ServiceTarget {
-                            endpoint: Endpoint::from_static(endpoint),
-                            auth: AuthData::from_env(auth_env_key),
+                            endpoint: endpoint.clone(),
+                            auth: auth.clone(),
                             model: ModelIden::new(adapter_kind, model.model_name),
                         })
                     },
@@ -184,4 +228,50 @@ impl std::fmt::Display for LumenProvider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{} ({})", self.provider_name, self.get_model())
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    /// Serializes tests that mutate process-wide environment variables.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn lmstudio_endpoint_defaults_when_env_unset() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("LMSTUDIO_BASE_URL");
+        assert_eq!(lmstudio_endpoint(), "http://localhost:1234/v1/");
+    }
+
+    #[test]
+    fn lmstudio_endpoint_normalizes_trailing_slash() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var("LMSTUDIO_BASE_URL", "http://localhost:9999/v1");
+        assert_eq!(lmstudio_endpoint(), "http://localhost:9999/v1/");
+
+        std::env::set_var("LMSTUDIO_BASE_URL", "http://remote:1234/v1/");
+        assert_eq!(lmstudio_endpoint(), "http://remote:1234/v1/");
+
+        // Blank/whitespace falls back to the default
+        std::env::set_var("LMSTUDIO_BASE_URL", "   ");
+        assert_eq!(lmstudio_endpoint(), "http://localhost:1234/v1/");
+        std::env::remove_var("LMSTUDIO_BASE_URL");
+    }
+
+    #[test]
+    fn lmstudio_without_model_is_rejected() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("LMSTUDIO_BASE_URL");
+
+        let err = match LumenProvider::new(ProviderType::LmStudio, None, None) {
+            Err(e) => e,
+            Ok(_) => panic!("expected error for LM Studio without model"),
+        };
+        let message = err.to_string();
+        assert!(message.contains("lumen configure"), "got: {message}");
+        assert!(message.contains("-m"), "got: {message}");
+    }
+
 }
