@@ -175,6 +175,18 @@ fn clamp_h_scroll(state: &mut AppState, term_width: u16) {
     }
 }
 
+/// Set the wrap setting and keep `h_scroll` consistent with it.
+/// Wrapping has no horizontal offset, so enabling it resets `h_scroll`;
+/// disabling it re-clamps in case content is wider than the viewport.
+fn set_wrap(state: &mut AppState, wrap: bool, term_width: u16) {
+    state.settings.wrap = wrap;
+    if wrap {
+        state.h_scroll = 0;
+    } else {
+        clamp_h_scroll(state, term_width);
+    }
+}
+
 /// Largest sidebar horizontal scroll offset that keeps a file/directory entry
 /// in view. Computed from the longest visible label minus the sidebar's inner
 /// content width.
@@ -1470,6 +1482,11 @@ fn run_app_internal(
                                 }
                             }
                         }
+                        KeyCode::Char('W') => {
+                            let term_width = terminal.size()?.width;
+                            let wrap = !state.settings.wrap;
+                            set_wrap(&mut state, wrap, term_width);
+                        }
                         KeyCode::Char('h') | KeyCode::Left => {
                             if state.focused_panel == FocusedPanel::DiffView && !state.settings.wrap
                             {
@@ -2110,10 +2127,14 @@ fn run_app_internal(
                                                 key: "h/l or left/right",
                                                 description: "Scroll horizontally",
                                             },
-                                        KeyBind {
-                                            key: "w",
-                                            description: "Toggle watch mode",
-                                        },
+                                            KeyBind {
+                                                key: "w",
+                                                description: "Toggle watch mode",
+                                            },
+                                            KeyBind {
+                                                key: "W",
+                                                description: "Toggle text wrapping",
+                                            },
                                             KeyBind {
                                                 key: "gg / G",
                                                 description: "Scroll to top / bottom",
@@ -2157,7 +2178,8 @@ fn run_app_internal(
                                             },
                                             KeyBind {
                                                 key: "ctrl+f",
-                                                description: "Global fuzzy search (all files, with preview)",
+                                                description:
+                                                    "Global fuzzy search (all files, with preview)",
                                             },
                                             KeyBind {
                                                 key: "n or down",
@@ -2248,4 +2270,61 @@ fn generate_file_anchor(filename: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(filename.as_bytes());
     format!("{:x}", hasher.finalize())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::command::diff::types::{FileDiff, FileStatus};
+
+    /// A modified file whose new side has a 200-char line, so the diff view
+    /// overflows a 200-col terminal and `max_h_scroll` is non-zero.
+    fn make_wide_file_diff() -> FileDiff {
+        FileDiff {
+            filename: "wide.rs".to_string(),
+            old_content: "old\n".to_string(),
+            new_content: format!("{}\n", "x".repeat(200)),
+            status: FileStatus::Modified,
+            is_binary: false,
+        }
+    }
+
+    #[test]
+    fn set_wrap_enable_resets_h_scroll() {
+        let mut state = AppState::new(vec![make_wide_file_diff()], None);
+        state.h_scroll = 50;
+
+        set_wrap(&mut state, true, 200);
+
+        assert!(state.settings.wrap);
+        assert_eq!(state.h_scroll, 0);
+    }
+
+    #[test]
+    fn set_wrap_disable_clamps_stale_h_scroll() {
+        let mut state = AppState::new(vec![make_wide_file_diff()], None);
+        state.settings.wrap = true;
+        state.h_scroll = 999; // stale offset from before wrapping was on
+
+        set_wrap(&mut state, false, 200);
+
+        assert!(!state.settings.wrap);
+        let max = max_h_scroll(&mut state, 200);
+        assert!(max > 0, "wide content should overflow the viewport");
+        assert_eq!(state.h_scroll, max);
+    }
+
+    #[test]
+    fn set_wrap_toggles_setting() {
+        let mut state = AppState::new(vec![make_wide_file_diff()], None);
+        assert!(!state.settings.wrap);
+
+        let wrap = !state.settings.wrap;
+        set_wrap(&mut state, wrap, 200);
+        assert!(state.settings.wrap);
+
+        let wrap = !state.settings.wrap;
+        set_wrap(&mut state, wrap, 200);
+        assert!(!state.settings.wrap);
+    }
 }
