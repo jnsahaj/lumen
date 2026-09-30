@@ -16,10 +16,12 @@ mod types;
 mod watcher;
 
 use std::collections::HashSet;
+use std::fs::read_to_string;
 use std::io;
 use std::process::{self, Command};
 use std::thread;
 
+use globset::{Glob, GlobSet};
 use spinoff::{spinners, Color, Spinner};
 
 use crate::commit_reference::CommitReference;
@@ -36,6 +38,68 @@ pub struct DiffOptions {
     pub focus: Option<String>,
     pub origin: Option<String>,
     pub wrap: bool,
+    pub filter: FilterChain,
+}
+
+#[derive(Default)]
+pub struct FilterChain {
+    pub cli: FilterSet,
+    pub ignore_file: FilterSet,
+    pub global_config: FilterSet,
+}
+
+impl FilterChain {
+    pub fn criteria(&self) -> impl Iterator<Item = (GlobSet, GlobSet)> {
+        let mut includes = Vec::new();
+        let mut excludes = Vec::new();
+
+        let gs = |globs: &[String]| {
+            globs
+                .iter()
+                .filter_map(|s| Glob::new(s).ok())
+                .fold(GlobSet::builder(), |mut globset, glob| {
+                    globset.add(glob);
+                    globset
+                })
+                .build()
+                .unwrap_or_else(|_| GlobSet::empty())
+        };
+
+        includes.push(gs(&self.cli.include));
+        includes.push(gs(&self.ignore_file.include));
+        includes.push(gs(&self.global_config.include));
+        excludes.push(gs(&self.cli.exclude));
+        excludes.push(gs(&self.ignore_file.exclude));
+        excludes.push(gs(&self.global_config.exclude));
+
+        includes.into_iter().zip(excludes)
+    }
+}
+
+#[derive(Default)]
+pub struct FilterSet {
+    pub include: Vec<String>,
+    pub exclude: Vec<String>,
+}
+
+impl FilterSet {
+    pub fn from_ignore_file() -> Self {
+        let (include, exclude) = read_to_string(".lumenignore")
+            .unwrap_or_default()
+            .trim()
+            .lines()
+            .filter(|l| !l.is_empty() && !l.starts_with("#"))
+            .fold((Vec::new(), Vec::new()), |(mut i, mut e), l| {
+                if let Some(include) = l.strip_prefix('!') {
+                    i.push(include.to_string());
+                } else {
+                    e.push(l.to_string());
+                }
+                (i, e)
+            });
+
+        Self { include, exclude }
+    }
 }
 
 #[derive(Clone)]
