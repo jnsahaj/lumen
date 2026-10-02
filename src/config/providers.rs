@@ -63,7 +63,7 @@ pub const ALL_PROVIDERS: &[ProviderInfo] = &[
         id: "deepseek",
         provider_type: ProviderType::Deepseek,
         display_name: "DeepSeek",
-        default_model: "deepseek-chat",
+        default_model: "deepseek-v4-flash",
         env_key: "DEEPSEEK_API_KEY",
     },
     ProviderInfo {
