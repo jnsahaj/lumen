@@ -1,3 +1,4 @@
+use crate::config::cli::ProviderType;
 use crate::config::{ProviderInfo, ALL_PROVIDERS};
 use crate::error::LumenError;
 use dirs::home_dir;
@@ -58,13 +59,20 @@ impl ConfigureCommand {
 
     /// Prompts the user for an API key if the provider requires one.
     /// Returns `None` if the user leaves the input empty (to use env var) or if the provider
-    /// is local (e.g. Ollama).
+    /// is local (e.g. Ollama, LM Studio).
     fn get_api_key(provider: &ProviderInfo) -> Result<Option<String>, LumenError> {
         if provider.env_key.is_empty() {
-            println!("\n  \x1b[2mOllama runs locally — no API key needed.\x1b[0m");
+            match provider.provider_type {
+                ProviderType::Ollama => {
+                    println!("\n  \x1b[2mOllama runs locally — no API key needed\x1b[0m");
+                }
+                ProviderType::LmStudio => {
+                    println!("\n  \x1b[2mLMStudio runs locally — no API key needed\x1b[0m");
+                }
+                _ => {}
+            }
             return Ok(None);
         }
-
         let prompt = format!(
             "Enter your API key (or leave empty to use {}):",
             provider.env_key
