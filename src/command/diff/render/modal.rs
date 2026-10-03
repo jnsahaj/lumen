@@ -1,7 +1,10 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
+    widgets::{
+        Block, Borders, Clear, List, ListItem, Paragraph, Scrollbar, ScrollbarOrientation,
+        ScrollbarState,
+    },
 };
 
 use crate::command::diff::global_search::{GlobalSearchState, LineChange};
@@ -39,8 +42,14 @@ pub enum FileStatus {
 
 pub enum ModalContent {
     #[allow(dead_code)]
-    Info { title: String, message: String },
-    Confirm { title: String, message: String },
+    Info {
+        title: String,
+        message: String,
+    },
+    Confirm {
+        title: String,
+        message: String,
+    },
     #[allow(dead_code)]
     Select {
         title: String,
@@ -94,9 +103,15 @@ pub enum ModalResult {
         sbs_line_index: usize,
         panel: MatchPanel,
     },
-    AnnotationJump { annotation_id: u64 },
-    AnnotationEdit { annotation_id: u64 },
-    AnnotationDelete { annotation_id: u64 },
+    AnnotationJump {
+        annotation_id: u64,
+    },
+    AnnotationEdit {
+        annotation_id: u64,
+    },
+    AnnotationDelete {
+        annotation_id: u64,
+    },
     AnnotationCopyAll,
     AnnotationExport(String),
 }
@@ -235,7 +250,9 @@ impl Modal {
                 (width, height)
             }
             ModalContent::Annotations {
-                items, export_input, ..
+                items,
+                export_input,
+                ..
             } => {
                 let width = 100.min(area.width.saturating_sub(4));
                 let items_count = items.len().min(12) as u16;
@@ -268,8 +285,20 @@ impl Modal {
             } => {
                 self.render_select(frame, modal_area, title, items, *selected);
             }
-            ModalContent::KeyBindings { title, sections, scroll, content_height } => {
-                self.render_keybindings(frame, modal_area, title, sections, *scroll, *content_height);
+            ModalContent::KeyBindings {
+                title,
+                sections,
+                scroll,
+                content_height,
+            } => {
+                self.render_keybindings(
+                    frame,
+                    modal_area,
+                    title,
+                    sections,
+                    *scroll,
+                    *content_height,
+                );
             }
             ModalContent::FilePicker {
                 title,
@@ -296,7 +325,15 @@ impl Modal {
                 error_message,
                 ..
             } => {
-                self.render_annotations(frame, modal_area, title, items, *selected, export_input.as_deref(), error_message.as_deref());
+                self.render_annotations(
+                    frame,
+                    modal_area,
+                    title,
+                    items,
+                    *selected,
+                    export_input.as_deref(),
+                    error_message.as_deref(),
+                );
             }
             ModalContent::GlobalSearch { .. } => unreachable!(),
         }
@@ -361,7 +398,10 @@ impl Modal {
         // Thin separator under the prompt
         let sep = "─".repeat(left_rows[1].width as usize);
         frame.render_widget(
-            Paragraph::new(Span::styled(sep, Style::default().fg(t.ui.border_unfocused))),
+            Paragraph::new(Span::styled(
+                sep,
+                Style::default().fg(t.ui.border_unfocused),
+            )),
             left_rows[1],
         );
 
@@ -559,7 +599,12 @@ impl Modal {
         }
 
         // Reserve space for scrollbar on the right
-        let content_area = Rect::new(inner.x, inner.y, inner.width.saturating_sub(1), inner.height);
+        let content_area = Rect::new(
+            inner.x,
+            inner.y,
+            inner.width.saturating_sub(1),
+            inner.height,
+        );
 
         let para = Paragraph::new(lines).scroll((scroll, 0));
         frame.render_widget(para, content_area);
@@ -573,8 +618,9 @@ impl Modal {
                 .track_symbol(Some("│"))
                 .thumb_symbol("█");
 
-            let mut scrollbar_state = ScrollbarState::new(content_height.saturating_sub(visible_height) as usize)
-                .position(scroll as usize);
+            let mut scrollbar_state =
+                ScrollbarState::new(content_height.saturating_sub(visible_height) as usize)
+                    .position(scroll as usize);
 
             frame.render_stateful_widget(scrollbar, inner, &mut scrollbar_state);
         }
@@ -749,20 +795,24 @@ impl Modal {
                 let content_width = available_width.saturating_sub(time_width + 4); // 4 for padding/separators
 
                 // Allocate: 45% for location, 55% for preview (minimum 20 chars each if space allows)
-                let location_max = (content_width * 45 / 100).max(20).min(content_width.saturating_sub(20));
+                let location_max = (content_width * 45 / 100)
+                    .max(20)
+                    .min(content_width.saturating_sub(20));
                 let preview_max = content_width.saturating_sub(location_max);
 
                 // Truncate location if needed (using char count for proper UTF-8 handling)
-                let truncated_location = if location.chars().count() > location_max && location_max > 3 {
-                    let truncate_at = location_max - 1;
-                    let truncated: String = location.chars().take(truncate_at).collect();
-                    format!("{}…", truncated)
-                } else {
-                    location.to_string()
-                };
+                let truncated_location =
+                    if location.chars().count() > location_max && location_max > 3 {
+                        let truncate_at = location_max - 1;
+                        let truncated: String = location.chars().take(truncate_at).collect();
+                        format!("{}…", truncated)
+                    } else {
+                        location.to_string()
+                    };
 
                 // Truncate preview if needed (using char count for proper UTF-8 handling)
-                let truncated_preview = if preview.chars().count() > preview_max && preview_max > 3 {
+                let truncated_preview = if preview.chars().count() > preview_max && preview_max > 3
+                {
                     let truncate_at = preview_max - 1;
                     let truncated: String = preview.chars().take(truncate_at).collect();
                     format!("{}…", truncated)
@@ -772,7 +822,7 @@ impl Modal {
 
                 // Calculate padding to right-align time (using char count for proper width calculation)
                 let location_len = truncated_location.chars().count() + 2; // " location "
-                let preview_len = truncated_preview.chars().count() + 1;   // " preview"
+                let preview_len = truncated_preview.chars().count() + 1; // " preview"
                 let used_width = location_len + preview_len + time_width;
                 let padding = available_width.saturating_sub(used_width);
 
@@ -808,14 +858,8 @@ impl Modal {
                             format!(" {}", truncated_preview),
                             Style::default().fg(t.ui.text_muted).italic(),
                         ),
-                        Span::styled(
-                            format!("{:>width$}", "", width = padding),
-                            Style::default(),
-                        ),
-                        Span::styled(
-                            format!(" {} ", time),
-                            Style::default().fg(t.ui.text_muted),
-                        ),
+                        Span::styled(format!("{:>width$}", "", width = padding), Style::default()),
+                        Span::styled(format!(" {} ", time), Style::default().fg(t.ui.text_muted)),
                     ]
                 };
 
@@ -861,9 +905,15 @@ impl Modal {
                 Span::styled("Error: ", Style::default().fg(t.ui.status_deleted).bold()),
                 Span::styled(error, Style::default().fg(t.ui.status_deleted)),
             ]);
-            let error_para = Paragraph::new(error_line).alignment(ratatui::prelude::Alignment::Center);
+            let error_para =
+                Paragraph::new(error_line).alignment(ratatui::prelude::Alignment::Center);
             // Render error in the list area's last line
-            let error_area = Rect::new(list_area.x, list_area.y + list_area.height.saturating_sub(1), list_area.width, 1);
+            let error_area = Rect::new(
+                list_area.x,
+                list_area.y + list_area.height.saturating_sub(1),
+                list_area.width,
+                1,
+            );
             frame.render_widget(error_para, error_area);
         }
 
@@ -952,10 +1002,7 @@ impl Modal {
                         // user can verify before pressing Enter to jump.
                         // Clicks outside the list rows (border / prompt /
                         // separator / right pane) do nothing.
-                        if in_left
-                            && mouse.row >= list_y_start
-                            && mouse.row + 1 < terminal_height
-                        {
+                        if in_left && mouse.row >= list_y_start && mouse.row + 1 < terminal_height {
                             let row_in_list = (mouse.row - list_y_start) as usize;
                             let target = state.list_scroll + row_in_list;
                             if target < state.results.len() {
@@ -1071,8 +1118,13 @@ impl Modal {
                 }
                 _ => None,
             },
-            ModalContent::KeyBindings { scroll, content_height, .. } => {
-                let visible_height = calculate_keybindings_visible_height(terminal_height, *content_height);
+            ModalContent::KeyBindings {
+                scroll,
+                content_height,
+                ..
+            } => {
+                let visible_height =
+                    calculate_keybindings_visible_height(terminal_height, *content_height);
                 let max_scroll = content_height.saturating_sub(visible_height);
 
                 match key.code {
@@ -1245,9 +1297,7 @@ impl Modal {
                 } else {
                     // Normal mode
                     match key.code {
-                        KeyCode::Esc
-                        | KeyCode::Char('q')
-                        | KeyCode::Char('c')
+                        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('c')
                             if key.code == KeyCode::Esc
                                 || key.code == KeyCode::Char('q')
                                 || key.modifiers.contains(KeyModifiers::CONTROL) =>
@@ -1264,21 +1314,27 @@ impl Modal {
                             *selected = selected.saturating_sub(1);
                             None
                         }
-                        KeyCode::Enter => annotations.get(*selected).map(|ann| {
-                            ModalResult::AnnotationJump {
-                                annotation_id: ann.id,
-                            }
-                        }),
-                        KeyCode::Char('e') => annotations.get(*selected).map(|ann| {
-                            ModalResult::AnnotationEdit {
-                                annotation_id: ann.id,
-                            }
-                        }),
-                        KeyCode::Char('d') => annotations.get(*selected).map(|ann| {
-                            ModalResult::AnnotationDelete {
-                                annotation_id: ann.id,
-                            }
-                        }),
+                        KeyCode::Enter => {
+                            annotations
+                                .get(*selected)
+                                .map(|ann| ModalResult::AnnotationJump {
+                                    annotation_id: ann.id,
+                                })
+                        }
+                        KeyCode::Char('e') => {
+                            annotations
+                                .get(*selected)
+                                .map(|ann| ModalResult::AnnotationEdit {
+                                    annotation_id: ann.id,
+                                })
+                        }
+                        KeyCode::Char('d') => {
+                            annotations
+                                .get(*selected)
+                                .map(|ann| ModalResult::AnnotationDelete {
+                                    annotation_id: ann.id,
+                                })
+                        }
                         KeyCode::Char('y') => Some(ModalResult::AnnotationCopyAll),
                         KeyCode::Char('o') => {
                             *export_input = Some(String::from("annotations.txt"));
@@ -1307,8 +1363,8 @@ impl Modal {
                 let is_up = matches!(key.code, KeyCode::Up)
                     || (ctrl && matches!(key.code, KeyCode::Char('p') | KeyCode::Char('k')));
                 // Half-page down — PageDown / Ctrl+d. (Ctrl+u is taken by clear-query.)
-                let is_page_down =
-                    matches!(key.code, KeyCode::PageDown) || (ctrl && matches!(key.code, KeyCode::Char('d')));
+                let is_page_down = matches!(key.code, KeyCode::PageDown)
+                    || (ctrl && matches!(key.code, KeyCode::Char('d')));
 
                 if is_down {
                     state.move_down(visible_rows);
@@ -1478,7 +1534,10 @@ fn build_result_row(
     // Selector + change symbol — fixed prefix that doesn't horizontally scroll.
     let mut spans: Vec<Span<'static>> = Vec::with_capacity(16);
     let selector = if is_selected {
-        Span::styled("❯ ", apply_bg(Style::default().fg(t.ui.border_focused).bold()))
+        Span::styled(
+            "❯ ",
+            apply_bg(Style::default().fg(t.ui.border_focused).bold()),
+        )
     } else {
         Span::styled("  ", apply_bg(Style::default()))
     };
@@ -1588,10 +1647,7 @@ fn render_preview_pane(
         if !state.query.is_empty() {
             let msg = Line::from(Span::styled(
                 "  no matches",
-                Style::default()
-                    .fg(t.ui.text_muted)
-                    .bg(t.ui.bg)
-                    .italic(),
+                Style::default().fg(t.ui.text_muted).bg(t.ui.bg).italic(),
             ));
             frame.render_widget(Paragraph::new(msg), area);
         }
@@ -1662,7 +1718,11 @@ fn render_preview_pane(
                         if is_cursor {
                             cursor_idx = Some(metas.len());
                         }
-                        metas.push(PreviewRowMeta { sbs_idx, side: Side::New, is_cursor });
+                        metas.push(PreviewRowMeta {
+                            sbs_idx,
+                            side: Side::New,
+                            is_cursor,
+                        });
                     }
                 }
                 ChangeType::Insert => {
@@ -1680,7 +1740,11 @@ fn render_preview_pane(
                         if is_cursor {
                             cursor_idx = Some(metas.len());
                         }
-                        metas.push(PreviewRowMeta { sbs_idx, side: Side::Old, is_cursor });
+                        metas.push(PreviewRowMeta {
+                            sbs_idx,
+                            side: Side::Old,
+                            is_cursor,
+                        });
                     }
                 }
                 ChangeType::Modified => {
@@ -1689,7 +1753,11 @@ fn render_preview_pane(
                         if is_cursor {
                             cursor_idx = Some(metas.len());
                         }
-                        metas.push(PreviewRowMeta { sbs_idx, side: Side::Old, is_cursor });
+                        metas.push(PreviewRowMeta {
+                            sbs_idx,
+                            side: Side::Old,
+                            is_cursor,
+                        });
                     }
                     if sbs_line.new_line.is_some() {
                         pending.push(PreviewRowMeta {
@@ -1819,10 +1887,7 @@ fn make_preview_row<'a>(
     // Left-edge cursor accent: a single thin vertical block on the matched row,
     // a blank cell otherwise. Sits flush against the pane's left edge.
     let accent = if is_cursor {
-        Span::styled(
-            "▌",
-            Style::default().fg(t.ui.border_focused).bg(gutter_bg),
-        )
+        Span::styled("▌", Style::default().fg(t.ui.border_focused).bg(gutter_bg))
     } else {
         Span::styled(" ", Style::default().bg(gutter_bg))
     };

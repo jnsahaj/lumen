@@ -1,4 +1,7 @@
-use crate::{git_entity::diff::DiffError, provider::ProviderError, vcs::VcsError};
+use crate::{
+    git_entity::diff::DiffError, grouped_summary::GroupedSummaryError, provider::ProviderError,
+    vcs::VcsError,
+};
 use std::io;
 use thiserror::Error;
 
@@ -34,4 +37,7 @@ pub enum LumenError {
 
     #[error("JSON error: {0}")]
     JsonError(#[from] serde_json::Error),
+
+    #[error(transparent)]
+    GroupedSummaryError(#[from] GroupedSummaryError),
 }
