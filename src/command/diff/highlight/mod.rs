@@ -1,14 +1,17 @@
+mod cache;
 mod config;
 mod queries;
 
-use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
 
 use ratatui::prelude::*;
 use tree_sitter_highlight::{HighlightEvent, Highlighter};
 
 use super::theme;
-use config::{LanguageConfig, CONFIGS, HIGHLIGHT_NAMES};
+use config::{LanguageConfig, HIGHLIGHT_NAMES, LANGUAGES};
+
+pub use cache::HighlightCache;
 
 pub fn highlight_color(index: usize) -> Color {
     let t = theme::get();
@@ -37,7 +40,10 @@ pub fn highlight_color(index: usize) -> Color {
 
 fn get_config_for_file(filename: &str) -> Option<&'static LanguageConfig> {
     let ext = Path::new(filename).extension().and_then(|e| e.to_str())?;
-    CONFIGS.iter().find(|(e, _)| *e == ext).map(|(_, c)| c)
+    LANGUAGES
+        .iter()
+        .find(|language| language.extensions.contains(&ext))?
+        .config()
 }
 
 fn highlight_code(code: &str, filename: &str) -> Vec<(String, Option<usize>)> {
@@ -73,33 +79,70 @@ fn highlight_code(code: &str, filename: &str) -> Vec<(String, Option<usize>)> {
     result
 }
 
+/// Marks a span with no highlight in `FileHighlighter::span_highlights`.
+const NO_HIGHLIGHT: u8 = u8::MAX;
+
 /// Pre-computed highlights for an entire file, organized by line number.
 /// This allows proper highlighting of multi-line constructs like JSDoc comments.
+///
+/// Spans are stored as byte ranges into the file content rather than one
+/// `String` per token, which keeps a highlighter at roughly the size of the
+/// source instead of ~10x.
 #[derive(Default)]
 pub struct FileHighlighter {
-    /// Map from 1-based line number to list of (text, highlight_index) spans
-    line_highlights: HashMap<usize, Vec<(String, Option<usize>)>>,
+    content: Arc<str>,
+    /// (start, end) byte offsets into `content`, in source order. A span
+    /// never crosses a line break.
+    spans: Vec<(u32, u32)>,
+    /// Index into `HIGHLIGHT_NAMES` for each span, or `NO_HIGHLIGHT`.
+    span_highlights: Vec<u8>,
+    /// `line_spans[n - 1]` is the index of the first span on 1-based line `n`.
+    line_spans: Vec<u32>,
 }
 
 impl FileHighlighter {
     /// Create a new FileHighlighter by analyzing the entire file content.
+    #[cfg(test)]
     pub fn new(content: &str, filename: &str) -> Self {
+        Self::from_shared(Arc::from(content), filename)
+    }
+
+    /// Like `new`, but keeps a reference to `content` instead of copying it.
+    pub fn from_shared(content: Arc<str>, filename: &str) -> Self {
         let Some(lang_config) = get_config_for_file(filename) else {
             return Self::default();
         };
-
-        let mut highlighter = Highlighter::new();
-        let highlights =
-            highlighter.highlight(&lang_config.config, content.as_bytes(), None, |_| None);
-
-        let Ok(highlights) = highlights else {
+        // Offsets are stored as u32.
+        if content.len() > u32::MAX as usize {
+            return Self::default();
+        }
+        let Some((spans, span_highlights, line_spans)) = Self::build_spans(&content, lang_config)
+        else {
             return Self::default();
         };
 
+        Self {
+            content,
+            spans,
+            span_highlights,
+            line_spans,
+        }
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn build_spans(
+        content: &str,
+        lang_config: &LanguageConfig,
+    ) -> Option<(Vec<(u32, u32)>, Vec<u8>, Vec<u32>)> {
+        let mut highlighter = Highlighter::new();
+        let highlights = highlighter
+            .highlight(&lang_config.config, content.as_bytes(), None, |_| None)
+            .ok()?;
+
         // Build a map of byte offset -> line number (1-based)
         let mut line_starts: Vec<usize> = vec![0];
-        for (i, c) in content.char_indices() {
-            if c == '\n' {
+        for (i, b) in content.bytes().enumerate() {
+            if b == b'\n' {
                 line_starts.push(i + 1);
             }
         }
@@ -111,46 +154,38 @@ impl FileHighlighter {
             }
         };
 
-        let mut line_highlights: HashMap<usize, Vec<(String, Option<usize>)>> = HashMap::new();
+        let mut spans: Vec<(u32, u32)> = Vec::new();
+        let mut span_highlights: Vec<u8> = Vec::new();
+        let mut line_spans: Vec<u32> = Vec::new();
+        let mut push = |line: usize, start: usize, end: usize, highlight: Option<usize>| {
+            if start == end {
+                return;
+            }
+            while line_spans.len() < line {
+                line_spans.push(spans.len() as u32);
+            }
+            spans.push((start as u32, end as u32));
+            span_highlights.push(highlight.map_or(NO_HIGHLIGHT, |h| h as u8));
+        };
         let mut current_highlight: Option<usize> = None;
 
         for event in highlights.flatten() {
             match event {
                 HighlightEvent::Source { start, end } => {
-                    let text = &content[start..end];
-
                     // Split text by newlines and assign to correct lines
-                    let start_line = byte_to_line(start);
-                    let mut current_line = start_line;
-                    let mut line_start = 0;
+                    let mut current_line = byte_to_line(start);
+                    let mut line_start = start;
 
-                    for (i, c) in text.char_indices() {
-                        if c == '\n' {
-                            let line_text = &text[line_start..i];
-                            if !line_text.is_empty() {
-                                line_highlights
-                                    .entry(current_line)
-                                    .or_default()
-                                    .push((line_text.to_string(), current_highlight));
-                            }
-                            // Add the newline as a separate span (usually not displayed)
-                            line_highlights
-                                .entry(current_line)
-                                .or_default()
-                                .push(("\n".to_string(), current_highlight));
+                    for (i, b) in content.as_bytes()[start..end].iter().enumerate() {
+                        if *b == b'\n' {
+                            push(current_line, line_start, start + i, current_highlight);
                             current_line += 1;
-                            line_start = i + 1;
+                            line_start = start + i + 1;
                         }
                     }
 
                     // Handle remaining text after last newline
-                    if line_start < text.len() {
-                        let remaining = &text[line_start..];
-                        line_highlights
-                            .entry(current_line)
-                            .or_default()
-                            .push((remaining.to_string(), current_highlight));
-                    }
+                    push(current_line, line_start, end, current_highlight);
                 }
                 HighlightEvent::HighlightStart(h) => {
                     current_highlight = Some(h.0);
@@ -161,7 +196,28 @@ impl FileHighlighter {
             }
         }
 
-        Self { line_highlights }
+        Some((spans, span_highlights, line_spans))
+    }
+
+    /// (text, highlight index) for each span on a 1-based line.
+    fn line_tokens(&self, line_number: usize) -> impl Iterator<Item = (&str, Option<usize>)> {
+        let bound = |line: usize| {
+            self.line_spans
+                .get(line)
+                .map_or(self.spans.len(), |&i| i as usize)
+        };
+        let range = match line_number.checked_sub(1) {
+            Some(line) => bound(line)..bound(line + 1),
+            None => 0..0,
+        };
+        range.map(|i| {
+            let (start, end) = self.spans[i];
+            let highlight = self.span_highlights[i];
+            (
+                &self.content[start as usize..end as usize],
+                (highlight != NO_HIGHLIGHT).then_some(highlight as usize),
+            )
+        })
     }
 
     /// Get highlighted spans for a specific line (1-based line number).
@@ -169,25 +225,18 @@ impl FileHighlighter {
         let bg_color = bg.unwrap_or(Color::Reset);
         let default_fg = theme::get().syntax.default_text;
 
-        self.line_highlights
-            .get(&line_number)
-            .map(|spans| {
-                spans
-                    .iter()
-                    .filter(|(text, _)| *text != "\n") // Skip newline markers
-                    .map(|(text, highlight_idx)| {
-                        let fg = highlight_idx.map(highlight_color).unwrap_or(default_fg);
-                        Span::styled(text.clone(), Style::default().fg(fg).bg(bg_color))
-                    })
-                    .collect()
+        self.line_tokens(line_number)
+            .map(|(text, highlight_idx)| {
+                let fg = highlight_idx.map(highlight_color).unwrap_or(default_fg);
+                Span::styled(text.to_string(), Style::default().fg(fg).bg(bg_color))
             })
-            .unwrap_or_default()
+            .collect()
     }
 
     /// Check if this highlighter has any highlights (i.e., was successfully created)
     #[cfg(test)]
     pub fn is_empty(&self) -> bool {
-        self.line_highlights.is_empty()
+        self.spans.is_empty()
     }
 }
 
@@ -207,47 +256,97 @@ pub fn highlight_line_spans<'a>(line: &str, filename: &str, bg: Option<Color>) -
         .collect()
 }
 
-pub fn init() {
-    let _ = &*CONFIGS;
-    #[cfg(debug_assertions)]
-    {
-        let extensions: Vec<&str> = CONFIGS.iter().map(|(ext, _)| *ext).collect();
-        eprintln!("[DEBUG] Loaded highlight configs for: {:?}", extensions);
-    }
+/// Compile the config for `filename`'s language now, so tests with deadlines
+/// don't also time the query compilation.
+#[cfg(test)]
+pub fn preload(filename: &str) {
+    let _ = get_config_for_file(filename);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// The original one-`String`-per-token construction, kept as the oracle
+    /// for the compact representation.
+    fn reference_line_tokens(
+        content: &str,
+        filename: &str,
+    ) -> std::collections::HashMap<usize, Vec<(String, Option<usize>)>> {
+        let config = get_config_for_file(filename).unwrap();
+        let mut highlighter = Highlighter::new();
+        let events = highlighter
+            .highlight(&config.config, content.as_bytes(), None, |_| None)
+            .unwrap();
+        let mut lines = std::collections::HashMap::<usize, Vec<_>>::new();
+        let mut current = None;
+        for event in events.flatten() {
+            match event {
+                HighlightEvent::Source { start, end } => {
+                    let mut line = content[..start].matches('\n').count() + 1;
+                    for (i, piece) in content[start..end].split('\n').enumerate() {
+                        if i > 0 {
+                            line += 1;
+                        }
+                        if !piece.is_empty() {
+                            lines
+                                .entry(line)
+                                .or_default()
+                                .push((piece.to_string(), current));
+                        }
+                    }
+                }
+                HighlightEvent::HighlightStart(h) => current = Some(h.0),
+                HighlightEvent::HighlightEnd => current = None,
+            }
+        }
+        lines
+    }
+
+    #[test]
+    fn test_file_highlighter_matches_reference() {
+        let samples = [
+            ("mod.rs", include_str!("mod.rs").to_string()),
+            ("config.rs", include_str!("config.rs").to_string()),
+            ("block.ts", "/**\n * doc\n *\n */\n\n\nconst s = `a\nb`;".to_string()),
+            ("crlf.rs", "fn main() {\r\n    let x = 1;\r\n}\r\n".to_string()),
+            ("unicode.py", "# héllo wörld ✓\nx = \"日本語\"\n\n".to_string()),
+            ("empty.rs", String::new()),
+        ];
+        for (filename, content) in samples {
+            let highlighter = FileHighlighter::new(&content, filename);
+            let reference = reference_line_tokens(&content, filename);
+            // One past the end and line 0 must come back empty too.
+            for line in 0..=content.lines().count() + 2 {
+                let actual: Vec<(String, Option<usize>)> = highlighter
+                    .line_tokens(line)
+                    .map(|(text, h)| (text.to_string(), h))
+                    .collect();
+                let expected = reference.get(&line).cloned().unwrap_or_default();
+                assert_eq!(actual, expected, "{filename} line {line}");
+            }
+        }
+    }
+
     #[test]
     fn test_all_configs_load() {
-        let extensions: Vec<&str> = CONFIGS.iter().map(|(ext, _)| *ext).collect();
-        assert!(extensions.contains(&"rs"), "Rust config should be loaded");
-        assert!(
-            extensions.contains(&"ts"),
-            "TypeScript config should be loaded"
-        );
-        assert!(extensions.contains(&"tsx"), "TSX config should be loaded");
-        assert!(
-            extensions.contains(&"js"),
-            "JavaScript config should be loaded"
-        );
-        assert!(extensions.contains(&"py"), "Python config should be loaded");
-        assert!(extensions.contains(&"go"), "Go config should be loaded");
-        assert!(extensions.contains(&"json"), "JSON config should be loaded");
-        assert!(extensions.contains(&"ex"), "Elixir config should be loaded");
-        assert!(extensions.contains(&"exs"), "Elixir script config should be loaded");
-        assert!(extensions.contains(&"java"), "Java config should be loaded");
-        assert!(extensions.contains(&"zig"), "Zig config should be loaded");
-        assert!(extensions.contains(&"c"), "C config should be loaded");
-        assert!(extensions.contains(&"h"), "C header config should be loaded");
-        assert!(extensions.contains(&"cpp"), "C++ config should be loaded");
-        assert!(extensions.contains(&"cc"), "C++ .cc config should be loaded");
-        assert!(extensions.contains(&"cxx"), "C++ .cxx config should be loaded");
-        assert!(extensions.contains(&"hpp"), "C++ .hpp config should be loaded");
-        assert!(extensions.contains(&"hh"), "C++ .hh config should be loaded");
-        assert!(extensions.contains(&"hxx"), "C++ .hxx config should be loaded");
+        for language in &LANGUAGES {
+            assert!(
+                language.config().is_some(),
+                "config for {:?} should load",
+                language.extensions
+            );
+        }
+        for ext in [
+            "ts", "tsx", "js", "jsx", "rs", "json", "py", "go", "css", "html", "toml", "sh",
+            "bash", "md", "mdx", "cs", "rb", "ex", "exs", "java", "zig", "c", "h", "cpp", "cc",
+            "cxx", "hpp", "hh", "hxx",
+        ] {
+            assert!(
+                get_config_for_file(&format!("file.{ext}")).is_some(),
+                ".{ext} should have a highlight config"
+            );
+        }
     }
 
     #[test]

@@ -5,18 +5,25 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
+use std::sync::Arc;
 
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher};
 
 use super::diff_algo::compute_side_by_side;
-use super::highlight::FileHighlighter;
+use super::highlight::HighlightCache;
 use super::search::MatchPanel;
 use super::text_edit::erase_word_backward;
 use super::types::{ChangeType, DiffLine, DiffViewSettings, FileDiff};
 
 /// Maximum number of results shown in the list. Above this, the user should narrow the query.
 const MAX_RESULTS: usize = 500;
+
+/// Files larger than this are previewed without syntax colours unless the
+/// diff view has already parsed them. Parsing costs a few hundred ms of
+/// background CPU per MB, which isn't worth it for a glance at a few lines.
+const MAX_PREVIEW_HIGHLIGHT_BYTES: usize = 1024 * 1024;
 
 /// One searchable line in the global index.
 #[derive(Clone)]
@@ -60,11 +67,12 @@ pub struct ScoredResult {
 
 /// Per-file content kept around so we can lazily build a `FileHighlighter`
 /// (and re-derive the side-by-side rows) for the preview pane. Cheap clones
-/// happen once at modal-open time.
+/// happen once at modal-open time. `Arc` so the highlight worker can share
+/// the text without copying it again.
 pub struct FileSnapshot {
     pub filename: String,
-    pub old: String,
-    pub new: String,
+    pub old: Arc<str>,
+    pub new: Arc<str>,
     /// Tab width to use when re-computing side-by-side for the preview.
     pub tab_width: usize,
 }
@@ -93,9 +101,12 @@ pub struct GlobalSearchState {
     pub preview_scroll_x: usize,
     /// File contents, indexed by file_index, used to build highlighters on demand.
     pub files: Vec<FileSnapshot>,
-    /// Tree-sitter highlighter cache, keyed by (file_index, is_new_panel).
-    /// `RefCell` lets us populate on demand inside the immutable preview renderer.
-    highlighter_cache: RefCell<HashMap<(usize, bool), FileHighlighter>>,
+    /// Tree-sitter highlighters, parsed off the render thread.
+    highlight_cache: Rc<HighlightCache>,
+    /// `highlight_cache` generation our file indices belong to. If the cache
+    /// has been cleared since (files reloaded under the open modal), our
+    /// snapshots are stale and must not be written into it.
+    highlight_generation: u64,
     /// Per-file side-by-side rows. Pre-populated during `build()` (since we
     /// already compute SBS there to index entries) so the first preview render
     /// is cache-hot. `RefCell` covers the rare miss path for binary files.
@@ -110,7 +121,11 @@ pub struct GlobalSearchState {
 impl GlobalSearchState {
     /// Build the full index from all file diffs. This is the expensive step;
     /// call once when the modal opens.
-    pub fn build(file_diffs: &[FileDiff], settings: &DiffViewSettings) -> Self {
+    pub fn build(
+        file_diffs: &[FileDiff],
+        settings: &DiffViewSettings,
+        highlight_cache: Rc<HighlightCache>,
+    ) -> Self {
         let mut entries = Vec::new();
         let mut files = Vec::with_capacity(file_diffs.len());
         // Pre-seed the sbs cache with what we compute below so the first
@@ -122,8 +137,8 @@ impl GlobalSearchState {
             // indexing. Binary files get an empty snapshot — they're skipped below.
             files.push(FileSnapshot {
                 filename: file.filename.clone(),
-                old: file.old_content.clone(),
-                new: file.new_content.clone(),
+                old: Arc::from(file.old_content.as_str()),
+                new: Arc::from(file.new_content.as_str()),
                 tab_width: settings.tab_width,
             });
 
@@ -201,7 +216,8 @@ impl GlobalSearchState {
             preview_scroll_y: 0,
             preview_scroll_x: 0,
             files,
-            highlighter_cache: RefCell::new(HashMap::new()),
+            highlight_generation: highlight_cache.generation(),
+            highlight_cache,
             sbs_cache: RefCell::new(sbs_cache),
             matcher: None,
         }
@@ -271,10 +287,12 @@ impl GlobalSearchState {
 
     /// Render-side helper: get pre-highlighted spans for a specific line.
     ///
-    /// Lazily builds (and caches) a `FileHighlighter` for the requested
-    /// `(file_index, panel)` pair. Panels are tracked separately because old and
-    /// new content are independent files from tree-sitter's perspective —
-    /// constructs straddling line boundaries differ between the two.
+    /// Returns an empty Vec until the `FileHighlighter` for the requested
+    /// `(file_index, panel)` pair has been parsed in the background; the
+    /// caller draws plain text in the meantime. Panels are tracked separately
+    /// because old and new content are independent files from tree-sitter's
+    /// perspective — constructs straddling line boundaries differ between
+    /// the two.
     pub fn highlighted_line_spans<'a>(
         &self,
         file_index: usize,
@@ -282,23 +300,25 @@ impl GlobalSearchState {
         line_no: usize,
         bg: Option<ratatui::style::Color>,
     ) -> Vec<ratatui::text::Span<'a>> {
+        if self.highlight_cache.generation() != self.highlight_generation {
+            return Vec::new();
+        }
         let is_new = matches!(panel, MatchPanel::New);
         let key = (file_index, is_new);
 
-        // Fast path: cache hit.
-        if let Some(h) = self.highlighter_cache.borrow().get(&key) {
+        if let Some(h) = self.highlight_cache.get(key) {
             return h.get_line_spans(line_no, bg);
         }
 
-        // Miss: build the highlighter from the corresponding file content.
-        let Some(file) = self.files.get(file_index) else {
-            return Vec::new();
-        };
-        let content = if is_new { &file.new } else { &file.old };
-        let highlighter = FileHighlighter::new(content, &file.filename);
-        let spans = highlighter.get_line_spans(line_no, bg);
-        self.highlighter_cache.borrow_mut().insert(key, highlighter);
-        spans
+        if let Some(file) = self.files.get(file_index) {
+            let content = if is_new { &file.new } else { &file.old };
+            if content.len() > MAX_PREVIEW_HIGHLIGHT_BYTES {
+                return Vec::new();
+            }
+            self.highlight_cache
+                .request(key, || Arc::clone(content), &file.filename);
+        }
+        Vec::new()
     }
 
     pub fn push_char(&mut self, c: char) {
@@ -450,3 +470,65 @@ impl GlobalSearchState {
     }
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::command::diff::types::FileStatus;
+    use std::time::{Duration, Instant};
+
+    fn state_for(new_content: &str) -> (GlobalSearchState, Rc<HighlightCache>) {
+        crate::command::diff::highlight::preload("a.rs");
+        let files = [FileDiff {
+            filename: "src/lib.rs".to_string(),
+            old_content: String::new(),
+            new_content: new_content.to_string(),
+            status: FileStatus::Added,
+            is_binary: false,
+        }];
+        let cache = Rc::new(HighlightCache::default());
+        let state =
+            GlobalSearchState::build(&files, &DiffViewSettings::default(), Rc::clone(&cache));
+        (state, cache)
+    }
+
+    #[test]
+    fn preview_line_is_plain_until_background_parse_lands() {
+        let (state, cache) = state_for("fn main() {}\n");
+
+        assert!(state
+            .highlighted_line_spans(0, MatchPanel::New, 1, None)
+            .is_empty());
+        assert!(cache.has_pending());
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while cache.has_pending() {
+            assert!(Instant::now() < deadline, "highlighter never arrived");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let spans = state.highlighted_line_spans(0, MatchPanel::New, 1, None);
+        assert_eq!(spans[0].content, "fn");
+    }
+
+    #[test]
+    fn oversized_file_is_not_parsed_for_preview() {
+        let big = "fn a() {}\n".repeat(MAX_PREVIEW_HIGHLIGHT_BYTES / 10 + 1);
+        let (state, cache) = state_for(&big);
+
+        assert!(state
+            .highlighted_line_spans(0, MatchPanel::New, 1, None)
+            .is_empty());
+        assert!(!cache.has_pending());
+    }
+
+    #[test]
+    fn stale_snapshot_does_not_touch_cleared_cache() {
+        let (state, cache) = state_for("fn main() {}\n");
+        cache.clear();
+
+        assert!(state
+            .highlighted_line_spans(0, MatchPanel::New, 1, None)
+            .is_empty());
+        assert!(!cache.has_pending());
+    }
+}

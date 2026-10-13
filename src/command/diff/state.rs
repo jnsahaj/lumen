@@ -1,11 +1,13 @@
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
+use std::sync::Arc;
 use std::time::SystemTime;
 
 use tree_sitter::{Parser, Tree};
 
 use crate::command::diff::context::get_language_context;
 use crate::command::diff::diff_algo::{compute_side_by_side, count_added_removed, find_hunk_starts};
-use crate::command::diff::highlight::FileHighlighter;
+use crate::command::diff::highlight::{FileHighlighter, HighlightCache};
 
 use crate::command::diff::search::SearchState;
 use crate::command::diff::types::{
@@ -201,8 +203,13 @@ pub struct AppState {
     cached_hunks: Option<(usize, Vec<usize>)>,
     /// Cached total line count for current file (avoids recomputing diff for max_scroll)
     cached_total_lines: Option<(usize, usize)>,
-    /// Cached syntax highlighters for current file (avoids re-parsing with tree-sitter every frame)
-    cached_highlighters: Option<(usize, FileHighlighter, FileHighlighter)>,
+    /// Syntax highlighters for the current file: (file, old, new, both parsed).
+    /// A side that is still being parsed in the background is empty, and
+    /// looked up again on the next frame.
+    cached_highlighters: Option<(usize, Arc<FileHighlighter>, Arc<FileHighlighter>, bool)>,
+    /// Highlighters for any file, parsed in the background. Shared with the
+    /// global search preview; cleared whenever `file_diffs` is replaced.
+    pub highlight_cache: Rc<HighlightCache>,
     /// Cached parsed syntax tree
     pub cached_trees: TreeCache,
     /// Whether search matches need to be recomputed
@@ -322,6 +329,7 @@ impl AppState {
             cached_hunks: None,
             cached_total_lines: None,
             cached_highlighters: None,
+            highlight_cache: Rc::default(),
             cached_trees: TreeCache::default(),
             search_dirty: true,
             content_row_offset: 0,
@@ -489,21 +497,38 @@ impl AppState {
             .unwrap_or(0)
     }
 
-    /// Get cached FileHighlighters for the current file, creating them if needed.
+    /// Get FileHighlighters for the current file. Never blocks on a parse:
+    /// a side that isn't in `highlight_cache` yet is requested in the
+    /// background and comes back empty, which the renderer covers with
+    /// line-by-line highlighting until the real one lands.
     /// Returns (old_highlighter, new_highlighter).
     pub fn get_highlighters(&mut self) -> (&FileHighlighter, &FileHighlighter) {
         let current = self.current_file;
         let needs_recompute = match &self.cached_highlighters {
-            Some((cached_file, _, _)) => *cached_file != current,
+            Some((cached_file, _, _, complete)) => *cached_file != current || !complete,
             None => true,
         };
         if needs_recompute {
             let diff = &self.file_diffs[current];
-            let old_hl = FileHighlighter::new(&diff.old_content, &diff.filename);
-            let new_hl = FileHighlighter::new(&diff.new_content, &diff.filename);
-            self.cached_highlighters = Some((current, old_hl, new_hl));
+            let cache = &self.highlight_cache;
+            let side = |is_new: bool, content: &str| {
+                let key = (current, is_new);
+                cache.get(key).or_else(|| {
+                    cache.request(key, || Arc::from(content), &diff.filename);
+                    None
+                })
+            };
+            let old_hl = side(false, &diff.old_content);
+            let new_hl = side(true, &diff.new_content);
+            let complete = old_hl.is_some() && new_hl.is_some();
+            self.cached_highlighters = Some((
+                current,
+                old_hl.unwrap_or_default(),
+                new_hl.unwrap_or_default(),
+                complete,
+            ));
         }
-        let (_, old_hl, new_hl) = self.cached_highlighters.as_ref().unwrap();
+        let (_, old_hl, new_hl, _) = self.cached_highlighters.as_ref().unwrap();
         (old_hl, new_hl)
     }
 
@@ -512,7 +537,7 @@ impl AppState {
     pub fn highlighters_ref(&self) -> Option<(&FileHighlighter, &FileHighlighter)> {
         self.cached_highlighters
             .as_ref()
-            .map(|(_, old_hl, new_hl)| (old_hl, new_hl))
+            .map(|(_, old_hl, new_hl, _)| (old_hl.as_ref(), new_hl.as_ref()))
     }
 
     /// Invalidate the cache (call when file changes)
@@ -802,6 +827,7 @@ impl AppState {
         }
 
         self.file_diffs = file_diffs;
+        self.highlight_cache.clear();
         let (total_added, total_removed) = compute_total_line_stats(&self.file_diffs);
         self.total_added = total_added;
         self.total_removed = total_removed;
@@ -1017,6 +1043,36 @@ mod tests {
             status: FileStatus::Added,
             is_binary: false,
         }
+    }
+
+    #[test]
+    fn highlighters_come_from_shared_cache_without_blocking() {
+        crate::command::diff::highlight::preload("a.rs");
+        let mut state = AppState::new(vec![make_file_diff("a.rs"), make_file_diff("b.rs")], None);
+        let current = state.current_file;
+        let preparsed = Arc::new(FileHighlighter::default());
+        state
+            .highlight_cache
+            .insert((current, true), Arc::clone(&preparsed));
+
+        // New side is already cached; old side is parsed in the background.
+        let (_, new_hl) = state.get_highlighters();
+        assert!(std::ptr::eq(new_hl, preparsed.as_ref()));
+        assert!(state.highlight_cache.has_pending());
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while state.highlight_cache.has_pending() {
+            assert!(std::time::Instant::now() < deadline, "highlighter never arrived");
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        let parsed = state.highlight_cache.get((current, false)).unwrap();
+        let (old_hl, _) = state.get_highlighters();
+        assert!(std::ptr::eq(old_hl, parsed.as_ref()));
+
+        state.reload(vec![make_file_diff("a.rs")], None);
+
+        assert!(state.highlight_cache.get((current, false)).is_none());
+        assert!(state.highlight_cache.get((current, true)).is_none());
     }
 
     #[test]

@@ -40,7 +40,6 @@ use super::coordinates::{extract_selected_text, PanelLayout};
 use super::git::{
     get_current_branch, load_file_diffs, load_pr_file_diffs, load_single_commit_diffs,
 };
-use super::highlight;
 use super::render::{
     render_diff, render_empty_state, truncate_path, FilePickerItem, KeyBind, KeyBindSection, Modal,
     ModalContent, ModalFileStatus, ModalResult,
@@ -301,7 +300,6 @@ fn run_app_internal(
     backend: &dyn VcsBackend,
 ) -> io::Result<()> {
     theme::init(options.theme.as_deref());
-    highlight::init();
 
     // Initialize state before TUI so we can sync viewed files
     let mut state = AppState::new(file_diffs, options.focus.as_deref());
@@ -582,8 +580,14 @@ fn run_app_internal(
             state.editor_rect = editor_rect_cell.get();
         }
 
-        // Poll for new events if no pending events
-        if pending_events.is_empty() && event::poll(Duration::from_millis(100))? {
+        // Poll for new events if no pending events. While a background
+        // highlight is in flight, wake up sooner so it's drawn as it lands.
+        let poll_timeout = if state.highlight_cache.has_pending() {
+            Duration::from_millis(16)
+        } else {
+            Duration::from_millis(100)
+        };
+        if pending_events.is_empty() && event::poll(poll_timeout)? {
             pending_events.push_back(event::read()?);
         }
 
@@ -1401,6 +1405,20 @@ fn run_app_internal(
                             state.diff_fullscreen = DiffFullscreen::None;
                             state.mark_search_dirty();
                         }
+                        // Cmd+↓ / Cmd+↑ — scroll the diff by a full window, keeping
+                        // two lines of overlap for context. Terminals report Cmd as
+                        // SUPER (kitty protocol) or META.
+                        KeyCode::Down | KeyCode::Up
+                            if key.modifiers.contains(KeyModifiers::SUPER)
+                                || key.modifiers.contains(KeyModifiers::META) =>
+                        {
+                            let window = visible_height.saturating_sub(2).max(1) as u16;
+                            state.scroll = if key.code == KeyCode::Down {
+                                state.scroll.saturating_add(window).min(max_scroll as u16)
+                            } else {
+                                state.scroll.saturating_sub(window)
+                            };
+                        }
                         KeyCode::Down
                             if state.search_state.has_query()
                                 && state.focused_panel == FocusedPanel::DiffView =>
@@ -1997,6 +2015,7 @@ fn run_app_internal(
                             let gs = crate::command::diff::render::GlobalSearchState::build(
                                 &state.file_diffs,
                                 &state.settings,
+                                std::rc::Rc::clone(&state.highlight_cache),
                             );
                             active_modal = Some(Modal::global_search("Search", gs));
                         }
@@ -2046,6 +2065,10 @@ fn run_app_internal(
                                             KeyBind {
                                                 key: "ctrl+d / ctrl+u",
                                                 description: "Scroll half page down / up",
+                                            },
+                                            KeyBind {
+                                                key: "cmd+down / cmd+up",
+                                                description: "Scroll full window down / up",
                                             },
                                             KeyBind {
                                                 key: "ctrl+p",
