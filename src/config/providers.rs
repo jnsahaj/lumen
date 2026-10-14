@@ -87,6 +87,13 @@ pub const ALL_PROVIDERS: &[ProviderInfo] = &[
         default_model: "anthropic/claude-sonnet-4.5",
         env_key: "VERCEL_API_KEY",
     },
+    ProviderInfo {
+        id: "cheaperinference",
+        provider_type: ProviderType::Cheaperinference,
+        display_name: "Cheaper Inference",
+        default_model: "gpt-5.4-mini",
+        env_key: "CHEAPER_INFERENCE_API_KEY",
+    },
 ];
 
 impl ProviderInfo {

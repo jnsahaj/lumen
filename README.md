@@ -270,6 +270,7 @@ export LUMEN_AI_MODEL="gpt-5-mini"
 | [Ollama](https://github.com/ollama/ollama) `ollama` | No (local) | [see list](https://ollama.com/library) (default: `llama3.2`) |
 | [OpenRouter](https://openrouter.ai/) `openrouter` | Yes | [see list](https://openrouter.ai/models) (default: `anthropic/claude-sonnet-4.5`) |
 | [Vercel AI Gateway](https://vercel.com/docs/ai-gateway) `vercel` | Yes | [see list](https://vercel.com/docs/ai-gateway/supported-models) (default: `anthropic/claude-sonnet-4.5`) |
+| [Cheaper Inference](https://cheaperinference.com/docs) `cheaperinference` | Yes | [see list](https://cheaperinference.com/markets) (default: `gpt-5.4-mini`) |
 
 ## Coding Agent Integrations 🔅
 

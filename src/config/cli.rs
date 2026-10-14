@@ -50,6 +50,7 @@ pub enum ProviderType {
     Gemini,
     Xai,
     Vercel,
+    Cheaperinference,
 }
 
 impl FromStr for ProviderType {
@@ -67,6 +68,7 @@ impl FromStr for ProviderType {
             "gemini" => Ok(ProviderType::Gemini),
             "xai" => Ok(ProviderType::Xai),
             "vercel" => Ok(ProviderType::Vercel),
+            "cheaperinference" => Ok(ProviderType::Cheaperinference),
             _ => Err(format!("Unknown provider: {}", s)),
         }
     }

@@ -34,7 +34,7 @@ pub struct LumenProvider {
     provider_name: String,
 }
 
-/// Provider configuration for custom endpoint providers (OpenCode Zen, OpenRouter, Vercel)
+/// Provider configuration for custom endpoint providers (OpenCode Zen, OpenRouter, Vercel, Cheaper Inference)
 struct CustomProviderConfig {
     endpoint: &'static str,
     env_key: &'static str,
@@ -48,8 +48,12 @@ impl LumenProvider {
         model: Option<String>,
     ) -> Result<Self, LumenError> {
         let (backend, provider_name) = match provider_type {
-            // Custom endpoint providers (OpenCode Zen, OpenRouter, Vercel) - use ServiceTargetResolver
-            ProviderType::OpencodeZen | ProviderType::Openrouter | ProviderType::Vercel | ProviderType::Groq => {
+            // Custom endpoint providers (OpenCode Zen, OpenRouter, Vercel, Cheaper Inference) - use ServiceTargetResolver
+            ProviderType::OpencodeZen
+            | ProviderType::Openrouter
+            | ProviderType::Vercel
+            | ProviderType::Groq
+            | ProviderType::Cheaperinference => {
                 let defaults = ProviderInfo::for_provider(provider_type);
                 let config = match provider_type {
                     ProviderType::OpencodeZen => CustomProviderConfig {
@@ -70,6 +74,11 @@ impl LumenProvider {
                     },
                     ProviderType::Groq => CustomProviderConfig {
                         endpoint: "https://api.groq.com/openai/v1/",
+                        env_key: defaults.env_key,
+                        adapter_kind: AdapterKind::OpenAI,
+                    },
+                    ProviderType::Cheaperinference => CustomProviderConfig {
+                        endpoint: "https://api.cheaperinference.com/v1/",
                         env_key: defaults.env_key,
                         adapter_kind: AdapterKind::OpenAI,
                     },
