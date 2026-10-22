@@ -9,6 +9,9 @@ const ELIXIR_HIGHLIGHTS: &str = tree_sitter_elixir::HIGHLIGHTS_QUERY;
 // Java uses the bundled highlight queries from tree-sitter-java
 const JAVA_HIGHLIGHTS: &str = tree_sitter_java::HIGHLIGHTS_QUERY;
 
+// PHP uses the bundled highlight queries from tree-sitter-php
+const PHP_HIGHLIGHTS: &str = tree_sitter_php::HIGHLIGHTS_QUERY;
+
 pub const HIGHLIGHT_NAMES: &[&str] = &[
     "attribute",
     "comment",
@@ -222,6 +225,14 @@ pub static CONFIGS: Lazy<Vec<(&'static str, LanguageConfig)>> = Lazy::new(|| {
         "java",
         JAVA_HIGHLIGHTS,
         "java",
+        &mut configs,
+    );
+
+    load_config(
+        tree_sitter_php::LANGUAGE_PHP.into(),
+        "php",
+        PHP_HIGHLIGHTS,
+        "php",
         &mut configs,
     );
 

@@ -118,6 +118,26 @@ const CSHARP_CONTEXT_QUERY: &str = r#"
 (lock_statement) @context
 "#;
 
+const PHP_CONTEXT_QUERY: &str = r#"
+(namespace_definition) @context
+(class_declaration) @context
+(interface_declaration) @context
+(trait_declaration) @context
+(enum_declaration) @context
+(function_definition) @context
+(method_declaration) @context
+(anonymous_function) @context
+(arrow_function) @context
+(for_statement) @context
+(foreach_statement) @context
+(while_statement) @context
+(do_statement) @context
+(if_statement) @context
+(switch_statement) @context
+(match_expression) @context
+(try_statement) @context
+"#;
+
 pub struct LanguageContext {
     pub language: Language,
     query: Query,
@@ -216,6 +236,18 @@ static LANGUAGE_CONTEXTS: Lazy<Vec<(&'static str, LanguageContext)>> = Lazy::new
             "cs",
             LanguageContext {
                 language: csharp_lang,
+                query,
+            },
+        ));
+    }
+
+    // PHP
+    let php_lang: Language = tree_sitter_php::LANGUAGE_PHP.into();
+    if let Ok(query) = Query::new(&php_lang, PHP_CONTEXT_QUERY) {
+        contexts.push((
+            "php",
+            LanguageContext {
+                language: php_lang,
                 query,
             },
         ));
@@ -395,6 +427,28 @@ mod tests {
         // Should show impl, fn, and if
         assert!(result.len() >= 2);
         assert!(result[0].content.contains("impl Foo"));
+    }
+
+    #[test]
+    fn test_php_method_context() {
+        let config = ContextConfig::default();
+        let filename = "test.php";
+        let source = r#"<?php
+class Greeter {
+    public function greet($name) {
+        $greeting = "Hello";
+        $message = $greeting . ", " . $name;
+        return $message;
+    }
+}"#;
+        let tree_cache = get_tree_cache(filename, source);
+
+        let result = compute_context_lines(source, filename, &tree_cache, 5, &config, 4);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].content, "class Greeter {");
+        assert_eq!(result[0].line_number, 2);
+        assert_eq!(result[1].content, "    public function greet($name) {");
+        assert_eq!(result[1].line_number, 3);
     }
 
     #[test]
