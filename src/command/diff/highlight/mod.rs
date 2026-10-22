@@ -240,6 +240,7 @@ mod tests {
         assert!(extensions.contains(&"exs"), "Elixir script config should be loaded");
         assert!(extensions.contains(&"java"), "Java config should be loaded");
         assert!(extensions.contains(&"zig"), "Zig config should be loaded");
+        assert!(extensions.contains(&"php"), "PHP config should be loaded");
         assert!(extensions.contains(&"c"), "C config should be loaded");
         assert!(extensions.contains(&"h"), "C header config should be loaded");
         assert!(extensions.contains(&"cpp"), "C++ config should be loaded");
@@ -326,6 +327,24 @@ public class Hello {
         assert!(!result.is_empty(), "Java highlighting should produce output");
         let has_highlights = result.iter().any(|(_, h)| h.is_some());
         assert!(has_highlights, "Java code should have syntax highlights");
+    }
+
+    #[test]
+    fn test_php_highlighting() {
+        let code = r#"<?php
+
+namespace App;
+
+class Greeter {
+    public function greet(string $name): string {
+        return "Hello, " . $name;
+    }
+}
+"#;
+        let result = highlight_code(code, "test.php");
+        assert!(!result.is_empty(), "PHP highlighting should produce output");
+        let has_highlights = result.iter().any(|(_, h)| h.is_some());
+        assert!(has_highlights, "PHP code should have syntax highlights");
     }
 
     #[test]
