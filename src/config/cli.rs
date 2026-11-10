@@ -34,6 +34,10 @@ pub struct Cli {
     #[arg(value_enum, long = "vcs")]
     pub vcs: Option<VcsOverride>,
 
+    /// Run as if lumen was started in <PATH>
+    #[arg(short = 'C', long = "directory", value_name = "PATH")]
+    pub directory: Option<std::path::PathBuf>,
+
     #[command(subcommand)]
     pub command: Commands,
 }
@@ -166,6 +170,12 @@ mod tests {
     fn test_vcs_jj_parses() {
         let cli = Cli::try_parse_from(["lumen", "--vcs", "jj", "diff"]).unwrap();
         assert_eq!(cli.vcs, Some(VcsOverride::Jj));
+    }
+
+    #[test]
+    fn test_directory_parses() {
+        let cli = Cli::try_parse_from(["lumen", "-C", "/tmp/repo", "diff"]).unwrap();
+        assert_eq!(cli.directory, Some(std::path::PathBuf::from("/tmp/repo")));
     }
 
     #[test]

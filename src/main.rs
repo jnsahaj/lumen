@@ -37,6 +37,12 @@ async fn run() -> Result<(), LumenError> {
     let provider = provider::LumenProvider::new(config.provider, config.api_key, config.model)?;
     let command = command::LumenCommand::new(provider);
 
+    if let Some(dir) = &cli.directory {
+        std::env::set_current_dir(dir).map_err(|e| {
+            LumenError::InvalidArguments(format!("cannot change to {}: {e}", dir.display()))
+        })?;
+    }
+
     // Get VCS backend based on CLI override or auto-detection
     let cwd = std::env::current_dir()?;
     let vcs_override = cli.vcs.map(VcsBackendType::from);
