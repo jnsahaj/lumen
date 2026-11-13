@@ -92,14 +92,15 @@ impl<'a> AnnotationEditor<'a> {
     }
 
     pub fn handle_input(&mut self, key: KeyEvent) -> AnnotationEditorResult {
-        match key.code {
+        let shortcut = super::keyboard::shortcut_key(key);
+        match shortcut.code {
             KeyCode::Esc => AnnotationEditorResult::Cancel,
 
-            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyCode::Char('c') if shortcut.modifiers.contains(KeyModifiers::CONTROL) => {
                 AnnotationEditorResult::Cancel
             }
 
-            KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyCode::Char('s') if shortcut.modifiers.contains(KeyModifiers::CONTROL) => {
                 if self.is_empty() {
                     if self.is_edit {
                         AnnotationEditorResult::Delete
@@ -112,7 +113,7 @@ impl<'a> AnnotationEditor<'a> {
             }
 
             KeyCode::Enter => {
-                if key
+                if shortcut
                     .modifiers
                     .intersects(KeyModifiers::SHIFT | KeyModifiers::ALT | KeyModifiers::CONTROL)
                 {
@@ -129,17 +130,17 @@ impl<'a> AnnotationEditor<'a> {
                 }
             }
 
-            KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyCode::Char('j') if shortcut.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.textarea.insert_char('\n');
                 AnnotationEditorResult::Continue
             }
 
-            KeyCode::Backspace if key.modifiers.contains(KeyModifiers::SUPER) => {
+            KeyCode::Backspace if shortcut.modifiers.contains(KeyModifiers::SUPER) => {
                 self.textarea.delete_line_by_head();
                 AnnotationEditorResult::Continue
             }
 
-            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyCode::Char('u') if shortcut.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.textarea.delete_line_by_head();
                 AnnotationEditorResult::Continue
             }

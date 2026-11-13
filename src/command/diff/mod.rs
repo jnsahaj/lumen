@@ -5,6 +5,7 @@ mod coordinates;
 mod diff_algo;
 pub mod git;
 mod global_search;
+mod keyboard;
 pub mod highlight;
 mod render;
 mod search;

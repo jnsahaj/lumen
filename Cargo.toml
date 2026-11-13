@@ -66,5 +66,10 @@ jj = ["jj-lib", "chrono", "pollster", "futures"]
 [dev-dependencies]
 tempfile = "3"
 
+# Backport of crossterm-rs/crossterm#1074 for the 0.28 API used by ratatui.
+# It exposes Kitty's base-layout key and preserves the original modifiers.
+[patch.crates-io]
+crossterm = { git = "https://github.com/Hasuk1/crossterm.git", rev = "a83302b" }
+
 [profile.release]
 lto = true
