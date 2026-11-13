@@ -93,6 +93,15 @@ mod tests {
         assert_eq!(question_shortcut.code, KeyCode::Char('?'));
         assert_eq!(question_shortcut.modifiers, KeyModifiers::NONE);
 
+        for (typed, base, expected) in [('Х', '[', '{'), ('Ъ', ']', '}')] {
+            let key = KeyEvent::new(KeyCode::Char(typed), KeyModifiers::NONE)
+                .with_base_layout_code(Some(KeyCode::Char(base)))
+                .with_base_layout_modifiers(Some(KeyModifiers::SHIFT));
+            let shortcut = shortcut_key(key);
+            assert_eq!(shortcut.code, KeyCode::Char(expected));
+            assert_eq!(shortcut.modifiers, KeyModifiers::NONE);
+        }
+
         // A Latin layout can also put another character on the same position.
         let azerty_a = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE)
             .with_base_layout_code(Some(KeyCode::Char('q')))

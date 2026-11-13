@@ -14,6 +14,12 @@ use crossterm::{
 };
 use ratatui::prelude::*;
 
+fn keyboard_enhancement_flags() -> KeyboardEnhancementFlags {
+    KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+        | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS
+        | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
+}
+
 /// Writer that drives the TUI. Falls back to /dev/tty when stdout is
 /// captured (e.g. when an agent shim does `output=$(lumen diff)`),
 /// so the alternate-screen escapes don't pollute the captured stdout
@@ -347,14 +353,11 @@ fn run_app_internal(
     enable_raw_mode()?;
     let mut tui_writer = open_tui_writer()?;
     execute!(tui_writer, EnterAlternateScreen, EnableMouseCapture)?;
-    // Request base-layout keys for shortcuts as well as disambiguated keys.
-    // Older terminals ignore the request and keep their existing behavior.
+    // Request all keys as escape codes so unmodified and Shift-only shortcuts
+    // also include the base-layout key. Older terminals ignore the request.
     let _ = execute!(
         tui_writer,
-        PushKeyboardEnhancementFlags(
-            KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
-                | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS
-        )
+        PushKeyboardEnhancementFlags(keyboard_enhancement_flags())
     );
 
     let mut terminal = Terminal::new(CrosstermBackend::new(tui_writer))?;
@@ -1963,7 +1966,7 @@ fn run_app_internal(
                                 )?;
                                 let _ = execute!(
                                     terminal.backend_mut(),
-                                    PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+                                    PushKeyboardEnhancementFlags(keyboard_enhancement_flags())
                                 );
                                 terminal.clear()?;
                             }
