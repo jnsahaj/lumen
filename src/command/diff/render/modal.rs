@@ -5,6 +5,7 @@ use ratatui::{
 };
 
 use crate::command::diff::global_search::{GlobalSearchState, LineChange};
+use crate::command::diff::keyboard::{shortcut_key, typed_char};
 use crate::command::diff::render::diff_view::expand_tabs_in_spans;
 use crate::command::diff::search::MatchPanel;
 use crate::command::diff::state::Annotation;
@@ -1020,7 +1021,7 @@ impl Modal {
     /// Handle keyboard input for the modal.
     /// Returns Some(ModalResult) if the modal should close.
     pub fn handle_input(&mut self, key: KeyEvent, terminal_height: u16) -> Option<ModalResult> {
-        let shortcut = crate::command::diff::keyboard::shortcut_key(key);
+        let shortcut = shortcut_key(key);
         // FilePicker, Annotations, and GlobalSearch handle their own dismiss logic
         // (they consume printable chars for query input).
         if !matches!(
@@ -1131,7 +1132,8 @@ impl Modal {
                     None
                 }
                 KeyCode::Up | KeyCode::Char('k')
-                    if shortcut.modifiers.contains(KeyModifiers::CONTROL) || shortcut.code == KeyCode::Up =>
+                    if shortcut.modifiers.contains(KeyModifiers::CONTROL)
+                        || shortcut.code == KeyCode::Up =>
                 {
                     *selected = selected.saturating_sub(1);
                     None
@@ -1174,13 +1176,9 @@ impl Modal {
                 // Skip modified char keys so combos like opt+letter don't
                 // insert the letter into the query.
                 _ => {
-                    if let KeyCode::Char(c) = key.code {
-                        if !key.modifiers.contains(KeyModifiers::ALT)
-                            && !key.modifiers.contains(KeyModifiers::CONTROL)
-                        {
-                            query.push(c);
-                            Self::update_filtered_indices(items, query, filtered_indices, selected);
-                        }
+                    if let Some(c) = typed_char(key) {
+                        query.push(c);
+                        Self::update_filtered_indices(items, query, filtered_indices, selected);
                     }
                     None
                 }
@@ -1224,7 +1222,9 @@ impl Modal {
                             *error_message = None;
                             None
                         }
-                        KeyCode::Char('w') if shortcut.modifiers.contains(KeyModifiers::CONTROL) => {
+                        KeyCode::Char('w')
+                            if shortcut.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
                             crate::command::diff::text_edit::erase_word_backward(input);
                             *error_message = None;
                             None
@@ -1237,13 +1237,9 @@ impl Modal {
                         // Skip modified char keys so combos like opt+letter
                         // don't insert the letter into the path.
                         _ => {
-                            if let KeyCode::Char(c) = key.code {
-                                if !key.modifiers.contains(KeyModifiers::ALT)
-                                    && !key.modifiers.contains(KeyModifiers::CONTROL)
-                                {
-                                    input.push(c);
-                                    *error_message = None; // Clear error on edit
-                                }
+                            if let Some(c) = typed_char(key) {
+                                input.push(c);
+                                *error_message = None; // Clear error on edit
                             }
                             None
                         }
@@ -1313,8 +1309,8 @@ impl Modal {
                 let is_up = matches!(shortcut.code, KeyCode::Up)
                     || (ctrl && matches!(shortcut.code, KeyCode::Char('p') | KeyCode::Char('k')));
                 // Half-page down — PageDown / Ctrl+d. (Ctrl+u is taken by clear-query.)
-                let is_page_down =
-                    matches!(shortcut.code, KeyCode::PageDown) || (ctrl && matches!(shortcut.code, KeyCode::Char('d')));
+                let is_page_down = matches!(shortcut.code, KeyCode::PageDown)
+                    || (ctrl && matches!(shortcut.code, KeyCode::Char('d')));
 
                 if is_down {
                     state.move_down(visible_rows);
@@ -1384,10 +1380,8 @@ impl Modal {
                     // Alt-prefixed sequences so combos like opt+letter don't insert
                     // the letter into the query.
                     _ => {
-                        if let KeyCode::Char(c) = key.code {
-                            if !ctrl && !alt {
-                                state.push_char(c);
-                            }
+                        if let Some(c) = typed_char(key) {
+                            state.push_char(c);
                         }
                         None
                     }
@@ -1978,6 +1972,9 @@ mod layout_shortcut_tests {
         let cancel = KeyEvent::new(KeyCode::Char('с'), KeyModifiers::CONTROL)
             .with_base_layout_code(Some(KeyCode::Char('c')))
             .with_base_layout_modifiers(Some(KeyModifiers::CONTROL));
-        assert!(matches!(modal.handle_input(cancel, 30), Some(ModalResult::Dismissed)));
+        assert!(matches!(
+            modal.handle_input(cancel, 30),
+            Some(ModalResult::Dismissed)
+        ));
     }
 }

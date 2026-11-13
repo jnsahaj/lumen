@@ -8,16 +8,31 @@ pub(super) fn shortcut_key(mut key: KeyEvent) -> KeyEvent {
     };
 
     let modifiers = key.base_layout_modifiers.unwrap_or(key.modifiers);
-    key.code = KeyCode::Char(if modifiers.contains(KeyModifiers::SHIFT) {
-        shifted_us_key(base).unwrap_or(base)
+    let shifted = if modifiers.contains(KeyModifiers::SHIFT) {
+        shifted_us_key(base)
     } else {
-        base
-    });
+        None
+    };
+    key.code = KeyCode::Char(shifted.unwrap_or(base));
     key.modifiers = modifiers;
-    if modifiers.contains(KeyModifiers::SHIFT) && shifted_us_key(base).is_some() {
+    if shifted.is_some() {
         key.modifiers.remove(KeyModifiers::SHIFT);
     }
     key
+}
+
+/// Return the character actually typed in the active layout, without control shortcuts.
+pub(super) fn typed_char(key: KeyEvent) -> Option<char> {
+    match key.code {
+        KeyCode::Char(c)
+            if !key
+                .modifiers
+                .intersects(KeyModifiers::ALT | KeyModifiers::CONTROL) =>
+        {
+            Some(c)
+        }
+        _ => None,
+    }
 }
 
 fn shifted_us_key(base: char) -> Option<char> {
@@ -67,12 +82,16 @@ mod tests {
         let shifted = KeyEvent::new(KeyCode::Char('Д'), KeyModifiers::CONTROL)
             .with_base_layout_code(Some(KeyCode::Char('l')))
             .with_base_layout_modifiers(Some(KeyModifiers::CONTROL | KeyModifiers::SHIFT));
-        assert_eq!(shortcut_key(shifted).code, KeyCode::Char('L'));
+        let shifted_shortcut = shortcut_key(shifted);
+        assert_eq!(shifted_shortcut.code, KeyCode::Char('L'));
+        assert_eq!(shifted_shortcut.modifiers, KeyModifiers::CONTROL);
 
         let question = KeyEvent::new(KeyCode::Char(','), KeyModifiers::NONE)
             .with_base_layout_code(Some(KeyCode::Char('/')))
             .with_base_layout_modifiers(Some(KeyModifiers::SHIFT));
-        assert_eq!(shortcut_key(question).code, KeyCode::Char('?'));
+        let question_shortcut = shortcut_key(question);
+        assert_eq!(question_shortcut.code, KeyCode::Char('?'));
+        assert_eq!(question_shortcut.modifiers, KeyModifiers::NONE);
 
         // A Latin layout can also put another character on the same position.
         let azerty_a = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE)
