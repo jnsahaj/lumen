@@ -5,6 +5,7 @@ use ratatui::{
 };
 
 use crate::command::diff::global_search::{GlobalSearchState, LineChange};
+use crate::command::diff::keyboard::{shortcut_key, typed_char};
 use crate::command::diff::render::diff_view::expand_tabs_in_spans;
 use crate::command::diff::search::MatchPanel;
 use crate::command::diff::state::Annotation;
@@ -1020,6 +1021,7 @@ impl Modal {
     /// Handle keyboard input for the modal.
     /// Returns Some(ModalResult) if the modal should close.
     pub fn handle_input(&mut self, key: KeyEvent, terminal_height: u16) -> Option<ModalResult> {
+        let shortcut = shortcut_key(key);
         // FilePicker, Annotations, and GlobalSearch handle their own dismiss logic
         // (they consume printable chars for query input).
         if !matches!(
@@ -1029,9 +1031,10 @@ impl Modal {
                 | ModalContent::GlobalSearch { .. }
         ) {
             // Close on Esc, q, or Ctrl+C
-            if key.code == KeyCode::Esc
-                || key.code == KeyCode::Char('q')
-                || (key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL))
+            if shortcut.code == KeyCode::Esc
+                || shortcut.code == KeyCode::Char('q')
+                || (shortcut.code == KeyCode::Char('c')
+                    && shortcut.modifiers.contains(KeyModifiers::CONTROL))
             {
                 return Some(ModalResult::Dismissed);
             }
@@ -1053,7 +1056,7 @@ impl Modal {
             }
             ModalContent::Select {
                 items, selected, ..
-            } => match key.code {
+            } => match shortcut.code {
                 KeyCode::Down | KeyCode::Char('j') => {
                     if *selected < items.len().saturating_sub(1) {
                         *selected += 1;
@@ -1075,7 +1078,7 @@ impl Modal {
                 let visible_height = calculate_keybindings_visible_height(terminal_height, *content_height);
                 let max_scroll = content_height.saturating_sub(visible_height);
 
-                match key.code {
+                match shortcut.code {
                     KeyCode::Enter => Some(ModalResult::Dismissed),
                     KeyCode::Down | KeyCode::Char('j') => {
                         *scroll = (*scroll + 1).min(max_scroll);
@@ -1085,12 +1088,12 @@ impl Modal {
                         *scroll = scroll.saturating_sub(1);
                         None
                     }
-                    KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    KeyCode::Char('d') if shortcut.modifiers.contains(KeyModifiers::CONTROL) => {
                         // Half-page down
                         *scroll = (*scroll + visible_height / 2).min(max_scroll);
                         None
                     }
-                    KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    KeyCode::Char('u') if shortcut.modifiers.contains(KeyModifiers::CONTROL) => {
                         // Half-page up
                         *scroll = scroll.saturating_sub(visible_height / 2);
                         None
@@ -1114,14 +1117,14 @@ impl Modal {
                 query,
                 selected,
                 ..
-            } => match key.code {
+            } => match shortcut.code {
                 KeyCode::Esc => Some(ModalResult::Dismissed),
-                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                KeyCode::Char('c') if shortcut.modifiers.contains(KeyModifiers::CONTROL) => {
                     Some(ModalResult::Dismissed)
                 }
                 KeyCode::Down | KeyCode::Char('j')
-                    if key.modifiers.contains(KeyModifiers::CONTROL)
-                        || key.code == KeyCode::Down =>
+                    if shortcut.modifiers.contains(KeyModifiers::CONTROL)
+                        || shortcut.code == KeyCode::Down =>
                 {
                     if *selected < filtered_indices.len().saturating_sub(1) {
                         *selected += 1;
@@ -1129,18 +1132,19 @@ impl Modal {
                     None
                 }
                 KeyCode::Up | KeyCode::Char('k')
-                    if key.modifiers.contains(KeyModifiers::CONTROL) || key.code == KeyCode::Up =>
+                    if shortcut.modifiers.contains(KeyModifiers::CONTROL)
+                        || shortcut.code == KeyCode::Up =>
                 {
                     *selected = selected.saturating_sub(1);
                     None
                 }
-                KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                KeyCode::Char('n') if shortcut.modifiers.contains(KeyModifiers::CONTROL) => {
                     if *selected < filtered_indices.len().saturating_sub(1) {
                         *selected += 1;
                     }
                     None
                 }
-                KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                KeyCode::Char('p') if shortcut.modifiers.contains(KeyModifiers::CONTROL) => {
                     *selected = selected.saturating_sub(1);
                     None
                 }
@@ -1159,7 +1163,7 @@ impl Modal {
                     Self::update_filtered_indices(items, query, filtered_indices, selected);
                     None
                 }
-                KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                KeyCode::Char('w') if shortcut.modifiers.contains(KeyModifiers::CONTROL) => {
                     crate::command::diff::text_edit::erase_word_backward(query);
                     Self::update_filtered_indices(items, query, filtered_indices, selected);
                     None
@@ -1171,15 +1175,13 @@ impl Modal {
                 }
                 // Skip modified char keys so combos like opt+letter don't
                 // insert the letter into the query.
-                KeyCode::Char(c)
-                    if !key.modifiers.contains(KeyModifiers::ALT)
-                        && !key.modifiers.contains(KeyModifiers::CONTROL) =>
-                {
-                    query.push(c);
-                    Self::update_filtered_indices(items, query, filtered_indices, selected);
+                _ => {
+                    if let Some(c) = typed_char(key) {
+                        query.push(c);
+                        Self::update_filtered_indices(items, query, filtered_indices, selected);
+                    }
                     None
                 }
-                _ => None,
             },
             ModalContent::Annotations {
                 items,
@@ -1191,7 +1193,7 @@ impl Modal {
             } => {
                 // Export input mode
                 if let Some(ref mut input) = export_input {
-                    match key.code {
+                    match shortcut.code {
                         KeyCode::Esc => {
                             *export_input = None;
                             *error_message = None;
@@ -1220,7 +1222,9 @@ impl Modal {
                             *error_message = None;
                             None
                         }
-                        KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        KeyCode::Char('w')
+                            if shortcut.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
                             crate::command::diff::text_edit::erase_word_backward(input);
                             *error_message = None;
                             None
@@ -1232,25 +1236,23 @@ impl Modal {
                         }
                         // Skip modified char keys so combos like opt+letter
                         // don't insert the letter into the path.
-                        KeyCode::Char(c)
-                            if !key.modifiers.contains(KeyModifiers::ALT)
-                                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
-                        {
-                            input.push(c);
-                            *error_message = None; // Clear error on edit
+                        _ => {
+                            if let Some(c) = typed_char(key) {
+                                input.push(c);
+                                *error_message = None; // Clear error on edit
+                            }
                             None
                         }
-                        _ => None,
                     }
                 } else {
                     // Normal mode
-                    match key.code {
+                    match shortcut.code {
                         KeyCode::Esc
                         | KeyCode::Char('q')
                         | KeyCode::Char('c')
-                            if key.code == KeyCode::Esc
-                                || key.code == KeyCode::Char('q')
-                                || key.modifiers.contains(KeyModifiers::CONTROL) =>
+                            if shortcut.code == KeyCode::Esc
+                                || shortcut.code == KeyCode::Char('q')
+                                || shortcut.modifiers.contains(KeyModifiers::CONTROL) =>
                         {
                             Some(ModalResult::Dismissed)
                         }
@@ -1295,20 +1297,20 @@ impl Modal {
                 // keep the selection on-screen.
                 let visible_rows = (terminal_height as usize).saturating_sub(4);
                 let page_step = (visible_rows / 2).max(5);
-                let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-                let alt = key.modifiers.contains(KeyModifiers::ALT);
-                let cmd = key.modifiers.contains(KeyModifiers::SUPER)
-                    || key.modifiers.contains(KeyModifiers::META);
+                let ctrl = shortcut.modifiers.contains(KeyModifiers::CONTROL);
+                let alt = shortcut.modifiers.contains(KeyModifiers::ALT);
+                let cmd = shortcut.modifiers.contains(KeyModifiers::SUPER)
+                    || shortcut.modifiers.contains(KeyModifiers::META);
 
                 // "Next/prev result" — ↓ / Ctrl+n / Ctrl+j (all telescope-standard).
-                let is_down = matches!(key.code, KeyCode::Down)
-                    || (ctrl && matches!(key.code, KeyCode::Char('n') | KeyCode::Char('j')));
+                let is_down = matches!(shortcut.code, KeyCode::Down)
+                    || (ctrl && matches!(shortcut.code, KeyCode::Char('n') | KeyCode::Char('j')));
                 // "Prev result" — ↑ / Ctrl+p / Ctrl+k.
-                let is_up = matches!(key.code, KeyCode::Up)
-                    || (ctrl && matches!(key.code, KeyCode::Char('p') | KeyCode::Char('k')));
+                let is_up = matches!(shortcut.code, KeyCode::Up)
+                    || (ctrl && matches!(shortcut.code, KeyCode::Char('p') | KeyCode::Char('k')));
                 // Half-page down — PageDown / Ctrl+d. (Ctrl+u is taken by clear-query.)
-                let is_page_down =
-                    matches!(key.code, KeyCode::PageDown) || (ctrl && matches!(key.code, KeyCode::Char('d')));
+                let is_page_down = matches!(shortcut.code, KeyCode::PageDown)
+                    || (ctrl && matches!(shortcut.code, KeyCode::Char('d')));
 
                 if is_down {
                     state.move_down(visible_rows);
@@ -1323,7 +1325,7 @@ impl Modal {
                     return None;
                 }
 
-                match key.code {
+                match shortcut.code {
                     KeyCode::Esc => Some(ModalResult::Dismissed),
                     KeyCode::Char('c') if ctrl => Some(ModalResult::Dismissed),
                     KeyCode::Enter => state.current_entry().map(|e| ModalResult::JumpToLine {
@@ -1377,11 +1379,12 @@ impl Modal {
                     // Catch printable characters — but explicitly exclude Ctrl- and
                     // Alt-prefixed sequences so combos like opt+letter don't insert
                     // the letter into the query.
-                    KeyCode::Char(c) if !ctrl && !alt => {
-                        state.push_char(c);
+                    _ => {
+                        if let Some(c) = typed_char(key) {
+                            state.push_char(c);
+                        }
                         None
                     }
-                    _ => None,
                 }
             }
         }
@@ -1948,4 +1951,30 @@ fn calculate_keybindings_visible_height(terminal_height: u16, content_height: u1
     let modal_height = (content_height + 4).min(terminal_height * 80 / 100).max(5);
     // Subtract 2 for top/bottom borders
     modal_height.saturating_sub(2)
+}
+
+#[cfg(test)]
+mod layout_shortcut_tests {
+    use super::*;
+
+    #[test]
+    fn file_picker_types_layout_character_and_accepts_physical_cancel_key() {
+        let mut modal = Modal::file_picker("Files", Vec::new());
+        let typed = KeyEvent::new(KeyCode::Char('д'), KeyModifiers::NONE)
+            .with_base_layout_code(Some(KeyCode::Char('l')))
+            .with_base_layout_modifiers(Some(KeyModifiers::NONE));
+        assert!(modal.handle_input(typed, 30).is_none());
+        match &modal.content {
+            ModalContent::FilePicker { query, .. } => assert_eq!(query, "д"),
+            _ => panic!("expected file picker"),
+        }
+
+        let cancel = KeyEvent::new(KeyCode::Char('с'), KeyModifiers::CONTROL)
+            .with_base_layout_code(Some(KeyCode::Char('c')))
+            .with_base_layout_modifiers(Some(KeyModifiers::CONTROL));
+        assert!(matches!(
+            modal.handle_input(cancel, 30),
+            Some(ModalResult::Dismissed)
+        ));
+    }
 }

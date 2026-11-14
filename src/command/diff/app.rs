@@ -14,6 +14,46 @@ use crossterm::{
 };
 use ratatui::prelude::*;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum KeyboardMode {
+    Shortcuts,
+    TextInput,
+}
+
+impl KeyboardMode {
+    fn flags(self) -> KeyboardEnhancementFlags {
+        let flags = KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+            | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS;
+        match self {
+            Self::Shortcuts => flags | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES,
+            Self::TextInput => flags,
+        }
+    }
+}
+
+fn keyboard_mode(
+    search_active: bool,
+    annotation_editor_active: bool,
+    modal: Option<&Modal>,
+) -> KeyboardMode {
+    let modal_accepts_text = matches!(
+        modal.map(|modal| &modal.content),
+        Some(
+            ModalContent::FilePicker { .. }
+                | ModalContent::GlobalSearch { .. }
+                | ModalContent::Annotations {
+                    export_input: Some(_),
+                    ..
+                }
+        )
+    );
+    if search_active || annotation_editor_active || modal_accepts_text {
+        KeyboardMode::TextInput
+    } else {
+        KeyboardMode::Shortcuts
+    }
+}
+
 /// Writer that drives the TUI. Falls back to /dev/tty when stdout is
 /// captured (e.g. when an agent shim does `output=$(lumen diff)`),
 /// so the alternate-screen escapes don't pollute the captured stdout
@@ -41,6 +81,7 @@ use super::git::{
     get_current_branch, load_file_diffs, load_pr_file_diffs, load_single_commit_diffs,
 };
 use super::highlight;
+use super::keyboard::shortcut_key;
 use super::render::{
     render_diff, render_empty_state, truncate_path, FilePickerItem, KeyBind, KeyBindSection, Modal,
     ModalContent, ModalFileStatus, ModalResult,
@@ -346,13 +387,11 @@ fn run_app_internal(
     enable_raw_mode()?;
     let mut tui_writer = open_tui_writer()?;
     execute!(tui_writer, EnterAlternateScreen, EnableMouseCapture)?;
-    // Opt into the kitty keyboard protocol so terminals that support it
-    // (iTerm2 ≥3.5, kitty, wezterm, alacritty) deliver disambiguated key
-    // events — Shift+Enter as KeyCode::Enter+SHIFT, etc. Older terminals
-    // ignore this sequence silently, so we tolerate failure.
+    // Request all keys as escape codes so unmodified and Shift-only shortcuts
+    // also include the base-layout key. Older terminals ignore the request.
     let _ = execute!(
         tui_writer,
-        PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+        PushKeyboardEnhancementFlags(KeyboardMode::Shortcuts.flags())
     );
 
     let mut terminal = Terminal::new(CrosstermBackend::new(tui_writer))?;
@@ -374,8 +413,25 @@ fn run_app_internal(
     let mut pending_watch_event: Option<WatchEvent> = None;
     let mut pending_events: VecDeque<Event> = VecDeque::new();
     let mut send_annotations_on_exit = false;
+    let mut current_keyboard_mode = KeyboardMode::Shortcuts;
 
     'main: loop {
+        let desired_keyboard_mode = keyboard_mode(
+            state.search_state.is_active(),
+            annotation_editor.is_some(),
+            active_modal.as_ref(),
+        );
+        if desired_keyboard_mode != current_keyboard_mode {
+            // Keep legacy text delivery while typing, including composed IME text.
+            // Physical-key reporting is restored when command navigation resumes.
+            let _ = execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags);
+            let _ = execute!(
+                terminal.backend_mut(),
+                PushKeyboardEnhancementFlags(desired_keyboard_mode.flags())
+            );
+            current_keyboard_mode = desired_keyboard_mode;
+        }
+
         if let Some(ref rx) = watch_rx {
             match rx.try_recv() {
                 Ok(event) => {
@@ -602,6 +658,7 @@ fn run_app_internal(
                 Event::Key(key)
                     if key.kind == KeyEventKind::Press && state.search_state.is_active() =>
                 {
+                    let shortcut = shortcut_key(key);
                     match key.code {
                         KeyCode::Esc => {
                             state.search_state.cancel();
@@ -625,7 +682,10 @@ fn run_app_internal(
                             state.search_state.erase_word();
                             state.mark_search_dirty();
                         }
-                        KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        KeyCode::Char(_)
+                            if shortcut.code == KeyCode::Char('w')
+                                && shortcut.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
                             state.search_state.erase_word();
                             state.mark_search_dirty();
                         }
@@ -1239,6 +1299,7 @@ fn run_app_internal(
                     }
                 }
                 Event::Key(key) if key.kind == KeyEventKind::Press && active_modal.is_none() => {
+                    let key = shortcut_key(key);
                     if key.code != KeyCode::Char('g') {
                         state.pending_key = PendingKey::None;
                     }
@@ -1956,7 +2017,7 @@ fn run_app_internal(
                                 )?;
                                 let _ = execute!(
                                     terminal.backend_mut(),
-                                    PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+                                    PushKeyboardEnhancementFlags(KeyboardMode::Shortcuts.flags())
                                 );
                                 terminal.clear()?;
                             }
