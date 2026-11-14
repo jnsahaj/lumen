@@ -9,7 +9,7 @@ pub(super) fn shortcut_key(mut key: KeyEvent) -> KeyEvent {
 
     let modifiers = key.base_layout_modifiers.unwrap_or(key.modifiers);
     let shifted = if modifiers.contains(KeyModifiers::SHIFT) {
-        shifted_us_key(base)
+        shifted_pc101_key(base)
     } else {
         None
     };
@@ -35,7 +35,9 @@ pub(super) fn typed_char(key: KeyEvent) -> Option<char> {
     }
 }
 
-fn shifted_us_key(base: char) -> Option<char> {
+/// Convert the protocol's physical PC-101 key to Lumen's shifted shortcut glyph.
+/// The active keyboard layout is never used for this mapping.
+fn shifted_pc101_key(base: char) -> Option<char> {
     if base.is_ascii_lowercase() {
         return Some(base.to_ascii_uppercase());
     }

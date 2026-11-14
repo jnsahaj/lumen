@@ -14,10 +14,44 @@ use crossterm::{
 };
 use ratatui::prelude::*;
 
-fn keyboard_enhancement_flags() -> KeyboardEnhancementFlags {
-    KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
-        | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS
-        | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum KeyboardMode {
+    Shortcuts,
+    TextInput,
+}
+
+impl KeyboardMode {
+    fn flags(self) -> KeyboardEnhancementFlags {
+        let flags = KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+            | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS;
+        match self {
+            Self::Shortcuts => flags | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES,
+            Self::TextInput => flags,
+        }
+    }
+}
+
+fn keyboard_mode(
+    search_active: bool,
+    annotation_editor_active: bool,
+    modal: Option<&Modal>,
+) -> KeyboardMode {
+    let modal_accepts_text = matches!(
+        modal.map(|modal| &modal.content),
+        Some(
+            ModalContent::FilePicker { .. }
+                | ModalContent::GlobalSearch { .. }
+                | ModalContent::Annotations {
+                    export_input: Some(_),
+                    ..
+                }
+        )
+    );
+    if search_active || annotation_editor_active || modal_accepts_text {
+        KeyboardMode::TextInput
+    } else {
+        KeyboardMode::Shortcuts
+    }
 }
 
 /// Writer that drives the TUI. Falls back to /dev/tty when stdout is
@@ -357,7 +391,7 @@ fn run_app_internal(
     // also include the base-layout key. Older terminals ignore the request.
     let _ = execute!(
         tui_writer,
-        PushKeyboardEnhancementFlags(keyboard_enhancement_flags())
+        PushKeyboardEnhancementFlags(KeyboardMode::Shortcuts.flags())
     );
 
     let mut terminal = Terminal::new(CrosstermBackend::new(tui_writer))?;
@@ -379,8 +413,25 @@ fn run_app_internal(
     let mut pending_watch_event: Option<WatchEvent> = None;
     let mut pending_events: VecDeque<Event> = VecDeque::new();
     let mut send_annotations_on_exit = false;
+    let mut current_keyboard_mode = KeyboardMode::Shortcuts;
 
     'main: loop {
+        let desired_keyboard_mode = keyboard_mode(
+            state.search_state.is_active(),
+            annotation_editor.is_some(),
+            active_modal.as_ref(),
+        );
+        if desired_keyboard_mode != current_keyboard_mode {
+            // Keep legacy text delivery while typing, including composed IME text.
+            // Physical-key reporting is restored when command navigation resumes.
+            let _ = execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags);
+            let _ = execute!(
+                terminal.backend_mut(),
+                PushKeyboardEnhancementFlags(desired_keyboard_mode.flags())
+            );
+            current_keyboard_mode = desired_keyboard_mode;
+        }
+
         if let Some(ref rx) = watch_rx {
             match rx.try_recv() {
                 Ok(event) => {
@@ -1966,7 +2017,7 @@ fn run_app_internal(
                                 )?;
                                 let _ = execute!(
                                     terminal.backend_mut(),
-                                    PushKeyboardEnhancementFlags(keyboard_enhancement_flags())
+                                    PushKeyboardEnhancementFlags(KeyboardMode::Shortcuts.flags())
                                 );
                                 terminal.clear()?;
                             }
