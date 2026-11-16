@@ -7,6 +7,7 @@ pub mod git;
 mod global_search;
 mod keyboard;
 pub mod highlight;
+mod input;
 mod render;
 mod search;
 mod state;

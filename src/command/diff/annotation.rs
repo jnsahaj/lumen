@@ -92,7 +92,7 @@ impl<'a> AnnotationEditor<'a> {
     }
 
     pub fn handle_input(&mut self, key: KeyEvent) -> AnnotationEditorResult {
-        let shortcut = super::keyboard::shortcut_key(key);
+        let shortcut = key;
         match shortcut.code {
             KeyCode::Esc => AnnotationEditorResult::Cancel,
 

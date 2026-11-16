@@ -5,7 +5,7 @@ use ratatui::{
 };
 
 use crate::command::diff::global_search::{GlobalSearchState, LineChange};
-use crate::command::diff::keyboard::{shortcut_key, typed_char};
+use crate::command::diff::keyboard::typed_char;
 use crate::command::diff::render::diff_view::expand_tabs_in_spans;
 use crate::command::diff::search::MatchPanel;
 use crate::command::diff::state::Annotation;
@@ -1021,7 +1021,7 @@ impl Modal {
     /// Handle keyboard input for the modal.
     /// Returns Some(ModalResult) if the modal should close.
     pub fn handle_input(&mut self, key: KeyEvent, terminal_height: u16) -> Option<ModalResult> {
-        let shortcut = shortcut_key(key);
+        let shortcut = key;
         // FilePicker, Annotations, and GlobalSearch handle their own dismiss logic
         // (they consume printable chars for query input).
         if !matches!(
@@ -1960,18 +1960,14 @@ mod layout_shortcut_tests {
     #[test]
     fn file_picker_types_layout_character_and_accepts_physical_cancel_key() {
         let mut modal = Modal::file_picker("Files", Vec::new());
-        let typed = KeyEvent::new(KeyCode::Char('д'), KeyModifiers::NONE)
-            .with_base_layout_code(Some(KeyCode::Char('l')))
-            .with_base_layout_modifiers(Some(KeyModifiers::NONE));
+        let typed = KeyEvent::new(KeyCode::Char('д'), KeyModifiers::NONE);
         assert!(modal.handle_input(typed, 30).is_none());
         match &modal.content {
             ModalContent::FilePicker { query, .. } => assert_eq!(query, "д"),
             _ => panic!("expected file picker"),
         }
 
-        let cancel = KeyEvent::new(KeyCode::Char('с'), KeyModifiers::CONTROL)
-            .with_base_layout_code(Some(KeyCode::Char('c')))
-            .with_base_layout_modifiers(Some(KeyModifiers::CONTROL));
+        let cancel = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
         assert!(matches!(
             modal.handle_input(cancel, 30),
             Some(ModalResult::Dismissed)

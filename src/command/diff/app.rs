@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use crossterm::{
     event::{
-        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
+        DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
         KeyboardEnhancementFlags, MouseEventKind, PopKeyboardEnhancementFlags,
         PushKeyboardEnhancementFlags,
     },
@@ -81,7 +81,7 @@ use super::git::{
     get_current_branch, load_file_diffs, load_pr_file_diffs, load_single_commit_diffs,
 };
 use super::highlight;
-use super::keyboard::shortcut_key;
+use super::input::InputReader;
 use super::render::{
     render_diff, render_empty_state, truncate_path, FilePickerItem, KeyBind, KeyBindSection, Modal,
     ModalContent, ModalFileStatus, ModalResult,
@@ -384,6 +384,7 @@ fn run_app_internal(
 
     // Now enter TUI mode. Use /dev/tty when stdout is captured so the
     // alternate-screen escapes go to the real terminal, not the pipe.
+    let mut input = InputReader::new()?;
     enable_raw_mode()?;
     let mut tui_writer = open_tui_writer()?;
     execute!(tui_writer, EnterAlternateScreen, EnableMouseCapture)?;
@@ -431,6 +432,7 @@ fn run_app_internal(
             );
             current_keyboard_mode = desired_keyboard_mode;
         }
+        input.set_shortcuts(desired_keyboard_mode == KeyboardMode::Shortcuts);
 
         if let Some(ref rx) = watch_rx {
             match rx.try_recv() {
@@ -639,8 +641,8 @@ fn run_app_internal(
         }
 
         // Poll for new events if no pending events
-        if pending_events.is_empty() && event::poll(Duration::from_millis(100))? {
-            pending_events.push_back(event::read()?);
+        if pending_events.is_empty() && input.poll(Duration::from_millis(100))? {
+            pending_events.push_back(input.read()?);
         }
 
         // Process all pending events
@@ -658,7 +660,7 @@ fn run_app_internal(
                 Event::Key(key)
                     if key.kind == KeyEventKind::Press && state.search_state.is_active() =>
                 {
-                    let shortcut = shortcut_key(key);
+                    let shortcut = key;
                     match key.code {
                         KeyCode::Esc => {
                             state.search_state.cancel();
@@ -1188,8 +1190,8 @@ fn run_app_internal(
                             };
 
                             // Coalesce scroll events, but preserve non-scroll events
-                            while event::poll(Duration::from_millis(0))? {
-                                let next_event = event::read()?;
+                            while input.poll(Duration::from_millis(0))? {
+                                let next_event = input.read()?;
                                 match &next_event {
                                     Event::Mouse(m) => match m.kind {
                                         MouseEventKind::ScrollDown => scroll_delta += 3,
@@ -1246,8 +1248,8 @@ fn run_app_internal(
                             };
 
                             // Coalesce horizontal scroll events
-                            while event::poll(Duration::from_millis(0))? {
-                                let next_event = event::read()?;
+                            while input.poll(Duration::from_millis(0))? {
+                                let next_event = input.read()?;
                                 match &next_event {
                                     Event::Mouse(m) => match m.kind {
                                         MouseEventKind::ScrollRight => h_scroll_delta += 4,
@@ -1299,7 +1301,6 @@ fn run_app_internal(
                     }
                 }
                 Event::Key(key) if key.kind == KeyEventKind::Press && active_modal.is_none() => {
-                    let key = shortcut_key(key);
                     if key.code != KeyCode::Char('g') {
                         state.pending_key = PendingKey::None;
                     }
