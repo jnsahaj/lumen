@@ -175,6 +175,11 @@ Annotated lines display a `▍` gutter indicator. Use `I` to view, edit, delete,
 - `ctrl+h/l`: Previous/next commit (stacked mode)
 - `?`: Show all keybindings
 
+In terminals that report Kitty base-layout keys, these shortcuts use the physical
+PC-101 key position across keyboard layouts. Text entered in search and annotation
+fields still uses the active layout. Other terminals continue to use the characters
+they report.
+
 ## AI Features 🔅
 
 Lumen also bundles optional AI helpers for commit messages, explanations, and natural-language git commands. These require configuring an AI provider — the diff viewer above does not.
