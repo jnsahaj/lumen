@@ -2,16 +2,31 @@
 //! Crossterm still owns terminal output and raw mode; its published event parser drops that key.
 
 #[cfg(not(unix))]
-use std::{io, time::Duration};
+use std::{collections::VecDeque, io, time::Duration};
 
-#[cfg(not(unix))]
-use crossterm::event::Event;
+use crossterm::event::{Event, MouseEventKind};
+
+fn scroll_delta(event: &Event, horizontal: bool) -> Option<i32> {
+    match (event, horizontal) {
+        (Event::Mouse(mouse), false) => match mouse.kind {
+            MouseEventKind::ScrollDown => Some(3),
+            MouseEventKind::ScrollUp => Some(-3),
+            _ => None,
+        },
+        (Event::Mouse(mouse), true) => match mouse.kind {
+            MouseEventKind::ScrollRight => Some(4),
+            MouseEventKind::ScrollLeft => Some(-4),
+            _ => None,
+        },
+        _ => None,
+    }
+}
 
 #[cfg(unix)]
 mod unix {
     use std::collections::VecDeque;
     use std::fs::File;
-    use std::io::{self, Read};
+    use std::io::{self, IsTerminal, Read};
     use std::os::fd::AsRawFd;
     use std::time::Duration;
 
@@ -23,12 +38,13 @@ mod unix {
     use termina::Parser;
 
     use super::super::keyboard::shifted_pc101_key;
+    use super::scroll_delta;
 
     pub(crate) struct InputReader {
         tty: File,
         parser: Parser,
         prefix: Prefix,
-        events: VecDeque<Event>,
+        events: VecDeque<QueuedEvent>,
         size: Option<(u16, u16)>,
         shortcuts: bool,
         paste: bool,
@@ -40,9 +56,27 @@ mod unix {
         Csi(Vec<u8>),
     }
 
+    struct QueuedEvent {
+        event: Event,
+        physical_sequence: Option<String>,
+    }
+
+    impl QueuedEvent {
+        fn plain(event: Event) -> Self {
+            Self {
+                event,
+                physical_sequence: None,
+            }
+        }
+    }
+
     impl InputReader {
         pub(crate) fn new() -> io::Result<Self> {
-            let tty = File::open("/dev/tty")?;
+            let tty = if io::stdin().is_terminal() {
+                File::open("/dev/stdin")?
+            } else {
+                File::open("/dev/tty")?
+            };
             Ok(Self {
                 size: tty_size(&tty).ok(),
                 tty,
@@ -94,18 +128,46 @@ mod unix {
                 for &byte in &bytes[..count] {
                     self.feed(byte);
                 }
-            } else if matches!(self.prefix, Prefix::Escape) {
+            } else if !timeout.is_zero() && matches!(self.prefix, Prefix::Escape) && !self.paste {
                 self.prefix = Prefix::None;
-                self.parse(&[0x1b], false, false);
+                self.parse(&[0x1b], false, None);
             }
             self.enqueue_resize();
             Ok(!self.events.is_empty())
         }
 
         pub(crate) fn read(&mut self) -> io::Result<Event> {
-            self.events
+            let queued = self
+                .events
                 .pop_front()
-                .ok_or_else(|| io::Error::new(io::ErrorKind::WouldBlock, "no terminal event"))
+                .ok_or_else(|| io::Error::new(io::ErrorKind::WouldBlock, "no terminal event"))?;
+            let use_physical = self.shortcuts
+                || matches!(&queued.event, Event::Key(key) if key.modifiers.intersects(
+                    KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER
+                        | KeyModifiers::HYPER | KeyModifiers::META
+                ));
+            if use_physical {
+                if let Some(sequence) = queued.physical_sequence {
+                    let mut parser = Parser::default();
+                    parser.parse(sequence.as_bytes(), false);
+                    if let Some(event) = parser.pop().and_then(|event| convert_event(event, true)) {
+                        return Ok(event);
+                    }
+                }
+            }
+            Ok(queued.event)
+        }
+
+        pub(crate) fn take_scroll(&mut self, horizontal: bool) -> io::Result<Option<i32>> {
+            self.poll(Duration::ZERO)?;
+            let delta = self
+                .events
+                .front()
+                .and_then(|queued| scroll_delta(&queued.event, horizontal));
+            if delta.is_some() {
+                self.events.pop_front();
+            }
+            Ok(delta)
         }
 
         fn enqueue_resize(&mut self) {
@@ -115,7 +177,8 @@ mod unix {
                     .replace(size)
                     .is_some_and(|previous| previous != size)
                 {
-                    self.events.push_back(Event::Resize(size.0, size.1));
+                    self.events
+                        .push_back(QueuedEvent::plain(Event::Resize(size.0, size.1)));
                 }
             }
         }
@@ -124,11 +187,11 @@ mod unix {
             let prefix = std::mem::replace(&mut self.prefix, Prefix::None);
             match prefix {
                 Prefix::None if byte == 0x1b => self.prefix = Prefix::Escape,
-                Prefix::None => self.parse(&[byte], true, false),
+                Prefix::None => self.parse(&[byte], true, None),
                 Prefix::Escape if byte == b'[' => {
                     self.prefix = Prefix::Csi(vec![0x1b, b'[']);
                 }
-                Prefix::Escape => self.parse(&[0x1b, byte], true, false),
+                Prefix::Escape => self.parse(&[0x1b, byte], true, None),
                 Prefix::Csi(mut sequence) => {
                     sequence.push(byte);
                     if (0x40..=0x7e).contains(&byte) {
@@ -140,15 +203,11 @@ mod unix {
                         let rewritten = if self.paste {
                             None
                         } else {
-                            rewrite_kitty_key(&sequence, self.shortcuts)
+                            rewrite_kitty_key(&sequence)
                         };
-                        if let Some(rewritten) = rewritten {
-                            self.parse(rewritten.as_bytes(), true, true);
-                        } else {
-                            self.parse(&sequence, true, false);
-                        }
+                        self.parse(&sequence, true, rewritten);
                     } else if sequence.len() >= 256 {
-                        self.parse(&sequence, true, false);
+                        self.parse(&sequence, true, None);
                     } else {
                         self.prefix = Prefix::Csi(sequence);
                     }
@@ -156,11 +215,14 @@ mod unix {
             }
         }
 
-        fn parse(&mut self, bytes: &[u8], maybe_more: bool, physical: bool) {
+        fn parse(&mut self, bytes: &[u8], maybe_more: bool, mut physical_sequence: Option<String>) {
             self.parser.parse(bytes, maybe_more);
             while let Some(event) = self.parser.pop() {
-                if let Some(event) = convert_event(event, physical) {
-                    self.events.push_back(event);
+                if let Some(event) = convert_event(event, false) {
+                    self.events.push_back(QueuedEvent {
+                        event,
+                        physical_sequence: physical_sequence.take(),
+                    });
                 }
             }
         }
@@ -182,7 +244,7 @@ mod unix {
 
     /// Replace only the key field of a Kitty CSI-u event. The published parser
     /// then handles the rest of the protocol, including modifiers and key state.
-    fn rewrite_kitty_key(sequence: &[u8], shortcuts: bool) -> Option<String> {
+    fn rewrite_kitty_key(sequence: &[u8]) -> Option<String> {
         if !sequence.starts_with(b"\x1b[") || !sequence.ends_with(b"u") {
             return None;
         }
@@ -204,11 +266,6 @@ mod unix {
             .unwrap_or(1)
             .saturating_sub(1);
         let shift = modifier & 1 != 0;
-        let command_modifier = modifier & (2 | 4 | 8 | 16 | 32) != 0;
-        if !shortcuts && !command_modifier {
-            return None;
-        }
-
         let mut rewritten = format!("\x1b[{}", base as u32);
         if shift {
             if let Some(shifted) = shifted_pc101_key(base) {
@@ -359,7 +416,11 @@ mod unix {
             for &byte in bytes {
                 input.feed(byte);
             }
-            input.events.into_iter().collect()
+            let mut events = Vec::new();
+            while let Ok(event) = input.read() {
+                events.push(event);
+            }
+            events
         }
 
         #[test]
@@ -393,6 +454,27 @@ mod unix {
         }
 
         #[test]
+        fn buffered_keys_use_the_mode_active_when_each_event_is_handled() {
+            let mut input = InputReader {
+                tty: File::open("/dev/null").unwrap(),
+                parser: Parser::default(),
+                prefix: Prefix::None,
+                events: VecDeque::new(),
+                size: None,
+                shortcuts: true,
+                paste: false,
+            };
+            for &byte in b"\x1b[<64;10;5M/\x1b[1076::108u" {
+                input.feed(byte);
+            }
+            assert_eq!(input.take_scroll(false).unwrap(), Some(-3));
+            assert_eq!(input.take_scroll(false).unwrap(), None);
+            assert!(matches!(input.read(), Ok(Event::Key(k)) if k.code == KeyCode::Char('/')));
+            input.set_shortcuts(false);
+            assert!(matches!(input.read(), Ok(Event::Key(k)) if k.code == KeyCode::Char('д')));
+        }
+
+        #[test]
         fn legacy_navigation_and_mouse_events_still_reach_the_viewer() {
             let events = keys(b"j\x1b[A\x1b[<64;10;5M", true);
             assert!(
@@ -415,21 +497,42 @@ mod unix {
 pub(super) use unix::InputReader;
 
 #[cfg(not(unix))]
-pub(super) struct InputReader;
+pub(super) struct InputReader {
+    pending: VecDeque<Event>,
+}
 
 #[cfg(not(unix))]
 impl InputReader {
     pub(super) fn new() -> io::Result<Self> {
-        Ok(Self)
+        Ok(Self {
+            pending: VecDeque::new(),
+        })
     }
 
     pub(super) fn set_shortcuts(&mut self, _shortcuts: bool) {}
 
     pub(super) fn poll(&mut self, timeout: Duration) -> io::Result<bool> {
-        crossterm::event::poll(timeout)
+        Ok(!self.pending.is_empty() || crossterm::event::poll(timeout)?)
     }
 
     pub(super) fn read(&mut self) -> io::Result<Event> {
-        crossterm::event::read()
+        self.pending
+            .pop_front()
+            .map(Ok)
+            .unwrap_or_else(crossterm::event::read)
+    }
+
+    pub(super) fn take_scroll(&mut self, horizontal: bool) -> io::Result<Option<i32>> {
+        if self.pending.is_empty() && crossterm::event::poll(Duration::ZERO)? {
+            self.pending.push_back(crossterm::event::read()?);
+        }
+        let delta = self
+            .pending
+            .front()
+            .and_then(|event| scroll_delta(event, horizontal));
+        if delta.is_some() {
+            self.pending.pop_front();
+        }
+        Ok(delta)
     }
 }

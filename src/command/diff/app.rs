@@ -1182,32 +1182,14 @@ fn run_app_internal(
                         }
                         MouseEventKind::ScrollDown | MouseEventKind::ScrollUp => {
                             // Coalesce consecutive scroll events to handle fast scrolling.
-                            // Non-scroll events are preserved in pending_events queue.
                             let mut scroll_delta: i32 = match mouse.kind {
                                 MouseEventKind::ScrollDown => 3,
                                 MouseEventKind::ScrollUp => -3,
                                 _ => 0,
                             };
 
-                            // Coalesce scroll events, but preserve non-scroll events
-                            while input.poll(Duration::from_millis(0))? {
-                                let next_event = input.read()?;
-                                match &next_event {
-                                    Event::Mouse(m) => match m.kind {
-                                        MouseEventKind::ScrollDown => scroll_delta += 3,
-                                        MouseEventKind::ScrollUp => scroll_delta -= 3,
-                                        _ => {
-                                            // Non-scroll mouse event - queue for processing
-                                            pending_events.push_back(next_event);
-                                            break;
-                                        }
-                                    },
-                                    _ => {
-                                        // Non-mouse event - queue for processing
-                                        pending_events.push_back(next_event);
-                                        break;
-                                    }
-                                }
+                            while let Some(delta) = input.take_scroll(false)? {
+                                scroll_delta += delta;
                             }
 
                             // Apply the accumulated scroll delta
@@ -1247,23 +1229,8 @@ fn run_app_internal(
                                 _ => 0,
                             };
 
-                            // Coalesce horizontal scroll events
-                            while input.poll(Duration::from_millis(0))? {
-                                let next_event = input.read()?;
-                                match &next_event {
-                                    Event::Mouse(m) => match m.kind {
-                                        MouseEventKind::ScrollRight => h_scroll_delta += 4,
-                                        MouseEventKind::ScrollLeft => h_scroll_delta -= 4,
-                                        _ => {
-                                            pending_events.push_back(next_event);
-                                            break;
-                                        }
-                                    },
-                                    _ => {
-                                        pending_events.push_back(next_event);
-                                        break;
-                                    }
-                                }
+                            while let Some(delta) = input.take_scroll(true)? {
+                                h_scroll_delta += delta;
                             }
 
                             // Apply the accumulated horizontal scroll delta
