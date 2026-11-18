@@ -38,10 +38,8 @@ pub enum FileStatus {
 }
 
 pub enum ModalContent {
-    #[allow(dead_code)]
     Info { title: String, message: String },
     Confirm { title: String, message: String },
-    #[allow(dead_code)]
     Select {
         title: String,
         items: Vec<String>,
@@ -102,7 +100,6 @@ pub enum ModalResult {
 }
 
 impl Modal {
-    #[allow(dead_code)]
     pub fn info(title: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
             content: ModalContent::Info {
@@ -121,13 +118,12 @@ impl Modal {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn select(title: impl Into<String>, items: Vec<String>) -> Self {
+    pub fn select(title: impl Into<String>, items: Vec<String>, selected: usize) -> Self {
         Self {
             content: ModalContent::Select {
                 title: title.into(),
                 items,
-                selected: 0,
+                selected,
             },
         }
     }

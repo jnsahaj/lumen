@@ -14,11 +14,11 @@ pub struct WatchEvent {
 #[allow(dead_code)]
 pub struct WatchHandle(notify_debouncer_mini::Debouncer<notify::RecommendedWatcher>);
 
-pub fn setup_watcher() -> Option<(WatchHandle, Receiver<WatchEvent>)> {
+/// Watch the working tree at `root`. Reported paths are relative to `root`,
+/// matching `FileDiff::filename` (e.g. "src/foo.rs").
+pub fn setup_watcher(root: &Path) -> Option<(WatchHandle, Receiver<WatchEvent>)> {
     let (tx, rx) = mpsc::channel();
-
-    // Get current directory for making paths relative
-    let cwd = std::env::current_dir().ok();
+    let event_root = root.to_path_buf();
 
     let mut debouncer = new_debouncer(
         Duration::from_millis(500),
@@ -27,21 +27,8 @@ pub fn setup_watcher() -> Option<(WatchHandle, Receiver<WatchEvent>)> {
                 let mut changed_files = HashSet::new();
                 for event in events {
                     if event.kind == DebouncedEventKind::Any {
-                        // Normalize path to be relative from current directory
-                        // This matches the format used in file_diffs.filename (e.g., "src/foo.rs")
-                        let path_str = if let Some(ref cwd) = cwd {
-                            event
-                                .path
-                                .strip_prefix(cwd)
-                                .unwrap_or(&event.path)
-                                .to_string_lossy()
-                                .to_string()
-                        } else {
-                            event.path.to_string_lossy().to_string()
-                        };
-                        // Also strip leading "./" if present
-                        let normalized = path_str.strip_prefix("./").unwrap_or(&path_str);
-                        changed_files.insert(normalized.to_string());
+                        let relative_path = event.path.strip_prefix(&event_root).unwrap_or(&event.path);
+                        changed_files.insert(relative_path.to_string_lossy().to_string());
                     }
                 }
                 if !changed_files.is_empty() {
@@ -54,7 +41,7 @@ pub fn setup_watcher() -> Option<(WatchHandle, Receiver<WatchEvent>)> {
 
     debouncer
         .watcher()
-        .watch(Path::new("."), notify::RecursiveMode::Recursive)
+        .watch(root, notify::RecursiveMode::Recursive)
         .ok()?;
 
     Some((WatchHandle(debouncer), rx))

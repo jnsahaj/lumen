@@ -1,5 +1,6 @@
 use once_cell::sync::OnceCell;
 use ratatui::prelude::Color;
+use std::io::IsTerminal;
 use std::str::FromStr;
 
 static THEME: OnceCell<Theme> = OnceCell::new();
@@ -55,7 +56,14 @@ impl FromStr for ThemePreset {
 
 impl ThemeMode {
     pub fn detect() -> Self {
-        match terminal_light::luma() {
+        // Asking the terminal for its background writes a query to stdout, which
+        // would corrupt the annotations written there when stdout is captured.
+        let luma = if std::io::stdout().is_terminal() {
+            terminal_light::luma()
+        } else {
+            terminal_light::env::bg_color().map(|color| terminal_light::Color::Ansi(color).luma())
+        };
+        match luma {
             Ok(luma) if luma > 0.85 => ThemeMode::Light,
             _ => ThemeMode::Dark,
         }

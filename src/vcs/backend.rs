@@ -131,4 +131,8 @@ pub trait VcsBackend {
 
     /// Get the name of this VCS backend ("git" or "jj").
     fn name(&self) -> &'static str;
+
+    /// Root directory of the working tree. File paths returned by this backend
+    /// are relative to it.
+    fn working_tree_root(&self) -> &Path;
 }

@@ -2,6 +2,11 @@
 
 # lumen
 
+> **This is `lumiere`, a fork of [jnsahaj/lumen](https://github.com/jnsahaj/lumen).**
+> The binary is named `lumiere`. It adds reviews across the repositories of a
+> workspace folder and a `/lumiere` command for the pi coding agent. See
+> [FORK.md](FORK.md). The rest of this README is upstream's and still says `lumen`.
+
 A fast terminal diff viewer and code review TUI, written in Rust.
 
 [![Crates.io Total Downloads](https://img.shields.io/crates/d/lumen?label=downloads%20%40crates.io)](https://crates.io/crates/lumen)

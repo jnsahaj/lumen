@@ -14,6 +14,9 @@ mod text_edit;
 pub mod theme;
 mod types;
 mod watcher;
+mod workspace;
+
+pub use workspace::Workspace;
 
 use std::collections::HashSet;
 use std::io;
@@ -338,6 +341,27 @@ fn detect_current_branch_pr() -> Result<String, String> {
     Ok(number)
 }
 
+/// Review the repositories of a workspace folder, one at a time.
+pub fn run_workspace_diff_ui(options: DiffOptions, workspace: &Workspace) -> io::Result<()> {
+    if options.pr.is_some() || options.detect_pr || options.stacked {
+        eprintln!(
+            "\x1b[91merror:\x1b[0m --pr, --detect-pr and --stacked need a single repository; \
+             this folder holds several"
+        );
+        process::exit(1);
+    }
+
+    match workspace.initial_repository(&options) {
+        Ok(initial_repository) => {
+            app::run_app_in_workspace(options, workspace, initial_repository)
+        }
+        Err(e) => {
+            eprintln!("\x1b[91merror:\x1b[0m {}", e);
+            process::exit(1);
+        }
+    }
+}
+
 pub fn run_diff_ui(mut options: DiffOptions, backend: &dyn VcsBackend) -> io::Result<()> {
     // Resolve --detect-pr into options.pr
     if options.detect_pr && options.pr.is_none() {
@@ -408,6 +432,14 @@ pub fn run_diff_ui(mut options: DiffOptions, backend: &dyn VcsBackend) -> io::Re
         }
     }
 
+    // A missing base revision would otherwise be reviewed as a partial or empty diff.
+    if let Some(CommitReference::MergeBaseToWorkingTree { .. }) = options.reference {
+        if let Err(e) = git::validate_reference(options.reference.as_ref(), backend) {
+            eprintln!("\x1b[91merror:\x1b[0m {}", e);
+            process::exit(1);
+        }
+    }
+
     // Handle stacked mode for range references
     if options.stacked {
         if let Some(ref reference) = options.reference {
@@ -420,7 +452,9 @@ pub fn run_diff_ui(mut options: DiffOptions, backend: &dyn VcsBackend) -> io::Re
                         .unwrap_or_else(|_| from.clone());
                     (merge_base, to.clone())
                 }
-                CommitReference::Single(_) | CommitReference::RangeToWorkingTree { .. } => {
+                CommitReference::Single(_)
+                | CommitReference::RangeToWorkingTree { .. }
+                | CommitReference::MergeBaseToWorkingTree { .. } => {
                     eprintln!(
                         "\x1b[91merror:\x1b[0m --stacked requires a range (e.g., main..feature)"
                     );

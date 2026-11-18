@@ -930,14 +930,18 @@ impl DiffLineStyle {
     }
 }
 
-pub fn render_empty_state(frame: &mut Frame, watching: bool) {
+pub fn render_empty_state(frame: &mut Frame, watching: bool, repository_name: Option<&str>) {
     let watch_hint = if watching {
         " (watching for changes...)"
     } else {
         ""
     };
+    let title = match repository_name {
+        Some(name) => format!(" Git Review · {} ", name),
+        None => " Git Review ".to_string(),
+    };
     let msg = Paragraph::new(format!("No changes detected.{}", watch_hint))
-        .block(Block::default().title(" Git Review ").borders(Borders::ALL));
+        .block(Block::default().title(title).borders(Borders::ALL));
     frame.render_widget(msg, frame.area());
 }
 

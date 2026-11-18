@@ -11,22 +11,28 @@ pub enum VcsType {
     None,
 }
 
-/// Detect the VCS type for a directory.
+/// The VCS whose repository root is exactly `dir`, if any.
 ///
 /// Prefers Jj when both .jj/ and .git/ are present (colocated repo).
+pub fn vcs_type_at(dir: &Path) -> Option<VcsType> {
+    if dir.join(".jj").is_dir() {
+        Some(VcsType::Jj)
+    } else if dir.join(".git").exists() {
+        Some(VcsType::Git)
+    } else {
+        None
+    }
+}
+
+/// Detect the VCS type for a directory.
+///
 /// Walks up the directory tree to find the repo root.
 pub fn detect_vcs_type(start_dir: &Path) -> VcsType {
     let mut current = start_dir;
 
     loop {
-        // Check for .jj/ first (prefer jj in colocated repos)
-        if current.join(".jj").is_dir() {
-            return VcsType::Jj;
-        }
-
-        // Check for .git/
-        if current.join(".git").exists() {
-            return VcsType::Git;
+        if let Some(vcs_type) = vcs_type_at(current) {
+            return vcs_type;
         }
 
         // Walk up to parent

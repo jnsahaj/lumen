@@ -64,8 +64,35 @@ impl DiffRefs {
             Some(CommitReference::RangeToWorkingTree { from }) => {
                 DiffRefs::RangeToWorkingTree { from: from.clone() }
             }
+            Some(CommitReference::MergeBaseToWorkingTree { from }) => {
+                let merge_base = backend
+                    .get_merge_base(from, backend.working_copy_parent_ref())
+                    .unwrap_or_else(|_| from.clone());
+                DiffRefs::RangeToWorkingTree { from: merge_base }
+            }
         }
     }
+}
+
+/// Check that every revision named by `reference` exists in this repository.
+pub fn validate_reference(
+    reference: Option<&CommitReference>,
+    backend: &dyn VcsBackend,
+) -> Result<(), String> {
+    let revisions: Vec<&String> = match reference {
+        None => Vec::new(),
+        Some(CommitReference::Single(revision)) => vec![revision],
+        Some(CommitReference::Range { from, to })
+        | Some(CommitReference::TripleDots { from, to }) => vec![from, to],
+        Some(CommitReference::RangeToWorkingTree { from })
+        | Some(CommitReference::MergeBaseToWorkingTree { from }) => vec![from],
+    };
+    for revision in revisions {
+        backend
+            .resolve_ref(revision)
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 
 /// Get the list of files changed
@@ -136,7 +163,7 @@ pub fn get_new_content(filename: &str, refs: &DiffRefs, backend: &dyn VcsBackend
             .unwrap_or_default(),
         DiffRefs::WorkingTree | DiffRefs::RangeToWorkingTree { .. } => {
             // Read from working tree (actual filesystem)
-            fs::read_to_string(filename).unwrap_or_default()
+            fs::read_to_string(backend.working_tree_root().join(filename)).unwrap_or_default()
         }
     }
 }
@@ -817,6 +844,95 @@ mod tests {
         assert_eq!(diffs_b[0].new_content, "commit B\n");
 
         let _ = std::env::set_current_dir(&original);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    fn options_for(reference: crate::commit_reference::CommitReference) -> super::super::DiffOptions {
+        super::super::DiffOptions {
+            reference: Some(reference),
+            pr: None,
+            detect_pr: false,
+            file: None,
+            watch: false,
+            theme: None,
+            stacked: false,
+            focus: None,
+            origin: None,
+            wrap: false,
+        }
+    }
+
+    /// The repository is opened by path and the process cwd is never moved into
+    /// it, so this also covers reading working tree files from the repository root.
+    #[test]
+    fn test_merge_base_to_working_tree_ignores_commits_added_to_the_base_branch() {
+        use crate::commit_reference::CommitReference;
+
+        let dir = make_temp_dir("git-diff-merge-base-to-wt");
+        git(&dir, &["init"]);
+        git(&dir, &["config", "user.email", "test@example.com"]);
+        git(&dir, &["config", "user.name", "Test User"]);
+
+        fs::write(dir.join("shared.txt"), "shared\n").expect("write shared");
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-m", "shared"]);
+        git(&dir, &["checkout", "-b", "trunk"]);
+
+        git(&dir, &["checkout", "-b", "feature"]);
+        fs::write(dir.join("feature.txt"), "feature\n").expect("write feature");
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-m", "feature"]);
+
+        git(&dir, &["checkout", "trunk"]);
+        fs::write(dir.join("trunk-only.txt"), "trunk\n").expect("write trunk-only");
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-m", "trunk moves ahead"]);
+
+        git(&dir, &["checkout", "feature"]);
+        fs::write(dir.join("uncommitted.txt"), "uncommitted\n").expect("write uncommitted");
+
+        let backend = GitBackend::new(&dir).expect("should open repo");
+        let filenames_for = |reference: CommitReference| -> Vec<String> {
+            let mut filenames: Vec<String> = load_file_diffs(&options_for(reference), &backend)
+                .into_iter()
+                .map(|d| d.filename)
+                .collect();
+            filenames.sort();
+            filenames
+        };
+
+        assert_eq!(
+            filenames_for(CommitReference::MergeBaseToWorkingTree {
+                from: "trunk".to_string(),
+            }),
+            vec!["feature.txt", "uncommitted.txt"],
+        );
+        assert_eq!(
+            filenames_for(CommitReference::RangeToWorkingTree {
+                from: "trunk".to_string(),
+            }),
+            vec!["feature.txt", "trunk-only.txt", "uncommitted.txt"],
+        );
+
+        let diffs = load_file_diffs(
+            &options_for(CommitReference::MergeBaseToWorkingTree {
+                from: "trunk".to_string(),
+            }),
+            &backend,
+        );
+        let uncommitted = diffs.iter().find(|d| d.filename == "uncommitted.txt").unwrap();
+        assert_eq!(uncommitted.new_content, "uncommitted\n");
+
+        assert_eq!(
+            validate_reference(
+                Some(&CommitReference::MergeBaseToWorkingTree {
+                    from: "missing".to_string(),
+                }),
+                &backend,
+            ),
+            Err("invalid reference: missing".to_string()),
+        );
+
         let _ = fs::remove_dir_all(&dir);
     }
 }

@@ -1,0 +1,11 @@
+{
+  "name": "pi-lumiere",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Pi extension: /lumiere opens a Lumiere review and sends the annotations to the agent",
+  "type": "module",
+  "license": "MIT",
+  "pi": {
+    "extensions": ["./index.ts"]
+  }
+}

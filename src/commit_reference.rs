@@ -9,6 +9,9 @@ pub enum CommitReference {
     /// Range from a ref to the working tree (uncommitted changes included).
     /// Parsed from `<from>..-`.
     RangeToWorkingTree { from: String },
+    /// Range from the merge base of a ref and the working-copy parent to the
+    /// working tree (uncommitted changes included). Parsed from `<from>...-`.
+    MergeBaseToWorkingTree { from: String },
 }
 
 #[derive(Debug, Error)]
@@ -28,6 +31,13 @@ impl FromStr for CommitReference {
         // Handle the ... and .. cases
         if let Some((from, to)) = s.split_once("...") {
             let from = if from.is_empty() { "HEAD" } else { from };
+
+            if to == "-" {
+                return Ok(CommitReference::MergeBaseToWorkingTree {
+                    from: from.to_string(),
+                });
+            }
+
             let to = if to.is_empty() { "HEAD" } else { to };
 
             Ok(CommitReference::TripleDots {
@@ -148,6 +158,22 @@ mod tests {
         assert_eq!(
             "..-".parse::<CommitReference>().unwrap(),
             CommitReference::RangeToWorkingTree {
+                from: "HEAD".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_merge_base_to_working_tree() {
+        assert_eq!(
+            "origin/main...-".parse::<CommitReference>().unwrap(),
+            CommitReference::MergeBaseToWorkingTree {
+                from: "origin/main".to_string(),
+            }
+        );
+        assert_eq!(
+            "...-".parse::<CommitReference>().unwrap(),
+            CommitReference::MergeBaseToWorkingTree {
                 from: "HEAD".to_string(),
             }
         );

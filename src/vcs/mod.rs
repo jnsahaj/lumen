@@ -11,7 +11,7 @@ mod jj;
 pub mod test_utils;
 
 pub use backend::{CommitInfo, StackedCommitInfo, VcsBackend, VcsError};
-pub use detection::{detect_vcs_type, VcsType};
+pub use detection::{detect_vcs_type, vcs_type_at, VcsType};
 pub use git::GitBackend;
 #[cfg(feature = "jj")]
 pub use jj::JjBackend;

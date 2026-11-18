@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use git2::{Commit, DiffFormat, DiffOptions, Repository, StatusOptions, Time, Tree};
 
@@ -131,6 +131,7 @@ fn should_exclude_path(path: &str) -> bool {
 /// Git backend using git2 (libgit2) for repository access.
 pub struct GitBackend {
     repo: Repository,
+    working_tree_root: PathBuf,
 }
 
 impl GitBackend {
@@ -139,10 +140,13 @@ impl GitBackend {
     pub fn new(path: &Path) -> Result<Self, VcsError> {
         let discover_result = Repository::discover(path);//map_err(|_| VcsError::NotARepository)?;
         return match discover_result {
-            Ok(repo) =>  Ok(GitBackend { repo }),
+            Ok(repo) => {
+                let working_tree_root = repo.workdir().unwrap_or_else(|| repo.path()).to_path_buf();
+                Ok(GitBackend { repo, working_tree_root })
+            }
             Err(error) => {
                 // Print libgit2 so there is a chance to diagnose any errors with git
-                println!("Error on repository discovery: {error:?}");
+                eprintln!("Error on repository discovery: {error:?}");
                 return Err(VcsError::NotARepository)
             },
         };
@@ -794,6 +798,10 @@ impl VcsBackend for GitBackend {
 
     fn name(&self) -> &'static str {
         "git"
+    }
+
+    fn working_tree_root(&self) -> &Path {
+        &self.working_tree_root
     }
 }
 

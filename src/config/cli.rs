@@ -13,7 +13,7 @@ pub enum VcsOverride {
 }
 
 #[derive(Parser)]
-#[command(name = "lumen")]
+#[command(name = "lumiere")]
 #[command(about = "AI-powered CLI tool for git commit summaries", long_about = None)]
 #[command(version)]
 pub struct Cli {
