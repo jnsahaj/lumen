@@ -43,6 +43,8 @@ pub struct DiffOptions {
     pub focus: Option<String>,
     pub origin: Option<String>,
     pub wrap: bool,
+    /// Show only the changes with a few lines around them, instead of whole files.
+    pub hunks_only: bool,
     /// Rex pane of the agent that answers review threads.
     pub agent_block: Option<String>,
 }

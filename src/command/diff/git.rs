@@ -564,6 +564,7 @@ mod tests {
             focus: None,
             origin: None,
             wrap: false,
+            hunks_only: true,
             agent_block: None,
         };
 
@@ -637,6 +638,7 @@ mod tests {
             focus: None,
             origin: None,
             wrap: false,
+            hunks_only: true,
             agent_block: None,
         };
 
@@ -861,6 +863,7 @@ mod tests {
             focus: None,
             origin: None,
             wrap: false,
+            hunks_only: true,
             agent_block: None,
         }
     }

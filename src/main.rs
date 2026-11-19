@@ -1,5 +1,5 @@
 use clap::Parser;
-use config::cli::{Cli, Commands, ThreadAction};
+use config::cli::{Cli, Commands, ThreadAction, ViewMode};
 use config::LumiereConfig;
 use error::LumiereError;
 use std::io::Read;
@@ -39,6 +39,7 @@ fn run() -> Result<(), LumiereError> {
             focus,
             origin,
             wrap,
+            view,
             agent_block,
         } => {
             let options = command::diff::DiffOptions {
@@ -52,6 +53,7 @@ fn run() -> Result<(), LumiereError> {
                 focus,
                 origin,
                 wrap: wrap || config.wrap.unwrap_or(false),
+                hunks_only: view.or(config.view) != Some(ViewMode::Full),
                 agent_block,
             };
             // `diff` runs inside a repository, or in a folder of repositories.

@@ -50,6 +50,7 @@ use super::render::{
 use super::state::{adjust_scroll_for_hunk, adjust_scroll_to_line, AppState, PendingKey};
 use super::theme;
 use super::review_thread::{AnnotationTarget, Thread};
+use super::search::MatchPanel;
 use super::thread_store::ThreadStore;
 use super::types::{
     ChangeType, CursorPosition, DiffFullscreen, DiffPanelFocus, FileStatus, FocusedPanel,
@@ -496,6 +497,11 @@ pub(super) fn new_review_state(
 ) -> AppState {
     let mut state = AppState::new(file_diffs, focus_file);
     state.settings.wrap = options.wrap;
+    if state.settings.hunks_only != options.hunks_only {
+        state.settings.hunks_only = options.hunks_only;
+        // Opens on the first change again: its row depends on the view.
+        state.select_file(state.current_file);
+    }
     state.set_vcs_name(backend.name());
     // Diff reference for annotation export context
     state.set_diff_reference(options.reference.as_ref().map(|r| match r {
@@ -1058,14 +1064,14 @@ fn run_app_internal<'a>(
                                 }
                                 ModalResult::JumpToLine {
                                     file_index,
-                                    sbs_line_index,
-                                    panel: _panel,
+                                    line_no,
+                                    panel,
                                 } => {
                                     // Reveal + switch to the target file, then pin the
-                                    // matched sbs line to the top of the content area.
+                                    // matched line to the top of the content area.
                                     // The diff view renders sticky-context rows and any
                                     // file-level annotation slots ABOVE scroll=0, so
-                                    // setting scroll = sbs_line_index lands the line
+                                    // scrolling to the line's row lands it
                                     // right beneath those — exactly where the user
                                     // expects "pinned to the top" to be.
                                     state.reveal_file(file_index);
@@ -1078,14 +1084,31 @@ fn run_app_internal<'a>(
                                             terminal.size()?.height.saturating_sub(5) as usize;
                                         ensure_sidebar_visible(&mut state, visible_height);
                                     }
+                                    let panel = match panel {
+                                        MatchPanel::Old => DiffPanelFocus::Old,
+                                        MatchPanel::New => DiffPanelFocus::New,
+                                    };
+                                    let row_of_match = |state: &AppState| {
+                                        find_sbs_index_for_line(state.side_by_side_ref(), panel, line_no)
+                                    };
+                                    state.ensure_cache();
+                                    let mut row = row_of_match(&state);
+                                    if row.is_none() && state.settings.hunks_only {
+                                        // The search covers whole files; hunks-only view hides this line.
+                                        state.set_hunks_only(false, 0);
+                                        row = row_of_match(&state);
+                                        notice = Some((
+                                            "full file: the match is outside the hunks".to_string(),
+                                            Instant::now(),
+                                        ));
+                                    }
                                     // Compute max_scroll for the just-switched file
                                     // before pinning scroll, so we don't overscroll
                                     // past the last visible row.
-                                    state.ensure_cache();
                                     let sbs_len = state.side_by_side_ref().len();
                                     let vh = terminal.size()?.height.saturating_sub(5) as usize;
                                     let max_scroll = sbs_len.saturating_sub(vh) as u16;
-                                    state.scroll = (sbs_line_index as u16).min(max_scroll);
+                                    state.scroll = (row.unwrap_or(0) as u16).min(max_scroll);
                                     active_modal = None;
                                 }
                                 ModalResult::Selected(selected_index, _) => {
@@ -1759,6 +1782,12 @@ fn run_app_internal<'a>(
                                 state.scroll = state.scroll.saturating_sub(1);
                             }
                         }
+                        KeyCode::Char('z') => {
+                            let hunks_only = !state.settings.hunks_only;
+                            state.set_hunks_only(hunks_only, visible_height);
+                            let view = if hunks_only { "hunks only" } else { "full file" };
+                            notice = Some((view.to_string(), Instant::now()));
+                        }
                         KeyCode::Char('w') => {
                             if pr_info.is_some() {
                                 // PR mode doesn't support watching
@@ -2391,6 +2420,10 @@ fn run_app_internal<'a>(
                                         KeyBind {
                                             key: "w",
                                             description: "Toggle watch mode",
+                                        },
+                                        KeyBind {
+                                            key: "z",
+                                            description: "Hunks only / full file",
                                         },
                                             KeyBind {
                                                 key: "gg / G",

@@ -89,7 +89,8 @@ pub enum ModalResult {
     /// and pin the line to the top of the content area.
     JumpToLine {
         file_index: usize,
-        sbs_line_index: usize,
+        /// Line number in the file, on the side `panel` names.
+        line_no: usize,
         panel: MatchPanel,
     },
     AnnotationJump { annotation_id: String },
@@ -1324,7 +1325,7 @@ impl Modal {
                     KeyCode::Char('c') if ctrl => Some(ModalResult::Dismissed),
                     KeyCode::Enter => state.current_entry().map(|e| ModalResult::JumpToLine {
                         file_index: e.file_index,
-                        sbs_line_index: e.sbs_line_index,
+                        line_no: e.line_no,
                         panel: e.panel,
                     }),
                     KeyCode::PageUp => {

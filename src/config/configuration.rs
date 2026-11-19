@@ -1,3 +1,4 @@
+use crate::config::cli::ViewMode;
 use crate::error::LumiereError;
 use dirs::home_dir;
 use serde::Deserialize;
@@ -16,6 +17,10 @@ pub struct LumiereConfig {
 
     #[serde(default)]
     pub wrap: Option<bool>,
+
+    /// `"hunks"` or `"full"`.
+    #[serde(default)]
+    pub view: Option<ViewMode>,
 }
 
 fn default_config_path() -> Option<PathBuf> {
@@ -54,15 +59,25 @@ mod tests {
         let settings_file = directory.path().join("lumiere.config.json");
 
         // Keys Lumiere does not know, such as those of a Lumen settings file, are ignored.
-        std::fs::write(&settings_file, r#"{"theme": "nord", "wrap": true, "provider": "openai"}"#)
-            .expect("write settings");
+        std::fs::write(
+            &settings_file,
+            r#"{"theme": "nord", "wrap": true, "view": "full", "provider": "openai"}"#,
+        )
+        .expect("write settings");
         let config = build_from(&settings_file).expect("settings load");
         assert_eq!(config.theme.as_deref(), Some("nord"));
         assert_eq!(config.wrap, Some(true));
+        assert_eq!(config.view, Some(ViewMode::Full));
 
         std::fs::write(&settings_file, "{}").expect("write settings");
         let config = build_from(&settings_file).expect("empty settings load");
-        assert_eq!((config.theme, config.wrap), (None, None));
+        assert_eq!((config.theme, config.wrap, config.view), (None, None, None));
+
+        std::fs::write(&settings_file, r#"{"view": "unified"}"#).expect("write settings");
+        assert!(matches!(
+            build_from(&settings_file),
+            Err(LumiereError::InvalidConfiguration(_))
+        ));
 
         std::fs::write(&settings_file, "{not json").expect("write settings");
         assert!(matches!(

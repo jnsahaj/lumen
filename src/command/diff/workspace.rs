@@ -241,6 +241,7 @@ impl<'a> WorkspaceSession<'a> {
             }
         };
         next_state.watching = state.watching;
+        next_state.set_hunks_only(state.settings.hunks_only, 0);
 
         self.parked_states[self.active] = Some(std::mem::replace(state, next_state));
         self.active = index;
@@ -306,6 +307,7 @@ mod tests {
             focus: None,
             origin: None,
             wrap: false,
+            hunks_only: true,
             agent_block: None,
         }
     }

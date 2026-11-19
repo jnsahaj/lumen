@@ -58,6 +58,8 @@ pub struct DiffViewSettings {
     pub context: ContextConfig,
     pub tab_width: usize,
     pub wrap: bool,
+    /// Show only the changes with a few lines around them, instead of whole files.
+    pub hunks_only: bool,
 }
 
 impl Default for DiffViewSettings {
@@ -66,6 +68,7 @@ impl Default for DiffViewSettings {
             context: ContextConfig::default(),
             tab_width: 4,
             wrap: false,
+            hunks_only: true,
         }
     }
 }
@@ -86,9 +89,24 @@ pub struct DiffLine {
     pub old_segments: Option<Vec<InlineSegment>>,
     /// Word-level segments for the new line (only populated for Modified lines)
     pub new_segments: Option<Vec<InlineSegment>>,
+    /// Above zero on a separator row: how many unchanged lines it stands for. Such a
+    /// row has no line on either side.
+    pub hidden_lines: usize,
 }
 
 impl DiffLine {
+    /// The separator row standing for `hidden_lines` unchanged lines.
+    pub fn separator(hidden_lines: usize) -> Self {
+        Self {
+            old_line: None,
+            new_line: None,
+            change_type: ChangeType::Equal,
+            old_segments: None,
+            new_segments: None,
+            hidden_lines,
+        }
+    }
+
     /// Get the line number for the given panel side.
     pub fn line_number(&self, panel: DiffPanelFocus) -> Option<usize> {
         match panel {

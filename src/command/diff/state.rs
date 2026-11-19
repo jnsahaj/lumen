@@ -1,9 +1,13 @@
 use std::collections::{HashMap, HashSet};
+use std::ops::RangeInclusive;
 
 use tree_sitter::{Parser, Tree};
 
 use crate::command::diff::context::get_language_context;
-use crate::command::diff::diff_algo::{compute_side_by_side, count_added_removed, find_hunk_starts};
+use crate::command::diff::diff_algo::{
+    compute_side_by_side, count_added_removed, find_hunk_starts, hide_unchanged_rows,
+    HUNK_CONTEXT_ROWS,
+};
 use crate::command::diff::highlight::FileHighlighter;
 
 use crate::command::diff::search::SearchState;
@@ -135,6 +139,8 @@ pub struct AppState {
     cached_hunks: Option<(usize, Vec<usize>)>,
     /// Cached total line count for current file (avoids recomputing diff for max_scroll)
     cached_total_lines: Option<(usize, usize)>,
+    /// The thread lines the cached rows were built to keep on screen.
+    cached_thread_line_ranges: Vec<(DiffPanelFocus, RangeInclusive<usize>)>,
     /// Cached syntax highlighters for current file (avoids re-parsing with tree-sitter every frame)
     cached_highlighters: Option<(usize, FileHighlighter, FileHighlighter)>,
     /// Cached parsed syntax tree
@@ -203,22 +209,8 @@ impl AppState {
         };
         let settings = DiffViewSettings::default();
         let (total_added, total_removed) = compute_total_line_stats(&file_diffs);
-        let (scroll, focused_hunk) = if !file_diffs.is_empty() && current_file < file_diffs.len() {
-            let diff = &file_diffs[current_file];
-            let side_by_side =
-                compute_side_by_side(&diff.old_content, &diff.new_content, settings.tab_width);
-            let hunks = find_hunk_starts(&side_by_side);
-            let scroll = hunks
-                .first()
-                .map(|&h| (h as u16).saturating_sub(5))
-                .unwrap_or(0);
-            let focused = if hunks.is_empty() { None } else { Some(0) };
-            (scroll, focused)
-        } else {
-            (0, None)
-        };
 
-        Self {
+        let mut state = Self {
             file_diffs,
             sidebar_items,
             sidebar_visible,
@@ -227,7 +219,7 @@ impl AppState {
             sidebar_selected,
             sidebar_scroll: 0,
             sidebar_h_scroll: 0,
-            scroll,
+            scroll: 0,
             h_scroll: 0,
             focused_panel: FocusedPanel::default(),
             viewed_files: HashSet::new(),
@@ -239,7 +231,7 @@ impl AppState {
             pending_key: PendingKey::default(),
             needs_reload: false,
             watching: false,
-            focused_hunk,
+            focused_hunk: None,
             threads: Vec::new(),
             thread_store: None,
             thread_store_stamp: None,
@@ -257,6 +249,7 @@ impl AppState {
             cached_side_by_side: None,
             cached_hunks: None,
             cached_total_lines: None,
+            cached_thread_line_ranges: Vec::new(),
             cached_highlighters: None,
             cached_trees: TreeCache::default(),
             search_dirty: true,
@@ -266,7 +259,11 @@ impl AppState {
             editor_rect: None,
             total_added,
             total_removed,
+        };
+        if current_file < state.file_diffs.len() {
+            state.select_file(current_file);
         }
+        state
     }
 
     fn find_first_file(sidebar_items: &[SidebarItem], sidebar_visible: &[usize]) -> (usize, usize) {
@@ -278,59 +275,10 @@ impl AppState {
         (0, 0)
     }
 
-    /// Get cached side_by_side diff for current file, computing if necessary
-    pub fn get_side_by_side(&mut self) -> &[DiffLine] {
-        if self.file_diffs.is_empty() {
-            return &[];
-        }
-
-        let current = self.current_file;
-        let needs_recompute = match &self.cached_side_by_side {
-            Some((cached_file, _)) => *cached_file != current,
-            None => true,
-        };
-
-        if needs_recompute {
-            let diff = &self.file_diffs[current];
-            let side_by_side = compute_side_by_side(
-                &diff.old_content,
-                &diff.new_content,
-                self.settings.tab_width,
-            );
-            let hunks = find_hunk_starts(&side_by_side);
-            let total = side_by_side.len();
-            self.cached_side_by_side = Some((current, side_by_side));
-            self.cached_hunks = Some((current, hunks));
-            self.cached_total_lines = Some((current, total));
-            let filename = self.file_diffs[current].filename.clone();
-            let old_source = &self.file_diffs[current].old_content;
-            let new_source = &self.file_diffs[current].new_content;
-            let Some(lang_ctx) = get_language_context(&filename) else {
-                return &self.cached_side_by_side.as_ref().unwrap().1;
-            };
-            let mut parser = Parser::new();
-            if parser.set_language(&lang_ctx.language).is_ok() {
-                let old_tree = self.cached_trees.old_file_trees.get(&filename);
-                if let Some(tree) = parser.parse(old_source, old_tree) {
-                    self.cached_trees
-                        .old_file_trees
-                        .insert(filename.clone(), tree);
-                }
-                let new_tree = self.cached_trees.new_file_trees.get(&filename);
-                if let Some(tree) = parser.parse(new_source, new_tree) {
-                    self.cached_trees.new_file_trees.insert(filename, tree);
-                }
-            }
-        }
-
-        &self.cached_side_by_side.as_ref().unwrap().1
-    }
-
     /// Get cached hunk starts for current file
     pub fn get_hunks(&mut self) -> &[usize] {
-        // Ensure side_by_side is computed (which also computes hunks)
-        let _ = self.get_side_by_side();
-        &self.cached_hunks.as_ref().unwrap().1
+        self.ensure_cache();
+        self.hunks_ref()
     }
 
     /// Ensure the side_by_side and hunk caches are populated for the current file.
@@ -339,42 +287,129 @@ impl AppState {
         if self.file_diffs.is_empty() {
             return;
         }
+        let cached_for_current_file =
+            matches!(&self.cached_side_by_side, Some((file, _)) if *file == self.current_file);
+        if !cached_for_current_file {
+            self.build_rows();
+            self.parse_syntax_trees();
+        } else if self.cached_thread_line_ranges != self.thread_line_ranges() {
+            // A thread appeared or went away, and with it lines that had to stay on screen.
+            self.rebuild_rows_keeping_in_place(self.scroll as usize);
+        }
+    }
+
+    /// Computes the rows of the current file: every line of it, or in hunks-only view
+    /// its changes with a few lines around them and the lines under a thread.
+    fn build_rows(&mut self) {
         let current = self.current_file;
-        let needs_recompute = match &self.cached_side_by_side {
-            Some((cached_file, _)) => *cached_file != current,
-            None => true,
+        let diff = &self.file_diffs[current];
+        let mut rows =
+            compute_side_by_side(&diff.old_content, &diff.new_content, self.settings.tab_width);
+        let thread_line_ranges = self.thread_line_ranges();
+        if self.settings.hunks_only {
+            rows = hide_unchanged_rows(rows, HUNK_CONTEXT_ROWS, |row| {
+                thread_line_ranges.iter().any(|(panel, lines)| {
+                    row.line_number(*panel).is_some_and(|line| lines.contains(&line))
+                })
+            });
+        }
+        self.cached_total_lines = Some((current, rows.len()));
+        self.cached_hunks = Some((current, find_hunk_starts(&rows)));
+        self.cached_side_by_side = Some((current, rows));
+        self.cached_thread_line_ranges = thread_line_ranges;
+    }
+
+    /// The lines of the current file that threads keep on screen in hunks-only view.
+    fn thread_line_ranges(&self) -> Vec<(DiffPanelFocus, RangeInclusive<usize>)> {
+        let Some(diff) = self.file_diffs.get(self.current_file) else {
+            return Vec::new();
         };
-        if needs_recompute {
-            let diff = &self.file_diffs[current];
-            let sbs = compute_side_by_side(
-                &diff.old_content,
-                &diff.new_content,
-                self.settings.tab_width,
-            );
-            let hnks = find_hunk_starts(&sbs);
-            let total = sbs.len();
-            self.cached_side_by_side = Some((current, sbs));
-            self.cached_hunks = Some((current, hnks));
-            self.cached_total_lines = Some((current, total));
-            let filename = self.file_diffs[current].filename.clone();
-            let old_source = &self.file_diffs[current].old_content;
-            let new_source = &self.file_diffs[current].new_content;
-            let Some(lang_ctx) = get_language_context(&filename) else {
-                return;
-            };
-            let mut parser = Parser::new();
-            if parser.set_language(&lang_ctx.language).is_ok() {
-                let old_tree = self.cached_trees.old_file_trees.get(&filename);
-                if let Some(tree) = parser.parse(old_source, old_tree) {
-                    self.cached_trees
-                        .old_file_trees
-                        .insert(filename.clone(), tree);
+        if !self.settings.hunks_only {
+            return Vec::new();
+        }
+        self.threads
+            .iter()
+            .filter(|thread| thread.filename == diff.filename)
+            .filter_map(|thread| match &thread.target {
+                AnnotationTarget::LineRange { panel, start_line, end_line } => {
+                    Some((*panel, *start_line..=*end_line))
                 }
-                let new_tree = self.cached_trees.new_file_trees.get(&filename);
-                if let Some(tree) = parser.parse(new_source, new_tree) {
-                    self.cached_trees.new_file_trees.insert(filename, tree);
-                }
-            }
+                AnnotationTarget::File => None,
+            })
+            .collect()
+    }
+
+    /// Recomputes the rows after what is shown changed. The line at `anchor_row`, or
+    /// the first line after it when that row is a separator, stays where it is on
+    /// screen. When rows moved, the selection, which names rows, is dropped.
+    fn rebuild_rows_keeping_in_place(&mut self, anchor_row: usize) {
+        let line_of = |row: &DiffLine| {
+            let line_on = |panel: DiffPanelFocus| row.line_number(panel).map(|line| (panel, line));
+            line_on(DiffPanelFocus::New).or_else(|| line_on(DiffPanelFocus::Old))
+        };
+        let scroll = self.scroll as usize;
+        let previous_rows = self.side_by_side_ref();
+        let previous_row_count = previous_rows.len();
+        let anchor = previous_rows
+            .iter()
+            .enumerate()
+            .skip(anchor_row)
+            .find_map(|(row, shown)| Some((row.saturating_sub(scroll), line_of(shown)?)));
+
+        self.build_rows();
+        self.search_dirty = true;
+        let rows = self.side_by_side_ref();
+        if rows.len() == previous_row_count {
+            // Showing or hiding a line always changes the number of rows.
+            return;
+        }
+        let scroll_keeping_anchor = anchor.map(|(rows_below_top, (panel, line))| {
+            rows.iter()
+                .position(|row| row.line_number(panel).is_some_and(|shown| shown >= line))
+                .unwrap_or(rows.len().saturating_sub(1))
+                .saturating_sub(rows_below_top)
+        });
+        if let Some(scroll) = scroll_keeping_anchor {
+            self.scroll = scroll as u16;
+        }
+        self.clear_selection();
+    }
+
+    /// Switches between hunks-only view and whole files. The focused hunk stays where
+    /// it is when it is among the `visible_rows` on screen; otherwise the top line does.
+    pub fn set_hunks_only(&mut self, hunks_only: bool, visible_rows: usize) {
+        if self.settings.hunks_only == hunks_only {
+            return;
+        }
+        self.settings.hunks_only = hunks_only;
+        if self.cached_side_by_side.is_none() {
+            return;
+        }
+        let scroll = self.scroll as usize;
+        let focused_hunk_row = self
+            .focused_hunk
+            .and_then(|hunk| self.hunks_ref().get(hunk).copied())
+            .filter(|row| (scroll..scroll + visible_rows).contains(row));
+        self.rebuild_rows_keeping_in_place(focused_hunk_row.unwrap_or(scroll));
+    }
+
+    fn parse_syntax_trees(&mut self) {
+        let diff = &self.file_diffs[self.current_file];
+        let Some(lang_ctx) = get_language_context(&diff.filename) else {
+            return;
+        };
+        let mut parser = Parser::new();
+        if parser.set_language(&lang_ctx.language).is_err() {
+            return;
+        }
+        let filename = diff.filename.clone();
+        let old_tree = self.cached_trees.old_file_trees.get(&filename);
+        if let Some(tree) = parser.parse(&diff.old_content, old_tree) {
+            self.cached_trees.old_file_trees.insert(filename.clone(), tree);
+        }
+        let new_tree = self.cached_trees.new_file_trees.get(&filename);
+        if let Some(tree) = parser.parse(&diff.new_content, new_tree) {
+            self.cached_trees.new_file_trees.insert(filename, tree);
         }
     }
 
@@ -1190,6 +1225,59 @@ mod tests {
 
         assert_eq!(state.mark_sent(None), 1);
         assert_eq!(state.mark_sent(None), 0);
+    }
+
+    #[test]
+    fn test_hunks_only_view_keeps_thread_lines_and_the_top_line_when_toggled() {
+        let numbered = |changed: usize| -> String {
+            (1..=100)
+                .map(|line| match line == changed {
+                    true => format!("changed {}\n", line),
+                    false => format!("line {}\n", line),
+                })
+                .collect()
+        };
+        let mut state = AppState::new(
+            vec![FileDiff {
+                filename: "a.rs".to_string(),
+                old_content: numbered(0),
+                new_content: numbered(50),
+                status: FileStatus::Modified,
+                is_binary: false,
+            }],
+            None,
+        );
+        let top_line = |state: &AppState| {
+            state.side_by_side_ref()[state.scroll as usize].line_number(DiffPanelFocus::New)
+        };
+
+        // Lines 47 to 53, between two separators.
+        assert_eq!(state.total_lines(), 9);
+
+        // The focused hunk is on screen: it stays on its row, the fifth, in both views.
+        state.set_hunks_only(false, 20);
+        assert_eq!((state.total_lines(), top_line(&state)), (100, Some(46)));
+        state.set_hunks_only(true, 20);
+        assert_eq!((state.total_lines(), state.scroll), (9, 0));
+
+        // A thread far from the change keeps its line on screen.
+        let (thread_id, _) = state.add_thread("a.rs".to_string(), line_target(90), "why?".to_string());
+        assert_eq!(state.total_lines(), 11);
+        state.scroll = 9;
+        assert_eq!(top_line(&state), Some(90));
+
+        // The hunk is off screen: the top line stays.
+        state.set_hunks_only(false, 0);
+        assert_eq!(state.total_lines(), 100);
+        assert_eq!(top_line(&state), Some(90));
+        assert_eq!(state.get_hunks().len(), 1);
+
+        state.set_hunks_only(true, 0);
+        assert_eq!(top_line(&state), Some(90));
+        assert_eq!(state.get_hunks().len(), 1);
+
+        state.remove_thread(&thread_id);
+        assert_eq!(state.total_lines(), 9);
     }
 
     #[test]

@@ -120,6 +120,7 @@ pub fn compute_side_by_side(old: &str, new: &str, tab_width: usize) -> Vec<DiffL
                     change_type: ChangeType::Equal,
                     old_segments: None,
                     new_segments: None,
+                    hidden_lines: 0,
                 });
                 old_num += 1;
                 new_num += 1;
@@ -184,6 +185,7 @@ pub fn compute_side_by_side(old: &str, new: &str, tab_width: usize) -> Vec<DiffL
                         change_type,
                         old_segments,
                         new_segments,
+                        hidden_lines: 0,
                     });
                 }
             }
@@ -195,6 +197,7 @@ pub fn compute_side_by_side(old: &str, new: &str, tab_width: usize) -> Vec<DiffL
                     change_type: ChangeType::Insert,
                     old_segments: None,
                     new_segments: None,
+                    hidden_lines: 0,
                 });
                 new_num += 1;
                 i += 1;
@@ -202,6 +205,48 @@ pub fn compute_side_by_side(old: &str, new: &str, tab_width: usize) -> Vec<DiffL
         }
     }
     lines
+}
+
+/// Unchanged rows shown before and after each change in hunks-only view.
+pub const HUNK_CONTEXT_ROWS: usize = 3;
+
+/// Hides the unchanged rows further than `context` rows from a change, except those
+/// `always_shown` picks. Each run of hidden rows becomes one separator row. A run of
+/// a single row is shown instead: a separator would take the same room.
+pub fn hide_unchanged_rows(
+    rows: Vec<DiffLine>,
+    context: usize,
+    always_shown: impl Fn(&DiffLine) -> bool,
+) -> Vec<DiffLine> {
+    let mut shown: Vec<bool> = rows.iter().map(&always_shown).collect();
+    for (index, row) in rows.iter().enumerate() {
+        if !matches!(row.change_type, ChangeType::Equal) {
+            let last = (index + context).min(rows.len() - 1);
+            shown[index.saturating_sub(context)..=last].fill(true);
+        }
+    }
+
+    let mut result = Vec::new();
+    let mut hidden_run: Vec<DiffLine> = Vec::new();
+    for (row, is_shown) in rows.into_iter().zip(shown) {
+        if is_shown {
+            push_hidden_run(&mut result, &mut hidden_run);
+            result.push(row);
+        } else {
+            hidden_run.push(row);
+        }
+    }
+    push_hidden_run(&mut result, &mut hidden_run);
+    result
+}
+
+fn push_hidden_run(result: &mut Vec<DiffLine>, hidden_run: &mut Vec<DiffLine>) {
+    if hidden_run.len() > 1 {
+        result.push(DiffLine::separator(hidden_run.len()));
+        hidden_run.clear();
+    } else {
+        result.append(hidden_run);
+    }
 }
 
 pub fn find_hunk_starts(lines: &[DiffLine]) -> Vec<usize> {
@@ -218,4 +263,81 @@ pub fn find_hunk_starts(lines: &[DiffLine]) -> Vec<usize> {
         }
     }
     hunks
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn numbered_lines(count: usize, changed: &[usize]) -> String {
+        (1..=count)
+            .map(|line| match changed.contains(&line) {
+                true => format!("changed {}\n", line),
+                false => format!("line {}\n", line),
+            })
+            .collect()
+    }
+
+    /// The new-side line number of each row, or `~N` for a separator hiding N lines.
+    fn hunks_only_rows(line_count: usize, changed: &[usize], always_shown: &[usize]) -> Vec<String> {
+        let rows = compute_side_by_side(
+            &numbered_lines(line_count, &[]),
+            &numbered_lines(line_count, changed),
+            4,
+        );
+        let kept = |row: &DiffLine| row.new_line.as_ref().is_some_and(|(n, _)| always_shown.contains(n));
+        hide_unchanged_rows(rows, HUNK_CONTEXT_ROWS, kept)
+            .iter()
+            .map(|row| match &row.new_line {
+                Some((line, _)) => line.to_string(),
+                None => format!("~{}", row.hidden_lines),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_a_change_is_shown_with_three_lines_around_it_and_the_rest_is_counted() {
+        assert_eq!(
+            hunks_only_rows(20, &[10], &[]),
+            ["~6", "7", "8", "9", "10", "11", "12", "13", "~7"]
+        );
+        // At the edges of the file there is nothing to hide before or after.
+        assert_eq!(hunks_only_rows(8, &[1], &[]), ["1", "2", "3", "4", "~4"]);
+        assert_eq!(hunks_only_rows(8, &[8], &[]), ["~4", "5", "6", "7", "8"]);
+    }
+
+    #[test]
+    fn test_changes_close_to_each_other_are_shown_without_a_separator() {
+        let between = |second_change: usize| {
+            let rows = hunks_only_rows(40, &[10, second_change], &[]);
+            let from = rows.iter().position(|row| row == "13").expect("context after the first");
+            let to = rows.iter().position(|row| row == &(second_change - 3).to_string()).expect("context before the second");
+            rows[from + 1..to].to_vec()
+        };
+
+        assert!(between(17).is_empty(), "the two contexts touch");
+        assert_eq!(between(18), ["14"], "one line is shown, not replaced by a separator");
+        assert_eq!(between(19), ["~2"]);
+    }
+
+    #[test]
+    fn test_a_kept_line_far_from_any_change_stays_between_two_separators() {
+        assert_eq!(
+            hunks_only_rows(30, &[5], &[20]),
+            ["1", "2", "3", "4", "5", "6", "7", "8", "~11", "20", "~10"]
+        );
+    }
+
+    #[test]
+    fn test_hunks_start_at_the_same_changes_in_both_views() {
+        let old = numbered_lines(60, &[]);
+        let new = numbered_lines(60, &[10, 11, 30, 55]);
+        let full_file = compute_side_by_side(&old, &new, 4);
+        let hunks_in_full_file = find_hunk_starts(&full_file).len();
+
+        let hunks_only = hide_unchanged_rows(full_file, HUNK_CONTEXT_ROWS, |_| false);
+
+        assert_eq!(find_hunk_starts(&hunks_only).len(), hunks_in_full_file);
+        assert_eq!(hunks_in_full_file, 3);
+    }
 }

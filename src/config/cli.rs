@@ -12,6 +12,16 @@ pub enum VcsOverride {
     Jj,
 }
 
+/// How much of each changed file the diff shows
+#[derive(Copy, Clone, PartialEq, Eq, ValueEnum, Debug, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ViewMode {
+    /// The changes, with a few lines around each
+    Hunks,
+    /// Every line of the file
+    Full,
+}
+
 #[derive(Parser)]
 #[command(name = "lumiere")]
 #[command(about = "Review diffs in the terminal and discuss them with your coding agent", long_about = None)]
@@ -73,6 +83,10 @@ pub enum Commands {
         /// Soft-wrap long diff lines instead of scrolling horizontally
         #[arg(long)]
         wrap: bool,
+
+        /// What to show of each file; `z` switches in the review [default: hunks]
+        #[arg(value_enum, long)]
+        view: Option<ViewMode>,
 
         /// Rex pane of the coding agent that answers review comments
         /// (default: the latest active pi pane at this repository or folder)
@@ -155,6 +169,20 @@ mod tests {
         assert!(parse(&["--body", "text", "--stdin"]).is_err());
         assert!(parse(&["--stdin"]).is_ok());
         assert!(parse(&["--body", "text"]).is_ok());
+    }
+
+    #[test]
+    fn test_diff_view_takes_hunks_or_full() {
+        let parse = |args: &[&str]| Cli::try_parse_from([&["lumiere", "diff"], args].concat());
+        let view_of = |args: &[&str]| match parse(args).expect("arguments parse").command {
+            Commands::Diff { view, .. } => view,
+            _ => panic!("expected diff command"),
+        };
+
+        assert_eq!(view_of(&[]), None);
+        assert_eq!(view_of(&["--view", "full"]), Some(ViewMode::Full));
+        assert_eq!(view_of(&["--view", "hunks"]), Some(ViewMode::Hunks));
+        assert!(parse(&["--view", "unified"]).is_err());
     }
 
     #[test]

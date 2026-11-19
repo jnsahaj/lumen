@@ -519,6 +519,30 @@ fn push_wrapped_diff_line(
     ));
 }
 
+/// The row shown where hunks-only view hides unchanged lines. `label` says how many.
+fn separator_line(label: &str, width: usize, t: &theme::Theme) -> Line<'static> {
+    // Under the line numbers, where the code starts.
+    let text = format!("      {}", label);
+    let padding = width.saturating_sub(char_count(&text));
+    Line::from(Span::styled(
+        format!("{}{}", text, " ".repeat(padding)),
+        Style::default().fg(t.ui.text_muted).bg(t.diff.context_bg),
+    ))
+}
+
+fn hidden_lines_label(hidden_lines: usize) -> String {
+    format!("⋯ {} unchanged lines", hidden_lines)
+}
+
+/// The position in the file, counted from 0, of the first line a panel shows from row
+/// `scroll` on. A row is not a line: one side can have gaps, and rows can be hidden.
+fn top_line_position(rows: &[DiffLine], scroll: usize, panel: DiffPanelFocus) -> usize {
+    rows.iter()
+        .skip(scroll)
+        .find_map(|row| row.line_number(panel))
+        .map_or(0, |line| line - 1)
+}
+
 fn blank_diff_line(width: usize, bg: Color) -> Line<'static> {
     Line::from(vec![Span::styled(
         " ".repeat(width),
@@ -1764,7 +1788,7 @@ pub fn render_diff(
             &diff.old_content,
             &diff.filename,
             &trees.old_file_trees,
-            scroll as usize,
+            top_line_position(side_by_side, scroll as usize, DiffPanelFocus::Old),
             &settings.context,
             settings.tab_width,
         );
@@ -1772,7 +1796,7 @@ pub fn render_diff(
             &diff.new_content,
             &diff.filename,
             &trees.new_file_trees,
-            scroll as usize,
+            top_line_position(side_by_side, scroll as usize, DiffPanelFocus::New),
             &settings.context,
             settings.tab_width,
         );
@@ -1925,6 +1949,19 @@ pub fn render_diff(
 
         for (i, diff_line) in visible_lines.iter().enumerate() {
             let line_idx = scroll_usize + i;
+            if diff_line.hidden_lines > 0 {
+                rendered_row += 1;
+                let label = hidden_lines_label(diff_line.hidden_lines);
+                if old_area.is_some() {
+                    old_lines.push(separator_line(&label, old_row_target_width, t));
+                }
+                if new_area.is_some() {
+                    // Said once per row: on the old side when both are shown.
+                    let label = if old_area.is_some() { "" } else { label.as_str() };
+                    new_lines.push(separator_line(label, new_row_target_width, t));
+                }
+                continue;
+            }
             let in_focused = is_in_focused_hunk(line_idx, diff_line.change_type);
             let hunk_viewed = is_line_in_viewed_hunk(line_idx, diff_line.change_type);
             let mut style = DiffLineStyle::for_change_type(diff_line.change_type, bg, t);

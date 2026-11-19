@@ -8,6 +8,7 @@ Lumiere is a side-by-side diff viewer for the terminal. You comment on the lines
 agent wrote; the agent answers inside the same thread while the review stays open.
 
 - Side-by-side diffs with syntax highlighting, search, watch mode and stacked commits
+- Hunks-only view, as on GitHub, or whole files
 - Review threads on a selection, a hunk or a file, answered live by the agent
 - One review across the repositories of a workspace folder
 - GitHub pull requests with `--pr`
@@ -62,10 +63,22 @@ after `A` has moved on.
 | `--stacked` | Show a range one commit at a time (`Ctrl+L` / `Ctrl+H`) |
 | `--pr N`, `--detect-pr` | Show a pull request, or the one of the current branch |
 | `--wrap` | Wrap long lines |
+| `--view hunks\|full` | Show only the changes, or whole files (default `hunks`) |
 | `--theme NAME`, `-t` | Colour theme |
 | `--vcs git\|jj` | Force the version control system (before `diff`) |
 
 `lumiere diff` works from any directory of a repository.
+
+### Hunks only or full file
+
+By default Lumiere shows each change with three unchanged lines around it. A row such
+as `⋯ 63 unchanged lines` stands for what is hidden. `z` switches to the whole file and
+back, keeping the focused hunk in place.
+
+- Lines under a review thread stay visible, even far from a change.
+- Search in the file (`/`) covers the lines shown. Search in every file (`Ctrl+F`)
+  covers whole files, and switches to the full file when the match is hidden.
+- Added and deleted files look the same in both views.
 
 ## Review threads
 
@@ -167,6 +180,7 @@ come from the same version.
 | `Space` | Mark the file as viewed and go to the next |
 | `[` / `]` / `=` | Old side only, new side only, both |
 | `w` | Watch mode on or off |
+| `z` | Hunks only, or the full file |
 | `e` | Open the file in `EDITOR` |
 | `y` | Copy the selection, or the file name |
 | `R` | Switch repository in a workspace |
@@ -182,9 +196,12 @@ Lumiere reads `~/.config/lumiere/lumiere.config.json`, or the file given with
 ```json
 {
   "theme": "catppuccin-mocha",
-  "wrap": true
+  "wrap": true,
+  "view": "full"
 }
 ```
+
+`view` is `"hunks"` (the default) or `"full"`; `--view` overrides it.
 
 The theme comes from `--theme`, then the settings file, then `LUMIERE_THEME`, then the
 terminal's background.
@@ -210,6 +227,7 @@ releases, and restarts its version at 0.1.0. The main differences:
 - Workspace reviews, the `A...-` reference and the pi command are new.
 - Lumen's AI commands (`draft`, `explain`, `operate`, `list`, `configure`) are removed.
 - `j` and `k` are swapped, and files change with `Option` and an arrow.
+- The default view shows hunks only; Lumen always shows whole files.
 - The binary, the settings file and the environment variable are named `lumiere`.
   Lumen's `lumen.config.json` and `LUMEN_THEME` are not read.
 
