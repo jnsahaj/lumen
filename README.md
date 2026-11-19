@@ -167,7 +167,7 @@ come from the same version.
 
 ## Keys
 
-`j` is up or previous and `k` is down or next, everywhere. `?` shows the full list.
+`?` shows the full list:
 
 | Key | Effect |
 |---|---|
@@ -226,7 +226,6 @@ releases, and restarts its version at 0.1.0. The main differences:
 - Review threads with an agent replace Lumen's one-way annotations.
 - Workspace reviews, the `A...-` reference and the pi command are new.
 - Lumen's AI commands (`draft`, `explain`, `operate`, `list`, `configure`) are removed.
-- `j` and `k` are swapped, and files change with `Option` and an arrow.
 - The default view shows hunks only; Lumen always shows whole files.
 - The binary, the settings file and the environment variable are named `lumiere`.
   Lumen's `lumen.config.json` and `LUMEN_THEME` are not read.
