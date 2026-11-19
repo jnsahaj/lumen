@@ -84,6 +84,8 @@ back, keeping the focused hunk in place.
 
 A comment starts a thread on a selection, a hunk or a file. Select lines with the
 mouse, or focus a hunk with `[` and `]`; with neither, the comment is on the file.
+A hunk comment goes on the hunk's new lines, or on its old lines when only the old
+panel is shown (`0`).
 
 | Key | Effect |
 |---|---|
@@ -93,7 +95,7 @@ mouse, or focus a hunk with `[` and `]`; with neither, the comment is on the fil
 | `Shift+Enter`, `Ctrl+J` | New line |
 | `s` | Send every queued comment as one message |
 | `x` | Resolve or reopen the thread. Replying to a resolved thread reopens it. |
-| `I` | List the threads |
+| `I` | List the threads. There, `x` resolves or reopens the selected one. |
 | `A` | Choose the agent, or none |
 
 - **Agent.** Lumiere looks for [Rex](https://rex.dev) panes running `pi` whose working
@@ -186,7 +188,7 @@ is not on `PATH`. The extension and the binary must come from the same version.
 | `e` | Open the file in `EDITOR` |
 | `y` | Copy the selection, or the file name |
 | `R` | Switch repository in a workspace |
-| `q`, `Esc` | Quit |
+| `q` | Quit |
 
 `Option` is `Alt` outside macOS.
 

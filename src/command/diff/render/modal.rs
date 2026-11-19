@@ -96,6 +96,7 @@ pub enum ModalResult {
     AnnotationJump { annotation_id: String },
     AnnotationEdit { annotation_id: String },
     AnnotationDelete { annotation_id: String },
+    AnnotationToggleResolved { annotation_id: String },
     AnnotationCopyAll,
     AnnotationExport(String),
 }
@@ -171,13 +172,14 @@ impl Modal {
         title: impl Into<String>,
         items: Vec<String>,
         annotations: Vec<Thread>,
+        selected: usize,
     ) -> Self {
         Self {
             content: ModalContent::Annotations {
                 title: title.into(),
                 items,
                 annotations,
-                selected: 0,
+                selected,
                 export_input: None,
                 error_message: None,
             },
@@ -881,6 +883,9 @@ impl Modal {
                 Span::styled("e", Style::default().fg(t.ui.text_muted)),
                 Span::styled(" edit/reply  ", Style::default().fg(t.ui.text_muted)),
                 Span::styled("│  ", Style::default().fg(t.ui.border_unfocused)),
+                Span::styled("x", Style::default().fg(t.ui.text_muted)),
+                Span::styled(" resolve  ", Style::default().fg(t.ui.text_muted)),
+                Span::styled("│  ", Style::default().fg(t.ui.border_unfocused)),
                 Span::styled("d", Style::default().fg(t.ui.text_muted)),
                 Span::styled(" del  ", Style::default().fg(t.ui.text_muted)),
                 Span::styled("│  ", Style::default().fg(t.ui.border_unfocused)),
@@ -1273,6 +1278,11 @@ impl Modal {
                         }),
                         KeyCode::Char('d') => annotations.get(*selected).map(|ann| {
                             ModalResult::AnnotationDelete {
+                                annotation_id: ann.id.clone(),
+                            }
+                        }),
+                        KeyCode::Char('x') => annotations.get(*selected).map(|ann| {
+                            ModalResult::AnnotationToggleResolved {
                                 annotation_id: ann.id.clone(),
                             }
                         }),

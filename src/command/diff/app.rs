@@ -39,6 +39,7 @@ fn open_tui_writer() -> io::Result<Box<dyn Write + Send>> {
 use super::agent::{AgentLink, AgentPane, RexCli};
 use super::annotation::{AnnotationEditor, AnnotationEditorResult};
 use super::coordinates::{extract_selected_text, PanelLayout};
+use super::diff_algo::{hunk_comment_lines, hunk_lines_on};
 use super::git::{
     get_current_branch, load_file_diffs, load_pr_file_diffs, load_single_commit_diffs,
 };
@@ -53,7 +54,7 @@ use super::review_thread::{AnnotationTarget, Thread};
 use super::search::MatchPanel;
 use super::thread_store::ThreadStore;
 use super::types::{
-    ChangeType, CursorPosition, DiffFullscreen, DiffPanelFocus, FileStatus, FocusedPanel,
+    CursorPosition, DiffFullscreen, DiffPanelFocus, FileStatus, FocusedPanel,
     SelectionMode, SidebarItem,
 };
 use super::watcher::{setup_watcher, WatchEvent};
@@ -264,25 +265,31 @@ fn format_annotation_preview(thread: &Thread) -> String {
     )
 }
 
-fn threads_modal(threads: &[Thread]) -> Modal {
+/// The threads list, oldest first, opened on `selected_thread` when it is given.
+fn threads_modal(threads: &[Thread], selected_thread: Option<&str>) -> Modal {
     let mut sorted_threads = threads.to_vec();
     sorted_threads.sort_by_key(|thread| thread.created_at);
     let items = sorted_threads.iter().map(format_annotation_preview).collect();
-    Modal::annotations("Threads", items, sorted_threads)
+    let selected = selected_thread
+        .and_then(|id| sorted_threads.iter().position(|thread| thread.id == id))
+        .unwrap_or(0);
+    Modal::annotations("Threads", items, sorted_threads, selected)
 }
 
 fn count_of(count: usize, noun: &str) -> String {
     format!("{} {}{}", count, noun, if count == 1 { "" } else { "s" })
 }
 
+fn lines_are_selected(state: &AppState) -> bool {
+    state.selection.is_active() && !matches!(state.selection.mode, SelectionMode::None)
+}
+
 /// What `i` and `x` act on in the current file: the selected lines, otherwise the
 /// focused hunk, otherwise the whole file.
 fn target_at_cursor(state: &mut AppState) -> Option<(String, AnnotationTarget)> {
-    let diff = state.file_diffs.get(state.current_file)?;
-    let filename = diff.filename.clone();
-    let is_deleted = !diff.old_content.is_empty() && diff.new_content.is_empty();
+    let filename = state.file_diffs.get(state.current_file)?.filename.clone();
 
-    if state.selection.is_active() && !matches!(state.selection.mode, SelectionMode::None) {
+    if lines_are_selected(state) {
         // Line-mode and character-mode selections both cover full lines.
         let panel = state.selection.panel;
         let sel_start = state.selection.anchor.line.min(state.selection.head.line);
@@ -307,44 +314,52 @@ fn target_at_cursor(state: &mut AppState) -> Option<(String, AnnotationTarget)> 
     let Some(hunk_index) = state.focused_hunk else {
         return Some((filename, AnnotationTarget::File));
     };
-    let hunk_panel = if is_deleted {
-        DiffPanelFocus::Old
-    } else {
-        DiffPanelFocus::New
-    };
 
     state.ensure_cache();
-    let sbs = state.side_by_side_ref();
-    let hunks = state.hunks_ref();
-    let hunk_start = hunks.get(hunk_index).copied().unwrap_or(0);
-    let next_hunk_start = hunks.get(hunk_index + 1).copied().unwrap_or(sbs.len());
-
-    let mut actual_hunk_end = hunk_start;
-    for i in hunk_start..next_hunk_start {
-        if let Some(dl) = sbs.get(i) {
-            if !matches!(dl.change_type, ChangeType::Equal) {
-                actual_hunk_end = i;
-            }
-        }
-    }
-
-    let line_num = |dl: &super::types::DiffLine| {
-        dl.line_number(hunk_panel)
-            .or_else(|| dl.line_number(DiffPanelFocus::Old))
-    };
-    let start_line = sbs.get(hunk_start).and_then(line_num).unwrap_or(1);
-    let end_line = sbs
-        .get(actual_hunk_end)
-        .and_then(line_num)
-        .unwrap_or(start_line);
+    let hunk_start = state.hunks_ref().get(hunk_index).copied().unwrap_or(0);
+    let (panel, start_line, end_line) =
+        hunk_comment_lines(state.side_by_side_ref(), hunk_start, state.diff_fullscreen)
+            .unwrap_or((DiffPanelFocus::New, 1, 1));
     Some((
         filename,
         AnnotationTarget::LineRange {
-            panel: hunk_panel,
+            panel,
             start_line,
             end_line,
         },
     ))
+}
+
+/// The thread that `i` replies to and `x` resolves: the one on `target`, the lines
+/// from `target_at_cursor`. For a focused hunk, a thread on the hunk's other side
+/// counts as well: it was started while a different panel was shown.
+fn thread_at_cursor<'a>(
+    state: &'a AppState,
+    filename: &str,
+    target: &AnnotationTarget,
+    or_resolved: bool,
+) -> Option<&'a Thread> {
+    if let Some(thread) = state.thread_at(filename, target, or_resolved) {
+        return Some(thread);
+    }
+    let AnnotationTarget::LineRange { panel, .. } = target else {
+        return None;
+    };
+    if lines_are_selected(state) {
+        return None;
+    }
+    let hunk_start = *state.hunks_ref().get(state.focused_hunk?)?;
+    let other_side = match panel {
+        DiffPanelFocus::Old => DiffPanelFocus::New,
+        _ => DiffPanelFocus::Old,
+    };
+    let (start_line, end_line) = hunk_lines_on(state.side_by_side_ref(), hunk_start, other_side)?;
+    let other_side_of_hunk = AnnotationTarget::LineRange {
+        panel: other_side,
+        start_line,
+        end_line,
+    };
+    state.thread_at(filename, &other_side_of_hunk, or_resolved)
 }
 
 /// Puts a thread's file on screen with the thread's first line as the top row, so
@@ -1031,8 +1046,13 @@ fn run_app_internal<'a>(
                                     active_modal = if state.threads.is_empty() {
                                         None
                                     } else {
-                                        Some(threads_modal(&state.threads))
+                                        Some(threads_modal(&state.threads, None))
                                     };
+                                }
+                                ModalResult::AnnotationToggleResolved { annotation_id } => {
+                                    state.toggle_thread_resolved(&annotation_id);
+                                    active_modal =
+                                        Some(threads_modal(&state.threads, Some(&annotation_id)));
                                 }
                                 ModalResult::AnnotationCopyAll => {
                                     // Copy all annotations to clipboard
@@ -1575,8 +1595,10 @@ fn run_app_internal<'a>(
                             state.search_state.clear();
                             state.mark_search_dirty();
                         }
-                        KeyCode::Char('q') | KeyCode::Esc | KeyCode::Char('c')
-                            if key.code != KeyCode::Char('c')
+                        // Esc does not quit: it also leaves a comment, a search and
+                        // every list, so one press too many would end the review.
+                        KeyCode::Char('q') | KeyCode::Char('c')
+                            if key.code == KeyCode::Char('q')
                                 || key.modifiers.contains(KeyModifiers::CONTROL) =>
                         {
                             let queued = queued_total(&state, workspace_session.as_ref());
@@ -2097,11 +2119,10 @@ fn run_app_internal<'a>(
                             }
                         }
                         KeyCode::Char('i') => {
-                            let had_selection = state.selection.is_active()
-                                && !matches!(state.selection.mode, SelectionMode::None);
+                            let had_selection = lines_are_selected(&state);
                             if let Some((filename, target)) = target_at_cursor(&mut state) {
                                 annotation_editor =
-                                    Some(match state.thread_at(&filename, &target, false) {
+                                    Some(match thread_at_cursor(&state, &filename, &target, false) {
                                         Some(thread) => AnnotationEditor::for_thread(thread),
                                         None => AnnotationEditor::new(filename, target),
                                     });
@@ -2112,7 +2133,7 @@ fn run_app_internal<'a>(
                         }
                         KeyCode::Char('x') => {
                             let thread_id = target_at_cursor(&mut state).and_then(|(filename, target)| {
-                                let thread = state.thread_at(&filename, &target, true)?;
+                                let thread = thread_at_cursor(&state, &filename, &target, true)?;
                                 Some(thread.id.clone())
                             });
                             match thread_id {
@@ -2124,7 +2145,7 @@ fn run_app_internal<'a>(
                         }
                         KeyCode::Char('I') => {
                             if !state.threads.is_empty() {
-                                active_modal = Some(threads_modal(&state.threads));
+                                active_modal = Some(threads_modal(&state.threads, None));
                             }
                         }
                         KeyCode::Char('r') => {
@@ -2340,7 +2361,7 @@ fn run_app_internal<'a>(
                                         title: "Global",
                                         bindings: vec![
                                             KeyBind {
-                                                key: "q / esc",
+                                                key: "q",
                                                 description: "Quit",
                                             },
                                             KeyBind {
@@ -2526,7 +2547,7 @@ fn run_app_internal<'a>(
                                             },
                                             KeyBind {
                                                 key: "I",
-                                                description: "View all threads",
+                                                description: "View all threads (x resolves one there)",
                                             },
                                             KeyBind {
                                                 key: "s",
@@ -2612,6 +2633,112 @@ mod tests {
         );
         // An unclosed quote cannot be split: the value is tried as it is.
         assert_eq!(editor_words("it's"), ["it's"]);
+    }
+
+    fn state_with_file(old_content: &str, new_content: &str) -> AppState {
+        AppState::new(
+            vec![FileDiff {
+                filename: "a.rs".to_string(),
+                old_content: old_content.to_string(),
+                new_content: new_content.to_string(),
+                status: FileStatus::Modified,
+                is_binary: false,
+            }],
+            None,
+        )
+    }
+
+    #[test]
+    fn test_a_comment_on_the_focused_hunk_covers_the_lines_of_that_hunk() {
+        let hunk_target = |old_content: &str, new_content: &str| {
+            let mut state = state_with_file(old_content, new_content);
+            assert_eq!(state.focused_hunk, Some(0));
+            target_at_cursor(&mut state).expect("target").1
+        };
+        let lines = |panel, start_line, end_line| AnnotationTarget::LineRange {
+            panel,
+            start_line,
+            end_line,
+        };
+
+        // Two lines replace four: the removed lines that have no new line beside them
+        // do not stretch the range, nor lend it their old line numbers.
+        assert_eq!(
+            hunk_target("keep\nkeep\na\nb\nc\nd\nend\n", "keep\nkeep\nA\nB\nend\n"),
+            lines(DiffPanelFocus::New, 3, 4)
+        );
+        // Lines are only added.
+        assert_eq!(
+            hunk_target("keep\nend\n", "keep\nnew 1\nnew 2\nend\n"),
+            lines(DiffPanelFocus::New, 2, 3)
+        );
+        // Lines are only removed: the comment is on the old side.
+        assert_eq!(
+            hunk_target("keep\ngone 1\ngone 2\nend\n", "keep\nend\n"),
+            lines(DiffPanelFocus::Old, 2, 3)
+        );
+        // A deleted file.
+        assert_eq!(hunk_target("gone 1\ngone 2\n", ""), lines(DiffPanelFocus::Old, 1, 2));
+
+        // With only the old panel shown, the comment is on the old lines of the hunk,
+        // or on its new lines when it has no old ones.
+        let old_panel_target = |old_content: &str, new_content: &str| {
+            let mut state = state_with_file(old_content, new_content);
+            state.diff_fullscreen = DiffFullscreen::OldOnly;
+            target_at_cursor(&mut state).expect("target").1
+        };
+        assert_eq!(
+            old_panel_target("keep\nkeep\na\nb\nc\nd\nend\n", "keep\nkeep\nA\nB\nend\n"),
+            lines(DiffPanelFocus::Old, 3, 6)
+        );
+        assert_eq!(
+            old_panel_target("keep\nend\n", "keep\nnew 1\nnew 2\nend\n"),
+            lines(DiffPanelFocus::New, 2, 3)
+        );
+    }
+
+    #[test]
+    fn test_a_hunk_thread_started_from_the_old_panel_is_found_with_both_panels_shown() {
+        // Three lines replaced by two: the hunk has lines on both sides.
+        let mut state = state_with_file("keep\na\nb\nc\nend\n", "keep\nA\nB\nend\n");
+        state.diff_fullscreen = DiffFullscreen::OldOnly;
+        let (filename, old_lines) = target_at_cursor(&mut state).expect("target");
+        let (thread_id, _) = state.add_thread(filename, old_lines, "why?".to_string());
+
+        state.diff_fullscreen = DiffFullscreen::None;
+        let (filename, target) = target_at_cursor(&mut state).expect("target");
+
+        assert!(matches!(
+            target,
+            AnnotationTarget::LineRange { panel: DiffPanelFocus::New, .. }
+        ));
+        let found = thread_at_cursor(&state, &filename, &target, false).map(|thread| &thread.id);
+        assert_eq!(found, Some(&thread_id));
+    }
+
+    #[test]
+    fn test_x_in_the_threads_list_resolves_the_selected_thread_and_keeps_it_selected() {
+        let mut state = state_with_file("a\n", "b\n");
+        state.add_thread("a.rs".to_string(), AnnotationTarget::File, "first".to_string());
+        let (second_id, _) =
+            state.add_thread("a.rs".to_string(), AnnotationTarget::File, "second".to_string());
+        let mut list = threads_modal(&state.threads, Some(&second_id));
+        let x = crossterm::event::KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE);
+
+        let Some(ModalResult::AnnotationToggleResolved { annotation_id }) = list.handle_input(x, 40)
+        else {
+            panic!("x asks to resolve the selected thread");
+        };
+
+        assert_eq!(annotation_id, second_id);
+        state.toggle_thread_resolved(&annotation_id);
+        let resolved: Vec<bool> = state.threads.iter().map(|thread| thread.resolved).collect();
+        assert_eq!(resolved, [false, true]);
+        let reopened_list = threads_modal(&state.threads, Some(&annotation_id));
+        assert!(matches!(
+            reopened_list.content,
+            ModalContent::Annotations { selected: 1, .. }
+        ));
     }
 
     #[test]
