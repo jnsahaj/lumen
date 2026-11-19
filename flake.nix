@@ -1,5 +1,5 @@
 {
-  description = "A command-line tool that uses AI to streamline your git workflow - from generating commit messages to explaining complex changes.";
+  description = "Review diffs in the terminal and discuss them with your coding agent.";
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
@@ -20,7 +20,7 @@
       in
       {
         packages = {
-          lumen =
+          lumiere =
             let
               manifest = (pkgs.lib.importTOML ./Cargo.toml).package;
             in
@@ -39,7 +39,7 @@
               buildInputs = [ pkgs.openssl ];
               doCheck = false;
             };
-          default = self.packages.${system}.lumen;
+          default = self.packages.${system}.lumiere;
         };
 
         devShells.default = pkgs.mkShell {
@@ -60,7 +60,7 @@
     )
     // {
       overlays.default = final: prev: {
-        inherit (self.packages.${final.system}) lumen;
+        inherit (self.packages.${final.system}) lumiere;
       };
     };
 }

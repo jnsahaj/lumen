@@ -16,7 +16,7 @@ use crossterm::{
 use ratatui::prelude::*;
 
 /// Writer that drives the TUI. Falls back to /dev/tty when stdout is
-/// captured (e.g. when an agent shim does `output=$(lumen diff)`),
+/// captured (e.g. when an agent shim does `output=$(lumiere diff)`),
 /// so the alternate-screen escapes don't pollute the captured stdout
 /// and we can reserve stdout for the annotation payload (`s` keybind).
 fn open_tui_writer() -> io::Result<Box<dyn Write + Send>> {

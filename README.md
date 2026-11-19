@@ -1,151 +1,197 @@
-<p align="center"><img src="https://github.com/user-attachments/assets/896f9239-134a-4428-9bb5-50ea59cdb5c3" alt="lumen" /></p>
+<p align="center"><img src="assets/logo.svg" width="112" alt="Lumiere logo" /></p>
 
-# lumen
+<h1 align="center">Lumiere</h1>
 
-> **This is `lumiere`, a fork of [jnsahaj/lumen](https://github.com/jnsahaj/lumen).**
-> The binary is named `lumiere`. It adds reviews across the repositories of a
-> workspace folder, review threads that a coding agent answers while the review is
-> open, and a `/lumiere` command for the pi coding agent. See [FORK.md](FORK.md).
-> The rest of this README is upstream's and still says `lumen`.
+<p align="center">Review diffs in the terminal and discuss them with your coding agent.</p>
 
-A fast terminal diff viewer and code review TUI, written in Rust.
+Lumiere is a side-by-side diff viewer for the terminal. You comment on the lines an
+agent wrote; the agent answers inside the same thread while the review stays open.
 
-[![Crates.io Total Downloads](https://img.shields.io/crates/d/lumen?label=downloads%20%40crates.io)](https://crates.io/crates/lumen)
-[![GitHub Releases](https://img.shields.io/github/downloads/jnsahaj/lumen/total?label=dowloads%20%40releases)](https://github.com/jnsahaj/lumen/releases)
-![GitHub License](https://img.shields.io/github/license/jnsahaj/lumen)
-![Crates.io Size](https://img.shields.io/crates/size/lumen)
+- Side-by-side diffs with syntax highlighting, search, watch mode and stacked commits
+- Review threads on a selection, a hunk or a file, answered live by the agent
+- One review across the repositories of a workspace folder
+- GitHub pull requests with `--pr`
+- Git and Jujutsu
+- A `/lumiere` command for the [pi](https://github.com/earendil-works/pi) coding agent
 
-Review `git diff`, commits, branches, or GitHub PRs side-by-side without leaving your terminal. Ships as a single static Rust binary and stays snappy on multi-thousand-line diffs.
+Lumiere is a fork of [Lumen](https://github.com/jnsahaj/lumen) by Sahaj Jain. See
+[Relation to Lumen](#relation-to-lumen).
 
-- Side-by-side diff viewer with tree-sitter syntax highlighting
-- Review GitHub Pull Requests with `lumen diff --pr 123`
-- Annotate selections, hunks, or whole files
-- Watch mode and stacked-commit review
-- Optional AI commit messages and change explanations (10+ providers)
-- Works with Git and Jujutsu (jj)
+## Install
 
-[![Demo](https://github.com/user-attachments/assets/dc425871-3826-4368-88d8-931b9403f0ec)](https://github.com/user-attachments/assets/70d07324-8394-423c-bbc3-9460ed84877b)
+Lumiere needs Rust 1.89 or later.
 
-## Table of Contents
-- [Getting Started](#getting-started-)
-  - [Prerequisites](#prerequisites)
-  - [Installation](#installation)
-- [Usage](#usage-)
-  - [Visual Diff Viewer](#visual-diff-viewer)
-- [AI Features](#ai-features-)
-  - [Configuration](#configuration)
-  - [Generate Commit Messages](#generate-commit-messages)
-  - [Generate Git Commands](#generate-git-commands)
-  - [Explain Changes](#explain-changes)
-  - [Tips & Tricks](#tips--tricks)
-  - [AI Providers](#ai-providers)
-- [Coding Agent Integrations](#coding-agent-integrations-)
-- [Advanced Configuration](#advanced-configuration-)
-  - [Configuration File](#configuration-file)
-  - [Configuration Precedence](#configuration-precedence)
-
-## Getting Started 🔅
-
-### Prerequisites
-Before you begin, ensure you have:
-1. `git` installed on your system
-2. [fzf](https://github.com/junegunn/fzf) (optional) - Required for `lumen explain --list` command
-3. [mdcat](https://github.com/swsnr/mdcat) (optional) - Required for pretty output formatting
-
-### Installation
-
-#### Using Homebrew (MacOS and Linux)
 ```bash
-brew install jnsahaj/lumen/lumen
+cargo install --git https://github.com/aduverger/lumiere --locked
 ```
 
-#### Using Cargo
-> [!IMPORTANT]
-> `cargo` is a package manager for `rust`,
-> and is installed automatically when you install `rust`.
-> See [installation guide](https://doc.rust-lang.org/cargo/getting-started/installation.html)
+From a checkout, use `cargo install --path . --locked`. Both install the `lumiere`
+binary in `~/.cargo/bin`.
+
+## Quick start
+
 ```bash
-cargo install lumen
+lumiere diff                    # uncommitted changes
+lumiere diff origin/main...-    # everything this branch adds, uncommitted changes included
+lumiere diff HEAD~3..HEAD       # a range of commits
+lumiere diff --pr 123           # a GitHub pull request (needs the gh CLI)
 ```
 
-## Usage 🔅
+Press `i` on a line to comment, `Enter` to send the comment to the agent, and `?` for
+every key.
 
-### Visual Diff Viewer
+## What to review
 
-Launch an interactive side-by-side diff viewer in your terminal:
-<img width="3456" height="2122" alt="image" src="https://github.com/user-attachments/assets/757e1187-1615-4e90-bee2-5a1f59ec0960" />
+| Reference | Shows |
+|---|---|
+| none | Uncommitted changes |
+| `SHA` | One commit |
+| `A..B` | From `A` to `B` |
+| `A...B` | From the merge base of `A` and `B` to `B` |
+| `A..-` | From `A` to the working tree |
+| `A...-` | From the merge base of `A` and the current commit to the working tree |
+
+`A...-` is the form to use on a feature branch: it keeps showing only your changes
+after `A` has moved on.
+
+| Option | Effect |
+|---|---|
+| `--watch`, `-w` | Reload when files change |
+| `--file PATH`, `-f` | Show only these files |
+| `--focus PATH` | Open on this file |
+| `--stacked` | Show a range one commit at a time (`Ctrl+L` / `Ctrl+H`) |
+| `--pr N`, `--detect-pr` | Show a pull request, or the one of the current branch |
+| `--wrap` | Wrap long lines |
+| `--theme NAME`, `-t` | Colour theme |
+| `--vcs git\|jj` | Force the version control system (before `diff`) |
+
+`lumiere diff` works from any directory of a repository.
+
+## Review threads
+
+A comment starts a thread on a selection, a hunk or a file. Select lines with the
+mouse, or focus a hunk with `{` and `}`; with neither, the comment is on the file.
+
+| Key | Effect |
+|---|---|
+| `i` | Comment, or reply when the lines already have an open thread. An unsent comment is edited instead. |
+| `Enter` | Save the comment and send it to the agent now |
+| `Option+Enter`, `Ctrl+S` | Save the comment as queued |
+| `Shift+Enter`, `Ctrl+J` | New line |
+| `s` | Send every queued comment as one message |
+| `x` | Resolve or reopen the thread. Replying to a resolved thread reopens it. |
+| `I` | List the threads |
+| `A` | Choose the agent, or none |
+
+- **Agent.** Lumiere looks for [Rex](https://rex.dev) panes running `pi` whose working
+  directory is a reviewed repository or the folder Lumiere was started from. It
+  attaches to the most recently active one; `--agent-block BLOCK` names the pane
+  instead. The footer shows the agent and its state, or `no agent`.
+- **Sending.** Lumiere pastes one message into the agent's prompt and submits it. The
+  message holds each comment with its thread id, file, lines and code, and the command
+  to reply with. The agent is asked to reply in the thread first and to edit code only
+  after you approve there.
+- **Without an agent** `Enter` queues, and `s` exits and writes the queued comments to
+  standard output.
+- **Storage.** Threads are kept per repository, outside it, in
+  `~/.local/state/lumiere/` on Linux. They are shared by every range reviewed in that
+  repository and come back when Lumiere restarts.
+- **Outdated.** When the diff changes, a thread follows its lines if their text is
+  found unchanged at exactly one place on the same side of the file. Otherwise it is
+  marked `outdated`.
+
+The agent uses two commands, from the repository or the workspace folder:
 
 ```bash
-# View uncommitted changes
-lumen diff
-
-# View changes for a specific commit
-lumen diff HEAD~1
-
-# View changes between branches
-lumen diff main..feature/A
-
-# View changes in a GitHub Pull Request
-lumen diff --pr 123 # (--pr is optional)
-lumen diff https://github.com/owner/repo/pull/123
-
-# Open the PR associated with the current branch
-lumen diff --detect-pr
-
-# Filter to specific files
-lumen diff --file src/main.rs --file src/lib.rs
-
-# Watch mode - auto-refresh on file changes
-lumen diff --watch
-
-# Stacked mode - review commits one by one
-lumen diff main..feature --stacked
-
-# Jump to a specific file on open
-lumen diff --focus src/main.rs
-
-# Soft-wrap long lines (also settable in lumen.config.json)
-lumen diff --wrap
+lumiere thread list [--awaiting] [--json] [--repo PATH]
+lumiere thread reply <thread-id> (--body TEXT | --stdin) [--repo PATH] [--author NAME]
 ```
 
-#### Stacked Diff Mode
+`--awaiting` keeps the open threads whose last sent comment is yours. Queued comments
+are hidden from both commands, and a resolved thread cannot be replied to.
 
-Review a range of commits one at a time with `--stacked`:
+## Workspace reviews
+
+Run `lumiere diff` from a folder that is not a repository but has repositories
+directly inside it:
 
 ```bash
-lumen diff main..feature --stacked
-lumen diff HEAD~5..HEAD --stacked
+cd ~/code/my-workspace      # contains api/, web/, ...
+lumiere diff origin/main...-
 ```
 
-This displays each commit individually, letting you navigate through them:
-- `ctrl+h` / `ctrl+l`: Previous / next commit
-- Click the `‹` / `›` arrows in the header
+- Only immediate child directories count. Symlinks and plain folders are ignored.
+- The first repository, by name, that has changes opens first. `R` lists them all.
+- Each repository keeps its own threads, viewed files and position.
+- A repository where the requested revision does not exist stays in the list; choosing
+  it shows the error.
+- `s` sends the queued comments of every repository opened.
+- The thread list (`I`) and watch mode cover the repository on screen only.
+- `--pr`, `--detect-pr` and `--stacked` need a single repository.
 
-The header shows the current commit position, SHA, and message. Viewed files are tracked per commit, so your progress is preserved when navigating.
+## pi command
 
-When viewing a PR, you can mark files as viewed (syncs with GitHub) using the `space` keybinding.
-
-#### Theme Configuration
-
-Customize the diff viewer colors with preset themes:
+`pi-extension/` adds `/lumiere` to pi. Link it once from a checkout, then run
+`/reload` in pi:
 
 ```bash
-# Using CLI flag
-lumen diff --theme dracula
+ln -s "$(pwd)/pi-extension" ~/.pi/agent/extensions/lumiere
+```
 
-# Using environment variable
-LUMEN_THEME=catppuccin-mocha lumen diff
+```
+/lumiere                    review origin/main...- with watch mode on
+/lumiere diff HEAD~3..-     any lumiere arguments
+```
 
-# Or set permanently in config file (~/.config/lumen/lumen.config.json)
+- **Inside Rex** the review opens in a pane beside pi, zoomed to fill the window, and
+  attached to that pi session. Pi keeps running behind it. Unzoom the pane to see both.
+- **Elsewhere** pi is suspended while Lumiere uses the terminal. Comment, then press
+  `s` and `Enter`: the comments are sent to the agent. `q` sends nothing.
+
+`e` opens the file in pi's `EDITOR`, or in `vim` when it is not set. `LUMIERE_BIN`
+selects the binary when `lumiere` is not on `PATH`. The extension and the binary must
+come from the same version.
+
+## Keys
+
+`j` is up or previous and `k` is down or next, everywhere. `?` shows the full list.
+
+| Key | Effect |
+|---|---|
+| `j` / `k`, arrows | Scroll, or move in a list |
+| `Option+Up` / `Option+Down`, `Option+J` / `Option+K` | Previous / next file |
+| `{` / `}` | Previous / next hunk |
+| `Ctrl+P` | File picker |
+| `/`, `Ctrl+F` | Search in the file, or in every file |
+| `Tab` | Show or hide the sidebar |
+| `Space` | Mark the file as viewed and go to the next |
+| `[` / `]` / `=` | Old side only, new side only, both |
+| `w` | Watch mode on or off |
+| `e` | Open the file in `EDITOR` |
+| `y` | Copy the selection, or the file name |
+| `R` | Switch repository in a workspace |
+| `q`, `Esc` | Quit |
+
+`Option` is `Alt` outside macOS.
+
+## Settings
+
+Lumiere reads `~/.config/lumiere/lumiere.config.json`, or the file given with
+`--config` before `diff`:
+
+```json
 {
-  "theme": "dracula"
+  "theme": "catppuccin-mocha",
+  "wrap": true
 }
 ```
 
-**Available themes:**
+The theme comes from `--theme`, then the settings file, then `LUMIERE_THEME`, then the
+terminal's background.
+
 | Theme | Value |
-|-------|-------|
-| Default (auto-detect) | `dark`, `light` |
+|---|---|
+| Default | `dark`, `light` |
 | Catppuccin | `catppuccin-mocha`, `catppuccin-latte` |
 | Dracula | `dracula` |
 | Nord | `nord` |
@@ -154,238 +200,27 @@ LUMEN_THEME=catppuccin-mocha lumen diff
 | Solarized | `solarized-dark`, `solarized-light` |
 | Flexoki | `flexoki-dark`, `flexoki-light` |
 
-Priority: CLI flag > config file > `LUMEN_THEME` env var > OS auto-detect.
+## Relation to Lumen
 
-#### Selection & Annotations
+Lumiere started as a fork of [Lumen](https://github.com/jnsahaj/lumen) v2.32.0 and
+keeps its diff viewer. It is developed on its own, does not follow Lumen's
+releases, and restarts its version at 0.1.0. The main differences:
 
-**Selection**: Click-drag in the content area for character-level selection, or on line numbers for line-level selection. Selected text can be copied or annotated.
+- Review threads with an agent replace Lumen's one-way annotations.
+- Workspace reviews, the `A...-` reference and the pi command are new.
+- Lumen's AI commands (`draft`, `explain`, `operate`, `list`, `configure`) are removed.
+- `j` and `k` are swapped, and files change with `Option` and an arrow.
+- The binary, the settings file and the environment variable are named `lumiere`.
+  Lumen's `lumen.config.json` and `LUMEN_THEME` are not read.
 
-**Annotations**: Add review comments at three levels of granularity:
-- **Selection** — select lines with mouse, press `i` to annotate the selected range
-- **Hunk** — focus a hunk with `{`/`}`, press `i` to annotate the hunk
-- **File** — press `i` with no selection or hunk focus to annotate the whole file
-
-Annotated lines display a `▍` gutter indicator. Use `I` to view, edit, delete, copy, or export all annotations.
-
-#### Keybindings
-
-- `j/k` or arrow keys: Navigate
-- `{/}`: Jump between hunks
-- `w`: Toggle watch mode
-- `tab`: Toggle sidebar
-- `space`: Mark file as viewed
-- `e`: Open file in editor
-- `y`: Copy selection (or filename)
-- `i`: Annotate selection / hunk / file
-- `I`: View all annotations
-- `ctrl+h/l`: Previous/next commit (stacked mode)
-- `?`: Show all keybindings
-
-## AI Features 🔅
-
-Lumen also bundles optional AI helpers for commit messages, explanations, and natural-language git commands. These require configuring an AI provider — the diff viewer above does not.
-
-### Configuration
-
-Run `lumen configure` for interactive setup (provider, API key, model). Settings are saved to `~/.config/lumen/lumen.config.json`.
-
-### Generate Commit Messages
-
-Create meaningful commit messages for your staged changes:
+## Development
 
 ```bash
-# Basic usage - generates a commit message based on staged changes
-lumen draft
-# Output: "feat(button.tsx): Update button color to blue"
-
-# Add context for more meaningful messages
-lumen draft --context "match brand guidelines"
-# Output: "feat(button.tsx): Update button color to align with brand identity guidelines"
+cargo build
+cargo test
+cargo clippy --all-targets
 ```
 
-### Generate Git Commands
+## License
 
-Ask Lumen to generate Git commands based on a natural language query:
-
-```bash
-lumen operate "squash the last 3 commits into 1 with the message 'squashed commit'"
-# Output: git reset --soft HEAD~3 && git commit -m "squashed commit" [y/N]
-```
-
-The command will display an explanation of what the generated command does, show any warnings for potentially dangerous operations, and prompt for confirmation before execution.
-
-### Explain Changes
-
-Understand what changed and why:
-
-```bash
-# Working directory or staged changes
-lumen explain
-lumen explain --staged
-
-# Specific commits or ranges
-lumen explain HEAD
-lumen explain HEAD~3..HEAD
-lumen explain main..feature/A
-
-# Ask specific questions
-lumen explain --query "What's the performance impact of these changes?"
-
-# Interactive commit selection (requires: fzf)
-lumen explain --list
-```
-
-### Tips & Tricks
-
-```bash
-# Copy commit message to clipboard (macOS / Linux)
-lumen draft | pbcopy
-lumen draft | xclip -selection c
-
-# Directly commit using the generated message
-lumen draft | git commit -F -
-```
-
-[lazygit](https://github.com/jesseduffield/lazygit) integration is available — see the [user config docs](https://github.com/jesseduffield/lazygit/blob/master/docs/Config.md) for binding `lumen draft` to a custom command.
-
-### AI Providers
-
-Configure your preferred AI provider:
-
-```bash
-# Using CLI arguments
-lumen -p openai -k "your-api-key" -m "gpt-5-mini" draft
-
-# Using environment variables
-export LUMEN_AI_PROVIDER="openai"
-export LUMEN_API_KEY="your-api-key"
-export LUMEN_AI_MODEL="gpt-5-mini"
-```
-
-#### Supported Providers
-
-| Provider | API Key Required | Models |
-|----------|-----------------|---------|
-| [OpenAI](https://platform.openai.com/docs/models) `openai` (Default) | Yes | `gpt-5.2`, `gpt-5`, `gpt-5-mini`, `gpt-5-nano`, `gpt-4.1`, `gpt-4.1-mini`, `o4-mini` (default: `gpt-5-mini`) |
-| [Claude](https://www.anthropic.com/pricing) `claude` | Yes | `claude-sonnet-4-5-20250930`, `claude-opus-4-5-20251115`, `claude-haiku-4-5-20251015` (default: `claude-sonnet-4-5-20250930`) |
-| [Gemini](https://ai.google.dev/) `gemini` | Yes (free tier) | `gemini-3-pro`, `gemini-3-flash-preview`, `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite` (default: `gemini-2.5-flash`) |
-| [Groq](https://console.groq.com/docs/models) `groq` | Yes (free) | `llama-3.3-70b-versatile`, `llama-3.1-8b-instant`, `meta-llama/llama-4-maverick-17b-128e-instruct`, `openai/gpt-oss-120b` (default: `llama-3.3-70b-versatile`) |
-| [DeepSeek](https://www.deepseek.com/) `deepseek` | Yes | `deepseek-chat` (V3.2), `deepseek-reasoner` (default: `deepseek-chat`) |
-| [xAI](https://x.ai/) `xai` | Yes | `grok-4`, `grok-4-mini`, `grok-4-mini-fast` (default: `grok-4-mini-fast`) |
-| [OpenCode Zen](https://opencode.ai/docs/zen) `opencode-zen` | Yes | [see list](https://opencode.ai/docs/zen#models) (default: `claude-sonnet-4-5`) |
-| [Ollama](https://github.com/ollama/ollama) `ollama` | No (local) | [see list](https://ollama.com/library) (default: `llama3.2`) |
-| [OpenRouter](https://openrouter.ai/) `openrouter` | Yes | [see list](https://openrouter.ai/models) (default: `anthropic/claude-sonnet-4.5`) |
-| [Vercel AI Gateway](https://vercel.com/docs/ai-gateway) `vercel` | Yes | [see list](https://vercel.com/docs/ai-gateway/supported-models) (default: `anthropic/claude-sonnet-4.5`) |
-
-## Coding Agent Integrations 🔅
-
-Use lumen as the review surface for your coding agent. When the agent finishes a turn, shell-escape to lumen, annotate the diff inline, and press `s` to send your annotations back as the agent's next prompt.
-
-```
-agent finishes turn → !lumen diff → annotate → press `s`
-→ stdout returns to the agent → agent fixes your notes
-```
-
-The mechanics are just stdin/stdout — no plugins, no extensions:
-
-- `s` in the diff TUI opens a confirmation modal. On `Enter`, lumen exits and writes the formatted annotations to stdout (the same text `y` copies to your clipboard).
-- The TUI auto-routes to `/dev/tty` when stdout is captured, so the agent receives clean text — no escape codes.
-
-Works with anything that has a shell-escape:
-
-| Agent | How to trigger |
-|-------|----------------|
-| Claude Code | `!lumen diff` |
-| Codex | `!lumen diff` |
-| Any agent with shell access | `lumen diff` from a tool/bash call |
-
-Annotate with `i` (selection / hunk / file), press `s` → `Enter` to send. Press `q` to dismiss without sending.
-
-## Advanced Configuration 🔅
-
-### Configuration File
-Lumen supports configuration through a JSON file. You can place the configuration file in one of the following locations:
-
-1. Project Root: Create a lumen.config.json file in your project's root directory.
-2. Custom Path: Specify a custom path using the --config CLI option.
-3. Global Configuration (Optional): Place a lumen.config.json file in your system's default configuration directory:
-    - Linux/macOS: `~/.config/lumen/lumen.config.json`
-    - Windows: `%USERPROFILE%\.config\lumen\lumen.config.json`
-
-Lumen will load configurations in the following order of priority:
-
-1. CLI arguments (highest priority)
-2. Configuration file specified by --config
-3. Project root lumen.config.json
-4. Global configuration file (lowest priority)
-
-```json
-{
-  "provider": "openai",
-  "model": "gpt-5-mini",
-  "api_key": "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-  "theme": "catppuccin-mocha",
-  "wrap": true,
-  "draft": {
-    "commit_types": {
-      "docs": "Documentation only changes",
-      "style": "Changes that do not affect the meaning of the code",
-      "refactor": "A code change that neither fixes a bug nor adds a feature",
-      "perf": "A code change that improves performance",
-      "test": "Adding missing tests or correcting existing tests",
-      "build": "Changes that affect the build system or external dependencies",
-      "ci": "Changes to our CI configuration files and scripts",
-      "chore": "Other changes that don't modify src or test files",
-      "revert": "Reverts a previous commit",
-      "feat": "A new feature",
-      "fix": "A bug fix"
-    }
-  }
-}
-```
-
-### Configuration Precedence
-Options are applied in the following order (highest to lowest priority):
-1. CLI Flags
-2. Configuration File
-3. Environment Variables
-4. Default options
-
-Example: Using different providers for different projects:
-```bash
-# Set global defaults in .zshrc/.bashrc
-export LUMEN_AI_PROVIDER="openai"
-export LUMEN_AI_MODEL="gpt-5-mini"
-export LUMEN_API_KEY="sk-xxxxxxxxxxxxxxxxxxxxxxxx"
-
-# Override per project using config file
-{
-  "provider": "ollama",
-  "model": "llama3.2"
-}
-
-# Or override using CLI flags
-lumen -p "ollama" -m "llama3.2" draft
-```
-## Contributors
-
-<a href="https://github.com/jnsahaj/lumen/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=jnsahaj/lumen" />
-</a>
-
-Made with [contrib.rocks](https://contrib.rocks).
-
-### Interested in Contributing?
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-# Star History
-
-<p align="center">
-  <a target="_blank" href="https://star-history.com/#jnsahaj/lumen&Date">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=jnsahaj/lumen&type=Date&theme=dark">
-      <img alt="GitHub Star History for jnsahaj/lumen" src="https://api.star-history.com/svg?repos=jnsahaj/lumen&type=Date">
-    </picture>
-  </a>
-</p>
+MIT. Copyright Sahaj Jain (Lumen) and Alexandre Duverger. See [LICENSE](LICENSE).

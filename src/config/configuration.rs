@@ -1,32 +1,16 @@
-use crate::config::cli::ProviderType;
-use crate::error::LumenError;
+use crate::error::LumiereError;
 use dirs::home_dir;
-use indoc::indoc;
-use serde::{Deserialize, Deserializer};
-use serde_json::from_reader;
-use std::collections::HashMap;
+use serde::Deserialize;
 use std::fs::File;
 use std::io::BufReader;
+use std::path::PathBuf;
 
 use crate::Cli;
 
-#[derive(Debug, Deserialize)]
-pub struct LumenConfig {
-    #[serde(
-        default = "default_ai_provider",
-        deserialize_with = "deserialize_ai_provider"
-    )]
-    pub provider: ProviderType,
-
-    #[serde(default = "default_model")]
-    pub model: Option<String>,
-
-    #[serde(default = "default_api_key")]
-    pub api_key: Option<String>,
-
-    #[serde(default = "default_draft_config")]
-    pub draft: DraftConfig,
-
+/// Settings read from `~/.config/lumiere/lumiere.config.json`, or from the file
+/// given with `--config`. Command-line flags take precedence.
+#[derive(Debug, Deserialize, Default)]
+pub struct LumiereConfig {
     #[serde(default)]
     pub theme: Option<String>,
 
@@ -34,128 +18,61 @@ pub struct LumenConfig {
     pub wrap: Option<bool>,
 }
 
-#[derive(Debug, Deserialize, Default)]
-pub struct DraftConfig {
-    #[serde(
-        default = "default_commit_types",
-        deserialize_with = "deserialize_commit_types"
-    )]
-    pub commit_types: String,
+fn default_config_path() -> Option<PathBuf> {
+    let path = home_dir()?.join(".config/lumiere/lumiere.config.json");
+    path.exists().then_some(path)
 }
 
-fn default_ai_provider() -> ProviderType {
-    std::env::var("LUMEN_AI_PROVIDER")
-        .unwrap_or_else(|_| "openai".to_string())
-        .parse()
-        .unwrap_or(ProviderType::Openai)
-}
-
-fn deserialize_ai_provider<'de, D>(deserializer: D) -> Result<ProviderType, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let s = String::deserialize(deserializer)?;
-    s.parse().map_err(serde::de::Error::custom)
-}
-
-fn default_commit_types() -> String {
-    indoc! {r#"
-    {
-        "docs": "Documentation only changes",
-        "style": "Changes that do not affect the meaning of the code",
-        "refactor": "A code change that neither fixes a bug nor adds a feature",
-        "perf": "A code change that improves performance",
-        "test": "Adding missing tests or correcting existing tests",
-        "build": "Changes that affect the build system or external dependencies",
-        "ci": "Changes to our CI configuration files and scripts",
-        "chore": "Other changes that don't modify src or test files",
-        "revert": "Reverts a previous commit",
-        "feat": "A new feature",
-        "fix": "A bug fix"
-    }
-    "#}
-    .to_string()
-}
-
-fn default_model() -> Option<String> {
-    std::env::var("LUMEN_AI_MODEL").ok()
-}
-
-fn default_api_key() -> Option<String> {
-    std::env::var("LUMEN_API_KEY").ok()
-}
-
-fn deserialize_commit_types<'de, D>(deserializer: D) -> Result<String, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let commit_types_map: HashMap<String, String> = HashMap::deserialize(deserializer)?;
-    serde_json::to_string(&commit_types_map).map_err(serde::de::Error::custom)
-}
-
-fn default_draft_config() -> DraftConfig {
-    DraftConfig {
-        commit_types: default_commit_types(),
-    }
-}
-
-fn default_config_path() -> Option<String> {
-    home_dir().and_then(|mut path| {
-        path.push(".config/lumen/lumen.config.json");
-        path.exists()
-            .then_some(path)
-            .and_then(|p| p.to_str().map(|s| s.to_string()))
-    })
-}
-
-impl LumenConfig {
-    pub fn build(cli: &Cli) -> Result<Self, LumenError> {
-        let config = if let Some(config_path) = &cli.config {
-            LumenConfig::from_file(config_path)?
-        } else {
-            match default_config_path() {
-                Some(path) => LumenConfig::from_file(&path)?,
-                None => LumenConfig::default(),
+impl LumiereConfig {
+    pub fn build(cli: &Cli) -> Result<Self, LumiereError> {
+        match cli.config.as_ref().map(PathBuf::from).or_else(default_config_path) {
+            Some(path) => {
+                let reader = BufReader::new(File::open(path)?);
+                serde_json::from_reader(reader)
+                    .map_err(|error| LumiereError::InvalidConfiguration(error.to_string()))
             }
-        };
-
-        let provider = cli.provider.as_ref().cloned().unwrap_or(config.provider);
-        let api_key = cli.api_key.clone().or(config.api_key);
-        let model = cli.model.clone().or(config.model);
-
-        Ok(LumenConfig {
-            provider,
-            model,
-            api_key,
-            draft: config.draft,
-            theme: config.theme,
-            wrap: config.wrap,
-        })
-    }
-
-    pub fn from_file(file_path: &str) -> Result<Self, LumenError> {
-        let file = File::open(file_path)?;
-        let reader = BufReader::new(file);
-
-        // Deserialize JSON data into the LumenConfig struct
-        let config: LumenConfig = match from_reader(reader) {
-            Ok(config) => config,
-            Err(e) => return Err(LumenError::InvalidConfiguration(e.to_string())),
-        };
-
-        Ok(config)
+            None => Ok(LumiereConfig::default()),
+        }
     }
 }
 
-impl Default for LumenConfig {
-    fn default() -> Self {
-        LumenConfig {
-            provider: default_ai_provider(),
-            model: default_model(),
-            api_key: default_api_key(),
-            draft: default_draft_config(),
-            theme: None,
-            wrap: None,
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+    use std::path::Path;
+
+    fn build_from(config_file: &Path) -> Result<LumiereConfig, LumiereError> {
+        let config_file = config_file.to_str().expect("utf-8 path");
+        let cli = Cli::try_parse_from(["lumiere", "--config", config_file, "diff"]).expect("cli");
+        LumiereConfig::build(&cli)
+    }
+
+    #[test]
+    fn test_settings_come_from_the_given_file_and_a_broken_file_is_reported() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let settings_file = directory.path().join("lumiere.config.json");
+
+        // Keys Lumiere does not know, such as those of a Lumen settings file, are ignored.
+        std::fs::write(&settings_file, r#"{"theme": "nord", "wrap": true, "provider": "openai"}"#)
+            .expect("write settings");
+        let config = build_from(&settings_file).expect("settings load");
+        assert_eq!(config.theme.as_deref(), Some("nord"));
+        assert_eq!(config.wrap, Some(true));
+
+        std::fs::write(&settings_file, "{}").expect("write settings");
+        let config = build_from(&settings_file).expect("empty settings load");
+        assert_eq!((config.theme, config.wrap), (None, None));
+
+        std::fs::write(&settings_file, "{not json").expect("write settings");
+        assert!(matches!(
+            build_from(&settings_file),
+            Err(LumiereError::InvalidConfiguration(_))
+        ));
+
+        assert!(matches!(
+            build_from(&directory.path().join("missing.json")),
+            Err(LumiereError::IoError(_))
+        ));
     }
 }

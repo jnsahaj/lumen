@@ -1,6 +1,5 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
-use std::str::FromStr;
 
 use crate::commit_reference::CommitReference;
 
@@ -15,21 +14,12 @@ pub enum VcsOverride {
 
 #[derive(Parser)]
 #[command(name = "lumiere")]
-#[command(about = "AI-powered CLI tool for git commit summaries", long_about = None)]
+#[command(about = "Review diffs in the terminal and discuss them with your coding agent", long_about = None)]
 #[command(version)]
 pub struct Cli {
-    /// Path to configuration file eg: ./path/to/lumen.config.json
+    /// Path to configuration file eg: ./path/to/lumiere.config.json
     #[arg(long)]
     pub config: Option<String>,
-
-    #[arg(value_enum, short = 'p', long = "provider")]
-    pub provider: Option<ProviderType>,
-
-    #[arg(short = 'k', long = "api-key")]
-    pub api_key: Option<String>,
-
-    #[arg(short = 'm', long = "model")]
-    pub model: Option<String>,
 
     /// Version control system to use (auto-detected if not specified)
     #[arg(value_enum, long = "vcs")]
@@ -39,73 +29,8 @@ pub struct Cli {
     pub command: Commands,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, ValueEnum, Debug)]
-pub enum ProviderType {
-    Openai,
-    Groq,
-    Claude,
-    Ollama,
-    OpencodeZen,
-    Openrouter,
-    Deepseek,
-    Gemini,
-    Xai,
-    Vercel,
-}
-
-impl FromStr for ProviderType {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "openai" => Ok(ProviderType::Openai),
-            "groq" => Ok(ProviderType::Groq),
-            "claude" => Ok(ProviderType::Claude),
-            "ollama" => Ok(ProviderType::Ollama),
-            "opencode-zen" => Ok(ProviderType::OpencodeZen),
-            "openrouter" => Ok(ProviderType::Openrouter),
-            "deepseek" => Ok(ProviderType::Deepseek),
-            "gemini" => Ok(ProviderType::Gemini),
-            "xai" => Ok(ProviderType::Xai),
-            "vercel" => Ok(ProviderType::Vercel),
-            _ => Err(format!("Unknown provider: {}", s)),
-        }
-    }
-}
-
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Explain the changes in a commit, or the current diff (default). Use --list to select commit interactively
-    Explain {
-        /// Commit reference: SHA, HEAD, HEAD~3..HEAD, main..feature, main...feature, main..- (range + working tree)
-        #[arg(value_parser = clap::value_parser!(CommitReference))]
-        reference: Option<CommitReference>,
-
-        /// Use staged diff only (when showing uncommitted changes)
-        #[arg(long)]
-        staged: bool,
-
-        /// Ask a question instead of summary
-        #[arg(short, long)]
-        query: Option<String>,
-
-        /// Select commit interactively using fuzzy finder
-        #[arg(long)]
-        list: bool,
-    },
-    /// List all commits in an interactive fuzzy-finder, and summarize the changes
-    List,
-    /// Generate a commit message for the staged changes
-    Draft {
-        /// Add context to communicate intent
-        #[arg(short, long)]
-        context: Option<String>,
-    },
-
-    Operate {
-        #[arg()]
-        query: String,
-    },
     /// Launch interactive side-by-side diff viewer
     Diff {
         /// Commit reference: SHA, HEAD, HEAD~3..HEAD, main..feature, main...feature
@@ -159,8 +84,6 @@ pub enum Commands {
         #[command(subcommand)]
         action: ThreadAction,
     },
-    /// Interactively configure Lumen (provider, API key)
-    Configure,
 }
 
 #[derive(Subcommand)]
@@ -208,19 +131,19 @@ mod tests {
 
     #[test]
     fn test_vcs_git_parses() {
-        let cli = Cli::try_parse_from(["lumen", "--vcs", "git", "diff"]).unwrap();
+        let cli = Cli::try_parse_from(["lumiere", "--vcs", "git", "diff"]).unwrap();
         assert_eq!(cli.vcs, Some(VcsOverride::Git));
     }
 
     #[test]
     fn test_vcs_jj_parses() {
-        let cli = Cli::try_parse_from(["lumen", "--vcs", "jj", "diff"]).unwrap();
+        let cli = Cli::try_parse_from(["lumiere", "--vcs", "jj", "diff"]).unwrap();
         assert_eq!(cli.vcs, Some(VcsOverride::Jj));
     }
 
     #[test]
     fn test_vcs_not_specified() {
-        let cli = Cli::try_parse_from(["lumen", "diff"]).unwrap();
+        let cli = Cli::try_parse_from(["lumiere", "diff"]).unwrap();
         assert_eq!(cli.vcs, None);
     }
 
@@ -236,7 +159,7 @@ mod tests {
 
     #[test]
     fn test_diff_wrap_flag_parses() {
-        let cli = Cli::try_parse_from(["lumen", "diff", "--wrap"]).unwrap();
+        let cli = Cli::try_parse_from(["lumiere", "diff", "--wrap"]).unwrap();
         match cli.command {
             Commands::Diff { wrap, .. } => assert!(wrap),
             _ => panic!("expected diff command"),

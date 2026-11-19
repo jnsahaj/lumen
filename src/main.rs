@@ -1,128 +1,33 @@
 use clap::Parser;
-use command::LumenCommand;
-use commit_reference::CommitReference;
 use config::cli::{Cli, Commands, ThreadAction};
-use config::LumenConfig;
-use error::LumenError;
-use git_entity::{commit::Commit, diff::Diff, GitEntity};
+use config::LumiereConfig;
+use error::LumiereError;
 use std::io::Read;
 use std::process;
 use vcs::VcsBackendType;
 
-mod ai_prompt;
 mod command;
 mod commit_reference;
 mod config;
 mod error;
-mod git_entity;
-mod provider;
 mod vcs;
 
-#[tokio::main]
-async fn main() {
-    if let Err(e) = run().await {
+fn main() {
+    if let Err(e) = run() {
         eprintln!("\x1b[91m\rerror:\x1b[0m {e}");
         process::exit(1);
     }
 }
 
-async fn run() -> Result<(), LumenError> {
+fn run() -> Result<(), LumiereError> {
     let cli = Cli::parse();
+    let config = LumiereConfig::build(&cli)?;
 
-    let config = match LumenConfig::build(&cli) {
-        Ok(config) => config,
-        Err(e) => return Err(e),
-    };
-
-    let provider = provider::LumenProvider::new(config.provider, config.api_key, config.model)?;
-    let command = command::LumenCommand::new(provider);
-
-    // Get VCS backend based on CLI override or auto-detection
     let cwd = std::env::current_dir()?;
+    // None: the version control system is detected.
     let vcs_override = cli.vcs.map(VcsBackendType::from);
-    // Every command runs inside a repository, except `diff`, which also accepts
-    // a folder of repositories.
-    let open_backend = || vcs::get_backend(&cwd, vcs_override);
 
     match cli.command {
-        Commands::Explain {
-            reference,
-            staged,
-            query,
-            list,
-        } => {
-            let backend = open_backend()?;
-            let git_entity = if list {
-                let sha = LumenCommand::get_sha_from_fzf(backend.as_ref())?;
-                let info = backend.get_commit(&sha)?;
-                GitEntity::Commit(Commit::from_commit_info(info))
-            } else {
-                match reference {
-                    Some(CommitReference::Single(input)) => {
-                        let sha = if input == "-" {
-                            read_from_stdin()?
-                        } else {
-                            input
-                        };
-                        let info = backend.get_commit(&sha)?;
-                        GitEntity::Commit(Commit::from_commit_info(info))
-                    }
-                    Some(CommitReference::Range { from, to }) => {
-                        let diff = backend.get_range_diff(&from, &to, false)?;
-                        GitEntity::Diff(Diff::from_range_diff(diff, from, to)?)
-                    }
-                    Some(CommitReference::TripleDots { from, to }) => {
-                        let diff = backend.get_range_diff(&from, &to, true)?;
-                        GitEntity::Diff(Diff::from_range_diff(diff, from, to)?)
-                    }
-                    Some(CommitReference::RangeToWorkingTree { from }) => {
-                        range_to_working_tree_entity(backend.as_ref(), from)?
-                    }
-                    Some(CommitReference::MergeBaseToWorkingTree { from }) => {
-                        let merge_base =
-                            backend.get_merge_base(&from, backend.working_copy_parent_ref())?;
-                        range_to_working_tree_entity(backend.as_ref(), merge_base)?
-                    }
-                    None => {
-                        // Default: show uncommitted diff
-                        let diff = backend.get_working_tree_diff(staged)?;
-                        GitEntity::Diff(Diff::from_working_tree_diff(diff, staged)?)
-                    }
-                }
-            };
-
-            command
-                .execute(command::CommandType::Explain { git_entity, query })
-                .await?;
-        }
-        Commands::List => {
-            let backend = open_backend()?;
-            eprintln!("Warning: 'lumiere list' is deprecated. Use 'lumiere explain --list' instead.");
-            command
-                .execute(command::CommandType::List {
-                    backend: backend.as_ref(),
-                })
-                .await?
-        }
-        Commands::Draft { context } => {
-            // Draft always uses staged diff (git convention)
-            let backend = open_backend()?;
-            let diff = backend.get_working_tree_diff(true)?;
-            let git_entity = GitEntity::Diff(Diff::from_working_tree_diff(diff, true)?);
-            command
-                .execute(command::CommandType::Draft {
-                    git_entity,
-                    context,
-                    draft_config: config.draft,
-                })
-                .await?
-        }
-        Commands::Operate { query } => {
-            open_backend()?;
-            command
-                .execute(command::CommandType::Operate { query })
-                .await?;
-        }
         Commands::Diff {
             reference,
             pr,
@@ -149,16 +54,20 @@ async fn run() -> Result<(), LumenError> {
                 wrap: wrap || config.wrap.unwrap_or(false),
                 agent_block,
             };
+            // `diff` runs inside a repository, or in a folder of repositories.
             match command::diff::Workspace::discover(&cwd, vcs_override) {
                 Some(workspace) => command::diff::run_workspace_diff_ui(options, &workspace)?,
-                None => command::diff::run_diff_ui(options, open_backend()?.as_ref())?,
+                None => {
+                    let backend = vcs::get_backend(&cwd, vcs_override)?;
+                    command::diff::run_diff_ui(options, backend.as_ref())?
+                }
             }
         }
         Commands::Thread { action } => {
             use command::diff::thread_cli;
             let repositories_at = |repo: Option<std::path::PathBuf>| {
                 thread_cli::repositories_at(repo.as_deref().unwrap_or(&cwd), vcs_override)
-                    .map_err(LumenError::CommandError)
+                    .map_err(LumiereError::CommandError)
             };
             let output = match action {
                 ThreadAction::List { repo, json, awaiting } => {
@@ -177,38 +86,9 @@ async fn run() -> Result<(), LumenError> {
                     thread_cli::reply(&repositories, &thread_id, &body, &author)
                 }
             };
-            println!("{}", output.map_err(LumenError::CommandError)?);
-        }
-        Commands::Configure => {
-            open_backend()?;
-            command::configure::ConfigureCommand::execute()?;
+            println!("{}", output.map_err(LumiereError::CommandError)?);
         }
     }
 
     Ok(())
-}
-
-fn range_to_working_tree_entity(
-    backend: &dyn vcs::VcsBackend,
-    from: String,
-) -> Result<GitEntity, LumenError> {
-    let head_ref = backend.working_copy_parent_ref();
-    let range_diff = backend
-        .get_range_diff(&from, head_ref, false)
-        .unwrap_or_default();
-    let wt_diff = backend.get_working_tree_diff(false).unwrap_or_default();
-    let combined = format!("{}{}", range_diff, wt_diff);
-    Ok(GitEntity::Diff(Diff::from_range_diff(
-        combined,
-        from,
-        "working tree".to_string(),
-    )?))
-}
-
-fn read_from_stdin() -> Result<String, LumenError> {
-    let mut buffer = String::new();
-    std::io::stdin().read_to_string(&mut buffer)?;
-
-    eprintln!("Reading commit SHA from stdin: '{}'", buffer.trim());
-    Ok(buffer)
 }

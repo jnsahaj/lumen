@@ -25,7 +25,6 @@ pub enum VcsError {
 }
 
 /// Lightweight commit info for stacked diff navigation.
-/// Unlike CommitInfo, this doesn't include the full diff content.
 #[derive(Clone, Debug)]
 pub struct StackedCommitInfo {
     /// Full commit ID (git SHA or jj commit ID)
@@ -38,24 +37,6 @@ pub struct StackedCommitInfo {
     pub summary: String,
 }
 
-/// Information about a commit from any VCS.
-#[derive(Debug, Clone)]
-#[allow(dead_code)] // Fields used by git_entity::Commit::from_commit_info
-pub struct CommitInfo {
-    /// The commit ID (git SHA or jj commit ID)
-    pub commit_id: String,
-    /// The change ID (jj only, None for git)
-    pub change_id: Option<String>,
-    /// Commit message
-    pub message: String,
-    /// Diff content
-    pub diff: String,
-    /// Author name and email
-    pub author: String,
-    /// Commit timestamp formatted for display (YYYY-MM-DD HH:MM:SS)
-    pub date: String,
-}
-
 /// Abstraction over git and jj backends.
 ///
 /// Note: This trait intentionally does not require `Send + Sync` bounds.
@@ -64,16 +45,6 @@ pub struct CommitInfo {
 /// not be thread-safe, so adding these bounds would prevent jj support.
 #[allow(dead_code)] // Not all methods used by all commands yet
 pub trait VcsBackend {
-    /// Get commit info for a reference (SHA, HEAD, @, etc.)
-    fn get_commit(&self, reference: &str) -> Result<CommitInfo, VcsError>;
-
-    /// Get diff of uncommitted changes (working tree vs HEAD/parent).
-    /// `staged` is only relevant for git; jj ignores it.
-    fn get_working_tree_diff(&self, staged: bool) -> Result<String, VcsError>;
-
-    /// Get diff between two refs (e.g., commit1..commit2).
-    fn get_range_diff(&self, from: &str, to: &str, three_dot: bool) -> Result<String, VcsError>;
-
     /// Get list of changed files for a commit or range.
     fn get_changed_files(&self, reference: &str) -> Result<Vec<String>, VcsError>;
 
@@ -82,9 +53,6 @@ pub trait VcsBackend {
 
     /// Get current branch name (or bookmark for jj).
     fn get_current_branch(&self) -> Result<Option<String>, VcsError>;
-
-    /// Get commit log formatted for fzf selection.
-    fn get_commit_log_for_fzf(&self) -> Result<String, VcsError>;
 
     /// Resolve a reference to a canonical commit SHA.
     /// Works with any ref type: git SHA, jj change ID, @, @-, bookmarks, branches, etc.

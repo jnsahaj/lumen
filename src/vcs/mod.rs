@@ -10,7 +10,7 @@ mod jj;
 #[cfg(test)]
 pub mod test_utils;
 
-pub use backend::{CommitInfo, StackedCommitInfo, VcsBackend, VcsError};
+pub use backend::{StackedCommitInfo, VcsBackend, VcsError};
 pub use detection::{detect_vcs_type, vcs_type_at, VcsType};
 pub use git::GitBackend;
 #[cfg(feature = "jj")]
@@ -81,15 +81,7 @@ mod tests {
     fn test_get_backend_in_git_repo() {
         let repo = RepoGuard::new();
         let backend = get_backend(&repo.dir, None).expect("should get backend");
-        let commit = backend.get_commit("HEAD").expect("should get commit");
-        assert!(!commit.commit_id.is_empty());
-    }
-
-    #[test]
-    fn test_get_backend_in_non_repo_fails() {
-        let temp = tempfile::TempDir::new().unwrap();
-        let result = get_backend(temp.path(), None);
-        assert!(matches!(result, Err(VcsError::NotARepository)));
+        assert_eq!(backend.name(), "git");
     }
 
     #[test]
@@ -101,8 +93,7 @@ mod tests {
         };
 
         let backend = get_backend(&repo.dir, None).expect("should get backend");
-        let commit = backend.get_commit("@").expect("should get commit");
-        assert!(!commit.commit_id.is_empty());
+        assert_eq!(backend.name(), "jj");
     }
 
     #[test]
@@ -120,9 +111,15 @@ mod tests {
         // Override to git backend in a colocated repo
         let backend =
             get_backend(&repo.dir, Some(VcsBackendType::Git)).expect("should get backend");
-        // Git backend uses HEAD, not @
-        let commit = backend.get_commit("HEAD").expect("should get commit");
-        assert!(!commit.commit_id.is_empty());
+        assert_eq!(backend.name(), "git");
+        backend.resolve_ref("HEAD").expect("git backend resolves HEAD");
+    }
+
+    #[test]
+    fn test_get_backend_in_non_repo_fails() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let result = get_backend(temp.path(), None);
+        assert!(matches!(result, Err(VcsError::NotARepository)));
     }
 
     #[test]
