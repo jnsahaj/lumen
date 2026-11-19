@@ -100,6 +100,9 @@ pub struct Thread {
     pub comments: Vec<Comment>,
 }
 
+/// In a thread's heading, before the number of comments left out of the text.
+pub const EARLIER_COMMENTS_LABEL: &str = "earlier comments:";
+
 impl Thread {
     pub fn new(
         filename: String,
@@ -208,9 +211,16 @@ impl Thread {
     }
 
     /// The thread as text for the agent: its id and place, the code it is anchored
-    /// to, then `comments`. Long code is cut; the agent can read the file.
+    /// to, then `comments`. Long code is cut; the agent can read the file. The
+    /// heading says how many comments the agent already has that are not in `comments`.
     pub fn describe<'a>(&self, comments: impl Iterator<Item = &'a Comment>) -> String {
         const MAX_CODE_LINES: usize = 40;
+
+        let comments: Vec<&Comment> = comments.collect();
+        let earlier_comments = self
+            .sent_comments()
+            .filter(|sent| comments.iter().all(|comment| comment.id != sent.id))
+            .count();
 
         let mut text = format!("## Thread {} · {}", self.id, self.filename);
         if let Some(line_reference) = self.line_reference() {
@@ -223,6 +233,9 @@ impl Thread {
         ];
         for (_, state) in states.iter().filter(|(applies, _)| *applies) {
             text.push_str(&format!(" · {}", state));
+        }
+        if earlier_comments > 0 {
+            text.push_str(&format!(" · {} {}", EARLIER_COMMENTS_LABEL, earlier_comments));
         }
 
         if let Some(anchor_text) = &self.anchor_text {

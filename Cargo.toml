@@ -28,7 +28,6 @@ ratatui = "0.29"
 crossterm = "0.28"
 similar = { version = "2.6", features = ["inline", "unicode"] }
 notify = "7.0"
-notify-debouncer-mini = "0.5"
 tree-sitter = "0.24"
 streaming-iterator = "0.1"
 tree-sitter-highlight = "0.24"
