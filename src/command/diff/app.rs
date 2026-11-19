@@ -398,6 +398,14 @@ fn changes_file(key: &crossterm::event::KeyEvent) -> bool {
         || (matches!(key.code, KeyCode::Char(_)) && key.modifiers.contains(KeyModifiers::CONTROL))
 }
 
+/// The program and arguments in an `EDITOR` value such as `code --wait`, split as a
+/// shell would. A value that cannot be split is taken as one program name.
+fn editor_words(editor: &str) -> Vec<String> {
+    shlex::split(editor)
+        .filter(|words| !words.is_empty())
+        .unwrap_or_else(|| vec![editor.to_string()])
+}
+
 /// Removes the comment the editor was changing, when it was changing one.
 fn remove_edited_comment(state: &mut AppState, editor: &AnnotationEditor) {
     if let (Some(thread_id), Some(comment_id)) = (&editor.thread_id, &editor.comment_id) {
@@ -1615,7 +1623,7 @@ fn run_app_internal<'a>(
                                 state.focused_panel = FocusedPanel::DiffView;
                             }
                         }
-                        // Next file: option+down, option+k, ctrl+k.
+                        // Next file: opt+down, opt+k, ctrl+k.
                         KeyCode::Down | KeyCode::Char('k') if changes_file(&key) => {
                             if !state.file_diffs.is_empty() {
                                 let mut next = state.sidebar_selected + 1;
@@ -1634,7 +1642,7 @@ fn run_app_internal<'a>(
                                 }
                             }
                         }
-                        // Previous file: option+up, option+j, ctrl+j.
+                        // Previous file: opt+up, opt+j, ctrl+j.
                         KeyCode::Up | KeyCode::Char('j') if changes_file(&key) => {
                             if !state.file_diffs.is_empty() && state.sidebar_selected > 0 {
                                 let mut prev = state.sidebar_selected - 1;
@@ -1703,7 +1711,7 @@ fn run_app_internal<'a>(
                                 active_modal = Some(Modal::file_picker("Find File", items));
                             }
                         }
-                        KeyCode::Char(']') => {
+                        KeyCode::Char('-') => {
                             if !state.file_diffs.is_empty() {
                                 let diff = &state.file_diffs[state.current_file];
                                 if !diff.new_content.is_empty() {
@@ -1715,7 +1723,7 @@ fn run_app_internal<'a>(
                                 }
                             }
                         }
-                        KeyCode::Char('[') => {
+                        KeyCode::Char('0') => {
                             if !state.file_diffs.is_empty() {
                                 let diff = &state.file_diffs[state.current_file];
                                 if !diff.old_content.is_empty() {
@@ -2008,7 +2016,7 @@ fn run_app_internal<'a>(
                         KeyCode::PageUp => {
                             state.scroll = state.scroll.saturating_sub(20);
                         }
-                        KeyCode::Char('}') => {
+                        KeyCode::Char(']') => {
                             if !state.file_diffs.is_empty() {
                                 state.clear_selection(); // Clear selection on hunk navigation
                                 let hunks = state.get_hunks().to_vec();
@@ -2032,7 +2040,7 @@ fn run_app_internal<'a>(
                                 }
                             }
                         }
-                        KeyCode::Char('{') => {
+                        KeyCode::Char('[') => {
                             if !state.file_diffs.is_empty() {
                                 state.clear_selection(); // Clear selection on hunk navigation
                                 let hunks = state.get_hunks().to_vec();
@@ -2228,7 +2236,9 @@ fn run_app_internal<'a>(
                                     None
                                 };
 
-                                let mut editor_command = std::process::Command::new(&editor);
+                                let words = editor_words(&editor);
+                                let mut editor_command = std::process::Command::new(&words[0]);
+                                editor_command.args(&words[1..]);
                                 editor_command.current_dir(backend.working_tree_root());
                                 // Captured stdout is reserved for the annotations, so the
                                 // editor draws on the terminal, as the TUI does.
@@ -2245,7 +2255,10 @@ fn run_app_internal<'a>(
                                 if let Some(line) = line_arg {
                                     editor_command.arg(format!("+{}", line));
                                 }
-                                let _ = editor_command.arg(filename).status();
+                                if let Err(error) = editor_command.arg(filename).status() {
+                                    let message = format!("cannot run {}: {}", editor, error);
+                                    notice = Some((message, Instant::now()));
+                                }
 
                                 enable_raw_mode()?;
                                 execute!(
@@ -2347,7 +2360,7 @@ fn run_app_internal<'a>(
                                                 description: "Focus sidebar / diff",
                                             },
                                             KeyBind {
-                                                key: "option+down/k, option+up/j",
+                                                key: "opt+down/k, opt+up/j",
                                                 description: "Next / previous file",
                                             },
                                             KeyBind {
@@ -2430,7 +2443,7 @@ fn run_app_internal<'a>(
                                                 description: "Scroll to top / bottom",
                                             },
                                             KeyBind {
-                                                key: "{ / }",
+                                                key: "[ / ]",
                                                 description: "Focus prev / next hunk",
                                             },
                                             KeyBind {
@@ -2446,12 +2459,12 @@ fn run_app_internal<'a>(
                                                 description: "Mark hunk viewed & next hunk",
                                             },
                                             KeyBind {
-                                                key: "]",
-                                                description: "Toggle new panel fullscreen",
+                                                key: "0",
+                                                description: "Toggle old panel",
                                             },
                                             KeyBind {
-                                                key: "[",
-                                                description: "Toggle old panel fullscreen",
+                                                key: "-",
+                                                description: "Toggle new panel",
                                             },
                                             KeyBind {
                                                 key: "=",
@@ -2485,7 +2498,7 @@ fn run_app_internal<'a>(
                                         ],
                                     },
                                     KeyBindSection {
-                                        title: "Selection & Review threads",
+                                        title: "Threads",
                                         bindings: vec![
                                             KeyBind {
                                                 key: "y",
@@ -2588,6 +2601,18 @@ fn generate_file_anchor(filename: &str) -> String {
 mod tests {
     use super::*;
     use crate::command::diff::types::FileDiff;
+
+    #[test]
+    fn test_an_editor_value_is_split_into_its_program_and_arguments() {
+        assert_eq!(editor_words("hx"), ["hx"]);
+        assert_eq!(editor_words("code --wait"), ["code", "--wait"]);
+        assert_eq!(
+            editor_words("'/opt/My Editor/bin/edit' -w"),
+            ["/opt/My Editor/bin/edit", "-w"]
+        );
+        // An unclosed quote cannot be split: the value is tried as it is.
+        assert_eq!(editor_words("it's"), ["it's"]);
+    }
 
     #[test]
     fn test_showing_a_thread_puts_its_first_line_on_the_top_row() {

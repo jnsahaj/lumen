@@ -211,8 +211,9 @@ impl Thread {
     }
 
     /// The thread as text for the agent: its id and place, the code it is anchored
-    /// to, then `comments`. Long code is cut; the agent can read the file. The
-    /// heading says how many comments the agent already has that are not in `comments`.
+    /// to, then `comments`. Long code is cut; the agent can read the file. When the
+    /// agent already has comments that are not in `comments`, the heading says how
+    /// many and the code is left out: it came with the first of them.
     pub fn describe<'a>(&self, comments: impl Iterator<Item = &'a Comment>) -> String {
         const MAX_CODE_LINES: usize = 40;
 
@@ -238,7 +239,7 @@ impl Thread {
             text.push_str(&format!(" · {} {}", EARLIER_COMMENTS_LABEL, earlier_comments));
         }
 
-        if let Some(anchor_text) = &self.anchor_text {
+        if let Some(anchor_text) = self.anchor_text.as_ref().filter(|_| earlier_comments == 0) {
             let code_lines: Vec<&str> = anchor_text.split('\n').collect();
             let shown_lines = code_lines.len().min(MAX_CODE_LINES);
             text.push_str(&format!("\n\n```\n{}\n```", code_lines[..shown_lines].join("\n")));

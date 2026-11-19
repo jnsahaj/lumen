@@ -75,6 +75,9 @@ fn run() -> Result<(), LumiereError> {
                 ThreadAction::List { repo, json, awaiting } => {
                     thread_cli::list(&repositories_at(repo)?, awaiting, json)
                 }
+                ThreadAction::Show { thread_id, repo, json } => {
+                    thread_cli::show(&repositories_at(repo)?, &thread_id, json)
+                }
                 ThreadAction::Reply { thread_id, body, repo, author, .. } => {
                     let repositories = repositories_at(repo)?;
                     let body = match body {

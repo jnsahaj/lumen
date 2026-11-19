@@ -83,7 +83,7 @@ back, keeping the focused hunk in place.
 ## Review threads
 
 A comment starts a thread on a selection, a hunk or a file. Select lines with the
-mouse, or focus a hunk with `{` and `}`; with neither, the comment is on the file.
+mouse, or focus a hunk with `[` and `]`; with neither, the comment is on the file.
 
 | Key | Effect |
 |---|---|
@@ -97,13 +97,14 @@ mouse, or focus a hunk with `{` and `}`; with neither, the comment is on the fil
 | `A` | Choose the agent, or none |
 
 - **Agent.** Lumiere looks for [Rex](https://rex.dev) panes running `pi` whose working
-  directory is a reviewed repository or the folder Lumiere was started from. It
-  attaches to the most recently active one; `--agent-block BLOCK` names the pane
-  instead. The footer shows the agent and its state, or `no agent`.
+  directory is a reviewed repository, the folder Lumiere was started from, or a folder
+  inside one of them. It attaches to the most recently active one; `--agent-block BLOCK`
+  names the pane instead. The footer shows the agent and its state, or `no agent`.
 - **Sending.** Lumiere pastes one message into the agent's prompt and submits it. The
   message holds each comment with its thread id, file, lines and code, and the command
-  to reply with. The agent is asked to reply in the thread first and to edit code only
-  after you approve there.
+  to reply with. A follow-up in a thread leaves the code out and says how to read the
+  earlier comments. The agent is asked to reply in the thread first and to edit code
+  only after you approve there.
 - **Without an agent** `Enter` queues, and `s` exits and writes the queued comments to
   standard output.
 - **Storage.** Threads are kept per repository, outside it, in
@@ -113,15 +114,16 @@ mouse, or focus a hunk with `{` and `}`; with neither, the comment is on the fil
   found unchanged at exactly one place on the same side of the file. Otherwise it is
   marked `outdated`.
 
-The agent uses two commands, from the repository or the workspace folder:
+The agent uses three commands, from the repository or the workspace folder:
 
 ```bash
 lumiere thread list [--awaiting] [--json] [--repo PATH]
+lumiere thread show <thread-id> [--json] [--repo PATH]
 lumiere thread reply <thread-id> (--body TEXT | --stdin) [--repo PATH] [--author NAME]
 ```
 
 `--awaiting` keeps the open threads whose last sent comment is yours. Queued comments
-are hidden from both commands, and a resolved thread cannot be replied to.
+are hidden from all three commands, and a resolved thread cannot be replied to.
 
 ## Workspace reviews
 
@@ -161,9 +163,9 @@ ln -s "$(pwd)/pi-extension" ~/.pi/agent/extensions/lumiere
 - **Elsewhere** pi is suspended while Lumiere uses the terminal. Comment, then press
   `s` and `Enter`: the comments are sent to the agent. `q` sends nothing.
 
-`e` opens the file in pi's `EDITOR`, or in `vim` when it is not set. `LUMIERE_BIN`
-selects the binary when `lumiere` is not on `PATH`. The extension and the binary must
-come from the same version.
+`e` opens the file in pi's `EDITOR`, or in `vim` when it is not set. The value may
+carry arguments, as in `code --wait`. `LUMIERE_BIN` selects the binary when `lumiere`
+is not on `PATH`. The extension and the binary must come from the same version.
 
 ## Keys
 
@@ -173,12 +175,12 @@ come from the same version.
 |---|---|
 | `j` / `k`, arrows | Scroll, or move in a list |
 | `Option+Up` / `Option+Down`, `Option+J` / `Option+K` | Previous / next file |
-| `{` / `}` | Previous / next hunk |
+| `[` / `]` | Previous / next hunk |
 | `Ctrl+P` | File picker |
 | `/`, `Ctrl+F` | Search in the file, or in every file |
 | `Tab` | Show or hide the sidebar |
 | `Space` | Mark the file as viewed and go to the next |
-| `[` / `]` / `=` | Old side only, new side only, both |
+| `0` / `-` / `=` | Old side only, new side only, both |
 | `w` | Watch mode on or off |
 | `z` | Hunks only, or the full file |
 | `e` | Open the file in `EDITOR` |

@@ -86,6 +86,38 @@ fn thread_json(repository: &ReviewRepository, thread: &Thread) -> Value {
     })
 }
 
+fn repository_heading(repository: &ReviewRepository) -> String {
+    format!("# Repository: {} ({})", repository.name, repository.root.display())
+}
+
+fn no_such_thread(thread_id: &str) -> String {
+    format!(
+        "no thread {} here; run `lumiere thread list` to see the thread ids",
+        thread_id
+    )
+}
+
+/// One thread of `repositories`, with its code and every comment sent to the agent,
+/// as text for a reader or as JSON.
+pub fn show(repositories: &[ReviewRepository], thread_id: &str, json: bool) -> Result<String, String> {
+    for repository in repositories {
+        let threads = visible_threads(repository, false)?;
+        let Some(thread) = threads.iter().find(|thread| thread.id == thread_id) else {
+            continue;
+        };
+        if json {
+            return serde_json::to_string_pretty(&thread_json(repository, thread))
+                .map_err(|error| error.to_string());
+        }
+        return Ok(format!(
+            "{}\n\n{}",
+            repository_heading(repository),
+            thread.describe(thread.sent_comments())
+        ));
+    }
+    Err(no_such_thread(thread_id))
+}
+
 /// The threads of `repositories`, as text for a reader or as JSON.
 pub fn list(repositories: &[ReviewRepository], awaiting: bool, json: bool) -> Result<String, String> {
     let mut json_threads = Vec::new();
@@ -96,7 +128,7 @@ pub fn list(repositories: &[ReviewRepository], awaiting: bool, json: bool) -> Re
             continue;
         }
         json_threads.extend(threads.iter().map(|thread| thread_json(repository, thread)));
-        let mut section = format!("# Repository: {} ({})", repository.name, repository.root.display());
+        let mut section = repository_heading(repository);
         for thread in &threads {
             section.push_str(&format!("\n\n{}", thread.describe(thread.sent_comments())));
         }
@@ -144,10 +176,7 @@ pub fn reply(
             return outcome;
         }
     }
-    Err(format!(
-        "no thread {} here; run `lumiere thread list` to see the thread ids",
-        thread_id
-    ))
+    Err(no_such_thread(thread_id))
 }
 
 #[cfg(test)]
@@ -221,6 +250,44 @@ mod tests {
         assert_eq!(json[0]["anchored_code"], "    run();");
         assert_eq!(json[0]["awaiting_agent"], true);
         assert_eq!(json[0]["comments"][0]["body"], "why not async?");
+        let _ = fs::remove_dir_all(&parent);
+    }
+
+    #[test]
+    fn test_show_gives_one_thread_with_its_code_and_every_sent_comment() {
+        let parent = make_temp_dir("thread-cli-show");
+        let api = create_repository(&parent, "api");
+        let web = create_repository(&parent, "web");
+        store_thread(&api, "another thread", false);
+        let thread_id = store_thread(&web, "why not async?", false);
+        let unsent_id = store_thread(&web, "not sent yet", true);
+        let repositories = repositories_at(&parent, None).expect("workspace");
+        reply(&repositories, &thread_id, "It blocks nothing here.", "pi").expect("reply");
+
+        let text = show(&repositories, &thread_id, false).expect("show");
+        let json: Value =
+            serde_json::from_str(&show(&repositories, &thread_id, true).expect("json")).expect("parse");
+
+        assert_eq!(
+            text,
+            format!(
+                "# Repository: web ({})\n\n\
+                 ## Thread {} · src/api.rs line 2 (RIGHT)\n\n\
+                 ```\n    run();\n```\n\n\
+                 you: why not async?\n\n\
+                 pi: It blocks nothing here.",
+                repositories[1].root.display(),
+                thread_id
+            )
+        );
+        assert_eq!(json["id"], thread_id.as_str());
+        assert_eq!(json["repository"], "web");
+        assert_eq!(json["comments"].as_array().map(Vec::len), Some(2));
+
+        let unknown = show(&repositories, "nope", false).expect_err("unknown");
+        let unsent = show(&repositories, &unsent_id, false).expect_err("unsent");
+        assert!(unknown.starts_with("no thread nope here"), "{}", unknown);
+        assert!(unsent.starts_with(&format!("no thread {} here", unsent_id)), "{}", unsent);
         let _ = fs::remove_dir_all(&parent);
     }
 

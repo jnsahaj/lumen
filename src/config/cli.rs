@@ -116,6 +116,19 @@ pub enum ThreadAction {
         #[arg(long)]
         awaiting: bool,
     },
+    /// Show one review thread with its code and comments
+    Show {
+        /// Thread id, as shown by `lumiere thread list`
+        thread_id: String,
+
+        /// Repository, or folder of repositories (default: current directory)
+        #[arg(long, value_name = "PATH")]
+        repo: Option<PathBuf>,
+
+        /// Print JSON instead of text
+        #[arg(long)]
+        json: bool,
+    },
     /// Add a reply to a thread
     Reply {
         /// Thread id, as shown by `lumiere thread list`
