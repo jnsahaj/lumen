@@ -1,7 +1,8 @@
 use std::collections::VecDeque;
 use std::io::{self, IsTerminal, Write};
+use std::path::PathBuf;
 use std::sync::mpsc::TryRecvError;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crossterm::{
     event::{
@@ -35,6 +36,7 @@ fn open_tui_writer() -> io::Result<Box<dyn Write + Send>> {
     Ok(Box::new(io::stdout()))
 }
 
+use super::agent::{AgentLink, AgentPane, RexCli};
 use super::annotation::{AnnotationEditor, AnnotationEditorResult};
 use super::coordinates::{extract_selected_text, PanelLayout};
 use super::git::{
@@ -43,10 +45,12 @@ use super::git::{
 use super::highlight;
 use super::render::{
     render_diff, render_empty_state, truncate_path, FilePickerItem, KeyBind, KeyBindSection, Modal,
-    ModalContent, ModalFileStatus, ModalResult,
+    ModalContent, ModalFileStatus, ModalResult, ReviewStatus,
 };
 use super::state::{adjust_scroll_for_hunk, adjust_scroll_to_line, AppState, PendingKey};
 use super::theme;
+use super::review_thread::{AnnotationTarget, Thread};
+use super::thread_store::ThreadStore;
 use super::types::{
     ChangeType, CursorPosition, DiffFullscreen, DiffPanelFocus, FileStatus, FocusedPanel,
     SelectionMode, SidebarItem,
@@ -220,35 +224,224 @@ fn find_sbs_index_for_line(
         .position(|dl| dl.line_number(panel) == Some(line_num))
 }
 
-/// Format an annotation for display in the annotations list.
-fn format_annotation_preview(annotation: &super::state::Annotation) -> String {
-    let preview = annotation.content.lines().next().unwrap_or("");
-    let preview = if preview.len() > 40 {
-        format!("{}...", &preview[..40])
-    } else {
-        preview.to_string()
+/// One row of the threads list: where the thread is, its state and latest comment,
+/// and when that comment was written. The list splits the row at " | ".
+fn format_annotation_preview(thread: &Thread) -> String {
+    let Some(last_comment) = thread.comments.last() else {
+        return String::new();
     };
-    let truncated_filename = truncate_path(&annotation.filename, 30);
-    let line_display = annotation.line_range_display();
-    let label = annotation.target_label();
-    if line_display.is_empty() {
-        format!(
-            "{} [{}] | {} | {}",
-            truncated_filename,
-            label,
-            preview,
-            annotation.format_time()
-        )
-    } else {
-        format!(
-            "{}:{} [{}] | {} | {}",
-            truncated_filename,
-            line_display,
-            label,
-            preview,
-            annotation.format_time()
-        )
+    let states = [
+        (thread.resolved, "resolved"),
+        (thread.outdated, "outdated"),
+        (thread.queued_count() > 0, "queued"),
+        (thread.awaiting_agent(), "awaiting agent"),
+    ];
+    let mut preview: String = states
+        .iter()
+        .filter(|(applies, _)| *applies)
+        .map(|(_, state)| format!("[{}] ", state))
+        .collect();
+    let first_line = last_comment.body.lines().next().unwrap_or("").replace(" | ", " / ");
+    preview.push_str(&format!("{}: {}", last_comment.author_name, first_line));
+    if preview.chars().count() > 60 {
+        preview = format!("{}...", preview.chars().take(60).collect::<String>());
     }
+
+    let truncated_filename = truncate_path(&thread.filename, 30);
+    let line_display = thread.line_range_display();
+    let location = if line_display.is_empty() {
+        truncated_filename
+    } else {
+        format!("{}:{}", truncated_filename, line_display)
+    };
+    format!(
+        "{} [{}] | {} | {}",
+        location,
+        thread.target_label(),
+        preview,
+        last_comment.format_time()
+    )
+}
+
+fn threads_modal(threads: &[Thread]) -> Modal {
+    let mut sorted_threads = threads.to_vec();
+    sorted_threads.sort_by_key(|thread| thread.created_at);
+    let items = sorted_threads.iter().map(format_annotation_preview).collect();
+    Modal::annotations("Threads", items, sorted_threads)
+}
+
+fn count_of(count: usize, noun: &str) -> String {
+    format!("{} {}{}", count, noun, if count == 1 { "" } else { "s" })
+}
+
+/// What `i` and `x` act on in the current file: the selected lines, otherwise the
+/// focused hunk, otherwise the whole file.
+fn target_at_cursor(state: &mut AppState) -> Option<(String, AnnotationTarget)> {
+    let diff = state.file_diffs.get(state.current_file)?;
+    let filename = diff.filename.clone();
+    let is_deleted = !diff.old_content.is_empty() && diff.new_content.is_empty();
+
+    if state.selection.is_active() && !matches!(state.selection.mode, SelectionMode::None) {
+        // Line-mode and character-mode selections both cover full lines.
+        let panel = state.selection.panel;
+        let sel_start = state.selection.anchor.line.min(state.selection.head.line);
+        let sel_end = state.selection.anchor.line.max(state.selection.head.line);
+
+        state.ensure_cache();
+        let sbs = state.side_by_side_ref();
+        let mut line_numbers = (sel_start..=sel_end)
+            .filter_map(|idx| sbs.get(idx).and_then(|dl| dl.line_number(panel)));
+        let start_line = line_numbers.next()?;
+        let end_line = line_numbers.last().unwrap_or(start_line);
+        return Some((
+            filename,
+            AnnotationTarget::LineRange {
+                panel,
+                start_line,
+                end_line,
+            },
+        ));
+    }
+
+    let Some(hunk_index) = state.focused_hunk else {
+        return Some((filename, AnnotationTarget::File));
+    };
+    let hunk_panel = if is_deleted {
+        DiffPanelFocus::Old
+    } else {
+        DiffPanelFocus::New
+    };
+
+    state.ensure_cache();
+    let sbs = state.side_by_side_ref();
+    let hunks = state.hunks_ref();
+    let hunk_start = hunks.get(hunk_index).copied().unwrap_or(0);
+    let next_hunk_start = hunks.get(hunk_index + 1).copied().unwrap_or(sbs.len());
+
+    let mut actual_hunk_end = hunk_start;
+    for i in hunk_start..next_hunk_start {
+        if let Some(dl) = sbs.get(i) {
+            if !matches!(dl.change_type, ChangeType::Equal) {
+                actual_hunk_end = i;
+            }
+        }
+    }
+
+    let line_num = |dl: &super::types::DiffLine| {
+        dl.line_number(hunk_panel)
+            .or_else(|| dl.line_number(DiffPanelFocus::Old))
+    };
+    let start_line = sbs.get(hunk_start).and_then(line_num).unwrap_or(1);
+    let end_line = sbs
+        .get(actual_hunk_end)
+        .and_then(line_num)
+        .unwrap_or(start_line);
+    Some((
+        filename,
+        AnnotationTarget::LineRange {
+            panel: hunk_panel,
+            start_line,
+            end_line,
+        },
+    ))
+}
+
+/// Puts a thread's file on screen with the thread's first line as the top row, so
+/// that threads above it, however long, cannot push it out of view. Returns whether
+/// the file is still in the diff.
+fn show_thread(state: &mut AppState, thread_id: &str) -> bool {
+    let Some(thread) = state.thread_by_id(thread_id) else {
+        return false;
+    };
+    let filename = thread.filename.clone();
+    let target = thread.target.clone();
+    let Some(file_index) = state.file_diffs.iter().position(|f| f.filename == filename) else {
+        return false;
+    };
+    state.select_file(file_index);
+
+    // File-level threads are drawn above the first row wherever the file is scrolled.
+    if let AnnotationTarget::LineRange { panel, start_line, .. } = target {
+        state.ensure_cache();
+        let first_row = find_sbs_index_for_line(state.side_by_side_ref(), panel, start_line);
+        if let Some(first_row) = first_row {
+            state.scroll = first_row as u16;
+            // `i` and `x` act on the focused hunk: make it the one the thread is in.
+            let hunk = state.hunks_ref().iter().rposition(|&hunk_start| hunk_start <= first_row);
+            state.focused_hunk = hunk.or(state.focused_hunk);
+        }
+    }
+    true
+}
+
+/// Stores what the editor holds as a queued comment. Returns the thread id and the
+/// comment id, or `None` when the thread it belonged to no longer exists.
+fn save_comment(state: &mut AppState, editor: &AnnotationEditor) -> Option<(String, String)> {
+    let body = editor.content();
+    match (&editor.thread_id, &editor.comment_id) {
+        (Some(thread_id), Some(comment_id)) => {
+            state.update_comment(thread_id, comment_id, body);
+            Some((thread_id.clone(), comment_id.clone()))
+        }
+        (Some(thread_id), None) => state
+            .add_reply(thread_id, body)
+            .map(|comment_id| (thread_id.clone(), comment_id)),
+        (None, _) => Some(state.add_thread(editor.filename.clone(), editor.target.clone(), body)),
+    }
+}
+
+/// Whether an arrow or `j`/`k` key press asks for another file instead of scrolling:
+/// with option held, or with ctrl held on a letter.
+fn changes_file(key: &crossterm::event::KeyEvent) -> bool {
+    key.modifiers.contains(KeyModifiers::ALT)
+        || (matches!(key.code, KeyCode::Char(_)) && key.modifiers.contains(KeyModifiers::CONTROL))
+}
+
+/// Removes the comment the editor was changing, when it was changing one.
+fn remove_edited_comment(state: &mut AppState, editor: &AnnotationEditor) {
+    if let (Some(thread_id), Some(comment_id)) = (&editor.thread_id, &editor.comment_id) {
+        state.remove_comment(thread_id, comment_id);
+    }
+}
+
+fn queued_total(state: &AppState, workspace_session: Option<&WorkspaceSession>) -> usize {
+    match workspace_session {
+        Some(session) => session.queued_count(state),
+        None => state.queued_count(),
+    }
+}
+
+/// Sends queued comments to the agent, then marks them as sent: the comment `only`,
+/// or every queued comment. When the agent cannot be reached they stay queued.
+fn send_queued(
+    state: &mut AppState,
+    workspace_session: Option<&mut WorkspaceSession>,
+    agent: &mut AgentLink,
+    only: Option<(&str, &str)>,
+) -> Result<String, String> {
+    let comments = match &workspace_session {
+        Some(session) => session.queued_text_for_agent(state, only),
+        None => state.queued_text_for_agent(only),
+    };
+    agent
+        .send_comments(&comments)
+        .map_err(|error| format!("not sent, still queued: {}", error))?;
+    let sent = match only {
+        Some(_) => state.mark_sent(only),
+        None => {
+            state.mark_sent(None)
+                + workspace_session.map_or(0, |session| session.mark_parked_sent())
+        }
+    };
+    agent.refresh();
+    Ok(format!("sent {} to the agent", count_of(sent, "comment")))
+}
+
+/// What the open selection list is for.
+enum Picker {
+    Repository,
+    Agent(Vec<AgentPane>),
+    Quit,
 }
 
 pub fn run_app_with_pr(
@@ -284,6 +477,14 @@ pub fn run_app_in_workspace(
     let file_diffs = load_file_diffs(&options, backend);
     let session = WorkspaceSession::new(workspace, initial_repository);
     run_app_internal(options, None, file_diffs, None, backend, Some(session))
+}
+
+/// Loads the threads of the repository behind `backend` and keeps them saved.
+pub(super) fn open_thread_store(state: &mut AppState, backend: &dyn VcsBackend) {
+    match ThreadStore::for_repository(backend.working_tree_root()) {
+        Ok(store) => state.open_thread_store(store),
+        Err(error) => state.thread_store_error = Some(error),
+    }
 }
 
 /// Review state for one repository, before any user interaction.
@@ -343,6 +544,7 @@ fn run_app_internal<'a>(
 
     // Initialize state before TUI so we can sync viewed files
     let mut state = new_review_state(&options, file_diffs, backend, options.focus.as_deref());
+    open_thread_store(&mut state, backend);
     if let Some(pr) = &pr_info {
         state.set_diff_reference(Some(format!(
             "PR #{} ({}...{})",
@@ -396,12 +598,59 @@ fn run_app_internal<'a>(
     };
 
     let mut active_modal: Option<Modal> = None;
+    let mut open_picker: Option<Picker> = None;
     let mut annotation_editor: Option<AnnotationEditor> = None;
     let mut pending_watch_event: Option<WatchEvent> = None;
     let mut pending_events: VecDeque<Event> = VecDeque::new();
     let mut send_annotations_on_exit = false;
 
+    // The agent may work in any reviewed repository or in the folder lumiere was
+    // started from, which is also the folder a workspace review covers.
+    let canonical = |path: PathBuf| path.canonicalize().unwrap_or(path);
+    let launch_dir = std::env::current_dir().ok().map(canonical);
+    let mut review_roots: Vec<PathBuf> = match &workspace_session {
+        Some(session) => session.repository_roots(),
+        None => vec![backend.working_tree_root().to_path_buf()],
+    }
+    .into_iter()
+    .map(canonical)
+    .collect();
+    let review_path = match (&workspace_session, &launch_dir) {
+        (Some(_), Some(launch_dir)) => launch_dir.clone(),
+        _ => review_roots[0].clone(),
+    };
+    review_roots.extend(launch_dir);
+    let rex = RexCli;
+    let rex_session = std::env::var("REX_SESSION").ok();
+    let mut agent = AgentLink::attach(
+        &rex,
+        options.agent_block.as_deref(),
+        rex_session.as_deref(),
+        &review_roots,
+        review_path,
+    );
+    let mut agent_refreshed_at = Instant::now();
+    // A short message about the last action, shown in the footer for a few seconds.
+    let mut notice: Option<(String, Instant)> = None;
+
     'main: loop {
+        state.reload_threads_if_changed();
+        if agent_refreshed_at.elapsed() > Duration::from_secs(3) {
+            agent.refresh();
+            agent_refreshed_at = Instant::now();
+        }
+        if notice.as_ref().is_some_and(|(_, shown_at)| shown_at.elapsed() > Duration::from_secs(6)) {
+            notice = None;
+        }
+        if active_modal.is_none() {
+            if let Some(error) = state.thread_store_error.take() {
+                active_modal = Some(Modal::info(
+                    "Threads are not saved",
+                    format!("{}\n\nComments written from now on are lost when lumiere exits.", error),
+                ));
+            }
+        }
+
         if let Some(ref rx) = watch_rx {
             match rx.try_recv() {
                 Ok(event) => {
@@ -470,6 +719,12 @@ fn run_app_internal<'a>(
                 .as_ref()
                 .map(|session| format!("{} · {}", session.active_name(), commit_ref));
             let commit_ref = workspace_commit_ref.as_deref().unwrap_or(commit_ref);
+            let agent_label = agent.label();
+            let review_status = ReviewStatus {
+                agent: &agent_label,
+                queued_comments: queued_total(&state, workspace_session.as_ref()),
+                notice: notice.as_ref().map(|(text, _)| text.as_str()),
+            };
             let row_offset = std::cell::Cell::new(0usize);
             let gaps_cell = std::cell::RefCell::new(Vec::new());
             let rects_cell = std::cell::RefCell::new(Vec::new());
@@ -511,7 +766,7 @@ fn run_app_internal<'a>(
                     state.stacked_commits.len(),
                     &side_by_side,
                     state.vcs_name,
-                    &state.annotations,
+                    &state.threads,
                     &state.selection,
                     old_hl,
                     new_hl,
@@ -519,6 +774,7 @@ fn run_app_internal<'a>(
                     state.total_added,
                     state.total_removed,
                     annotation_editor.as_ref(),
+                    &review_status,
                 );
                 row_offset.set(offset);
                 *rects_cell.borrow_mut() = rects;
@@ -627,7 +883,14 @@ fn run_app_internal<'a>(
             let bottom_padding = 5;
             let max_scroll = if !state.file_diffs.is_empty() {
                 let total_lines = state.total_lines();
-                total_lines.saturating_sub(visible_height.saturating_sub(bottom_padding))
+                let filename = &state.file_diffs[state.current_file].filename;
+                if state.threads.iter().any(|thread| &thread.filename == filename) {
+                    // Threads take rows below their lines: let the last line reach
+                    // the top, so that a thread under it can be read.
+                    total_lines.saturating_sub(1)
+                } else {
+                    total_lines.saturating_sub(visible_height.saturating_sub(bottom_padding))
+                }
             } else {
                 0
             };
@@ -687,26 +950,29 @@ fn run_app_internal<'a>(
                     if let Some(editor) = annotation_editor.as_mut() {
                         match editor.handle_input(key) {
                             AnnotationEditorResult::Continue => {}
-                            AnnotationEditorResult::Save => {
-                                let content = editor.content();
-                                if let Some(id) = editor.id {
-                                    // Editing existing annotation
-                                    state.update_annotation(id, content);
-                                } else {
-                                    // New annotation
-                                    state.add_annotation(
-                                        editor.filename.clone(),
-                                        editor.target.clone(),
-                                        content,
-                                        editor.created_at(),
-                                    );
-                                }
+                            result @ (AnnotationEditorResult::Send
+                            | AnnotationEditorResult::Queue) => {
+                                let saved = save_comment(&mut state, editor);
+                                let send_now = matches!(result, AnnotationEditorResult::Send);
                                 annotation_editor = None;
+                                let message = match saved {
+                                    None => "the thread no longer exists".to_string(),
+                                    Some(_) if !send_now => "comment queued".to_string(),
+                                    Some(_) if !agent.is_attached() => {
+                                        "no agent attached: comment queued".to_string()
+                                    }
+                                    Some((thread_id, comment_id)) => send_queued(
+                                        &mut state,
+                                        None,
+                                        &mut agent,
+                                        Some((&thread_id, &comment_id)),
+                                    )
+                                    .unwrap_or_else(|error| error),
+                                };
+                                notice = Some((message, Instant::now()));
                             }
                             AnnotationEditorResult::Delete => {
-                                if let Some(id) = editor.id {
-                                    state.remove_annotation(id);
-                                }
+                                remove_edited_comment(&mut state, editor);
                                 annotation_editor = None;
                             }
                             AnnotationEditorResult::Cancel => {
@@ -734,85 +1000,29 @@ fn run_app_internal<'a>(
                                     active_modal = None;
                                 }
                                 ModalResult::AnnotationJump { annotation_id } => {
-                                    if let Some(ann) = state.get_annotation_by_id(annotation_id) {
-                                        let filename = ann.filename.clone();
-                                        let target = ann.target.clone();
-                                        // Find and switch to the file
-                                        if let Some(file_index) = state
-                                            .file_diffs
-                                            .iter()
-                                            .position(|f| f.filename == filename)
-                                        {
-                                            state.select_file(file_index);
-                                            // Scroll to annotation's line range
-                                            if let super::state::AnnotationTarget::LineRange {
-                                                panel,
-                                                start_line,
-                                                ..
-                                            } = &target
-                                            {
-                                                state.ensure_cache();
-                                                let sbs = state.side_by_side_ref();
-                                                // Find the side_by_side index for start_line
-                                                if let Some(sbs_idx) = find_sbs_index_for_line(
-                                                    sbs,
-                                                    *panel,
-                                                    *start_line,
-                                                ) {
-                                                    state.scroll = adjust_scroll_to_line(
-                                                        sbs_idx,
-                                                        state.scroll,
-                                                        visible_height,
-                                                        max_scroll,
-                                                    );
-                                                }
-                                            }
-                                        }
-                                    }
+                                    show_thread(&mut state, &annotation_id);
                                     active_modal = None;
                                 }
                                 ModalResult::AnnotationEdit { annotation_id } => {
-                                    if let Some(ann) = state.get_annotation_by_id(annotation_id) {
-                                        let editor = AnnotationEditor::new(
-                                            ann.filename.clone(),
-                                            ann.target.clone(),
-                                        )
-                                        .with_existing(ann.id, &ann.content, ann.created_at);
-                                        // Jump to the file
-                                        let filename = ann.filename.clone();
-                                        if let Some(file_index) = state
-                                            .file_diffs
-                                            .iter()
-                                            .position(|f| f.filename == filename)
-                                        {
-                                            state.select_file(file_index);
-                                        }
-                                        annotation_editor = Some(editor);
+                                    if show_thread(&mut state, &annotation_id) {
+                                        annotation_editor = state
+                                            .thread_by_id(&annotation_id)
+                                            .map(AnnotationEditor::for_thread);
                                     }
                                     active_modal = None;
                                 }
                                 ModalResult::AnnotationDelete { annotation_id } => {
-                                    state.remove_annotation(annotation_id);
-                                    // Refresh the modal if there are still annotations
-                                    if !state.annotations.is_empty() {
-                                        let mut sorted_annotations = state.annotations.clone();
-                                        sorted_annotations.sort_by_key(|a| a.created_at);
-                                        let items: Vec<String> = sorted_annotations
-                                            .iter()
-                                            .map(format_annotation_preview)
-                                            .collect();
-                                        active_modal = Some(Modal::annotations(
-                                            "Annotations",
-                                            items,
-                                            sorted_annotations,
-                                        ));
+                                    state.remove_thread(&annotation_id);
+                                    // Refresh the modal if there are still threads
+                                    active_modal = if state.threads.is_empty() {
+                                        None
                                     } else {
-                                        active_modal = None;
-                                    }
+                                        Some(threads_modal(&state.threads))
+                                    };
                                 }
                                 ModalResult::AnnotationCopyAll => {
                                     // Copy all annotations to clipboard
-                                    let formatted = state.format_annotations_for_export();
+                                    let formatted = state.format_threads_for_export(false);
                                     if let Ok(mut clipboard) = arboard::Clipboard::new() {
                                         let _ = clipboard.set_text(&formatted);
                                     }
@@ -820,7 +1030,7 @@ fn run_app_internal<'a>(
                                 }
                                 ModalResult::AnnotationExport(filename) => {
                                     // Write annotations to file
-                                    let formatted = state.format_annotations_for_export();
+                                    let formatted = state.format_threads_for_export(false);
                                     match std::fs::write(&filename, &formatted) {
                                         Ok(_) => {
                                             active_modal = None;
@@ -878,35 +1088,70 @@ fn run_app_internal<'a>(
                                     state.scroll = (sbs_line_index as u16).min(max_scroll);
                                     active_modal = None;
                                 }
-                                ModalResult::Selected(repository_index, _) => {
+                                ModalResult::Selected(selected_index, _) => {
                                     active_modal = None;
-                                    if let Some(session) = workspace_session.as_mut() {
-                                        match session.switch_to(
-                                            repository_index,
-                                            &options,
-                                            &mut state,
-                                        ) {
-                                            Ok(repository_backend) => {
-                                                backend = repository_backend;
-                                                pending_watch_event = None;
-                                                let watcher = state
-                                                    .watching
-                                                    .then(|| setup_watcher(backend.working_tree_root()))
-                                                    .flatten();
-                                                state.watching = watcher.is_some();
-                                                (_watch_handle, watch_rx) = watcher.unzip();
-                                            }
-                                            Err(error) => {
-                                                active_modal = Some(Modal::info(
-                                                    "Cannot open repository",
-                                                    error,
-                                                ));
+                                    match open_picker.take() {
+                                        Some(Picker::Repository) => {
+                                            if let Some(session) = workspace_session.as_mut() {
+                                                match session.switch_to(
+                                                    selected_index,
+                                                    &options,
+                                                    &mut state,
+                                                ) {
+                                                    Ok(repository_backend) => {
+                                                        backend = repository_backend;
+                                                        pending_watch_event = None;
+                                                        let watcher = state
+                                                            .watching
+                                                            .then(|| setup_watcher(backend.working_tree_root()))
+                                                            .flatten();
+                                                        state.watching = watcher.is_some();
+                                                        (_watch_handle, watch_rx) = watcher.unzip();
+                                                    }
+                                                    Err(error) => {
+                                                        active_modal = Some(Modal::info(
+                                                            "Cannot open repository",
+                                                            error,
+                                                        ));
+                                                    }
+                                                }
                                             }
                                         }
+                                        // The first item is "none".
+                                        Some(Picker::Agent(mut panes)) => {
+                                            let pane = (selected_index > 0
+                                                && selected_index <= panes.len())
+                                            .then(|| panes.remove(selected_index - 1));
+                                            agent.set_pane(pane);
+                                        }
+                                        Some(Picker::Quit) => match selected_index {
+                                            0 if agent.is_attached() => {
+                                                match send_queued(
+                                                    &mut state,
+                                                    workspace_session.as_mut(),
+                                                    &mut agent,
+                                                    None,
+                                                ) {
+                                                    Ok(_) => break 'main,
+                                                    Err(error) => {
+                                                        active_modal =
+                                                            Some(Modal::info("Not sent", error));
+                                                    }
+                                                }
+                                            }
+                                            0 => {
+                                                send_annotations_on_exit = true;
+                                                break 'main;
+                                            }
+                                            1 => break 'main,
+                                            _ => {}
+                                        },
+                                        None => {}
                                     }
                                 }
                                 ModalResult::Dismissed => {
                                     active_modal = None;
+                                    open_picker = None;
                                 }
                             }
                         }
@@ -960,48 +1205,26 @@ fn run_app_internal<'a>(
                                 if !inside {
                                     if let Some(editor) = annotation_editor.as_ref() {
                                         if editor.is_empty() {
-                                            if let Some(id) = editor.id {
-                                                state.remove_annotation(id);
-                                            }
+                                            remove_edited_comment(&mut state, editor);
                                         } else {
-                                            let content = editor.content();
-                                            if let Some(id) = editor.id {
-                                                state.update_annotation(id, content);
-                                            } else {
-                                                state.add_annotation(
-                                                    editor.filename.clone(),
-                                                    editor.target.clone(),
-                                                    content,
-                                                    editor.created_at(),
-                                                );
-                                            }
+                                            save_comment(&mut state, editor);
                                         }
                                     }
                                     annotation_editor = None;
                                 }
                                 continue;
                             }
-                            // Click on an existing annotation overlay → open inline editor for it.
-                            let hit_annotation =
-                                state.annotation_rects.iter().find_map(|(id, r)| {
-                                    if mouse.column >= r.x
-                                        && mouse.column < r.x + r.width
-                                        && mouse.row >= r.y
-                                        && mouse.row < r.y + r.height
-                                    {
-                                        Some(*id)
-                                    } else {
-                                        None
-                                    }
-                                });
-                            if let Some(id) = hit_annotation {
-                                if let Some(ann) = state.get_annotation_by_id(id) {
-                                    let new_editor = AnnotationEditor::new(
-                                        ann.filename.clone(),
-                                        ann.target.clone(),
-                                    )
-                                    .with_existing(ann.id, &ann.content, ann.created_at);
-                                    annotation_editor = Some(new_editor);
+                            // Click on a thread → reply to it, or edit its unsent comment.
+                            let hit_thread = state.annotation_rects.iter().find_map(|(id, r)| {
+                                (mouse.column >= r.x
+                                    && mouse.column < r.x + r.width
+                                    && mouse.row >= r.y
+                                    && mouse.row < r.y + r.height)
+                                    .then(|| id.clone())
+                            });
+                            if let Some(id) = hit_thread {
+                                if let Some(thread) = state.thread_by_id(&id) {
+                                    annotation_editor = Some(AnnotationEditor::for_thread(thread));
                                 }
                                 continue;
                             }
@@ -1321,9 +1544,30 @@ fn run_app_internal<'a>(
                             state.search_state.clear();
                             state.mark_search_dirty();
                         }
-                        KeyCode::Char('q') | KeyCode::Esc => break 'main,
-                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            break 'main
+                        KeyCode::Char('q') | KeyCode::Esc | KeyCode::Char('c')
+                            if key.code != KeyCode::Char('c')
+                                || key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
+                            let queued = queued_total(&state, workspace_session.as_ref());
+                            if queued == 0 {
+                                break 'main;
+                            }
+                            let queued_comments = count_of(queued, "queued comment");
+                            let send_and_exit = if agent.is_attached() {
+                                format!("Send {} to the agent and exit", queued_comments)
+                            } else {
+                                format!("Write {} to stdout and exit", queued_comments)
+                            };
+                            active_modal = Some(Modal::select(
+                                "Queued comments",
+                                vec![
+                                    send_and_exit,
+                                    "Exit and keep them queued".to_string(),
+                                    "Cancel".to_string(),
+                                ],
+                                0,
+                            ));
+                            open_picker = Some(Picker::Quit);
                         }
                         KeyCode::Char('1') => {
                             state.focused_panel = FocusedPanel::Sidebar;
@@ -1348,7 +1592,8 @@ fn run_app_internal<'a>(
                                 state.focused_panel = FocusedPanel::DiffView;
                             }
                         }
-                        KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        // Next file: option+down, option+k, ctrl+k.
+                        KeyCode::Down | KeyCode::Char('k') if changes_file(&key) => {
                             if !state.file_diffs.is_empty() {
                                 let mut next = state.sidebar_selected + 1;
                                 while next < state.sidebar_visible_len() {
@@ -1366,7 +1611,8 @@ fn run_app_internal<'a>(
                                 }
                             }
                         }
-                        KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        // Previous file: option+up, option+j, ctrl+j.
+                        KeyCode::Up | KeyCode::Char('j') if changes_file(&key) => {
                             if !state.file_diffs.is_empty() && state.sidebar_selected > 0 {
                                 let mut prev = state.sidebar_selected - 1;
                                 loop {
@@ -1488,7 +1734,7 @@ fn run_app_internal<'a>(
                                 );
                             }
                         }
-                        KeyCode::Down | KeyCode::Char('j') => {
+                        KeyCode::Down | KeyCode::Char('k') => {
                             if state.focused_panel == FocusedPanel::Sidebar {
                                 if state.sidebar_selected + 1 < state.sidebar_visible_len() {
                                     state.sidebar_selected += 1;
@@ -1500,7 +1746,7 @@ fn run_app_internal<'a>(
                                 state.scroll = (state.scroll + 1).min(max_scroll as u16);
                             }
                         }
-                        KeyCode::Up | KeyCode::Char('k') => {
+                        KeyCode::Up | KeyCode::Char('j') => {
                             if state.focused_panel == FocusedPanel::Sidebar {
                                 if state.sidebar_selected > 0 {
                                     state.sidebar_selected =
@@ -1814,116 +2060,34 @@ fn run_app_internal<'a>(
                             }
                         }
                         KeyCode::Char('i') => {
-                            if !state.file_diffs.is_empty() {
-                                let file_index = state.current_file;
-                                let diff = &state.file_diffs[file_index];
-                                let filename = diff.filename.clone();
-
-                                if state.selection.is_active()
-                                    && !matches!(state.selection.mode, SelectionMode::None)
-                                {
-                                    // Tier 1: Active selection (line or character) → line-range annotation
-                                    // Both line-mode and character-mode selections create full-line annotations
-                                    let panel = state.selection.panel;
-                                    let sel_start =
-                                        state.selection.anchor.line.min(state.selection.head.line);
-                                    let sel_end =
-                                        state.selection.anchor.line.max(state.selection.head.line);
-
-                                    state.ensure_cache();
-                                    let sbs = state.side_by_side_ref();
-
-                                    // Resolve side_by_side indices to file line numbers
-                                    let mut start_line: Option<usize> = None;
-                                    let mut end_line: Option<usize> = None;
-                                    for idx in sel_start..=sel_end {
-                                        if let Some(dl) = sbs.get(idx) {
-                                            if let Some(n) = dl.line_number(panel) {
-                                                if start_line.is_none() {
-                                                    start_line = Some(n);
-                                                }
-                                                end_line = Some(n);
-                                            }
-                                        }
-                                    }
-
-                                    if let (Some(start), Some(end)) = (start_line, end_line) {
-                                        let target = super::state::AnnotationTarget::LineRange {
-                                            panel,
-                                            start_line: start,
-                                            end_line: end,
-                                        };
-                                        let editor = AnnotationEditor::new(filename, target);
-                                        annotation_editor = Some(editor);
-                                    }
-                                    state.clear_selection();
-                                } else if let Some(hunk_index) = state.focused_hunk {
-                                    // Tier 2: Focused hunk → line-range annotation for the hunk
-                                    let is_deleted =
-                                        !diff.old_content.is_empty() && diff.new_content.is_empty();
-                                    let hunk_panel = if is_deleted {
-                                        DiffPanelFocus::Old
-                                    } else {
-                                        DiffPanelFocus::New
-                                    };
-
-                                    state.ensure_cache();
-                                    let sbs = state.side_by_side_ref();
-                                    let hunks = state.hunks_ref();
-                                    let hunk_start = hunks.get(hunk_index).copied().unwrap_or(0);
-                                    let next_hunk_start =
-                                        hunks.get(hunk_index + 1).copied().unwrap_or(sbs.len());
-
-                                    let mut actual_hunk_end = hunk_start;
-                                    for i in hunk_start..next_hunk_start {
-                                        if let Some(dl) = sbs.get(i) {
-                                            if !matches!(dl.change_type, ChangeType::Equal) {
-                                                actual_hunk_end = i;
-                                            }
-                                        }
-                                    }
-
-                                    let line_num = |dl: &super::types::DiffLine| {
-                                        dl.line_number(hunk_panel)
-                                            .or_else(|| dl.line_number(DiffPanelFocus::Old))
-                                    };
-
-                                    let start_line =
-                                        sbs.get(hunk_start).and_then(line_num).unwrap_or(1);
-                                    let end_line = sbs
-                                        .get(actual_hunk_end)
-                                        .and_then(line_num)
-                                        .unwrap_or(start_line);
-
-                                    let target = super::state::AnnotationTarget::LineRange {
-                                        panel: hunk_panel,
-                                        start_line,
-                                        end_line,
-                                    };
-                                    let editor = AnnotationEditor::new(filename, target);
-                                    annotation_editor = Some(editor);
-                                } else {
-                                    // Tier 3: No selection, no hunk → file-level annotation
-                                    let target = super::state::AnnotationTarget::File;
-                                    let editor = AnnotationEditor::new(filename, target);
-                                    annotation_editor = Some(editor);
+                            let had_selection = state.selection.is_active()
+                                && !matches!(state.selection.mode, SelectionMode::None);
+                            if let Some((filename, target)) = target_at_cursor(&mut state) {
+                                annotation_editor =
+                                    Some(match state.thread_at(&filename, &target, false) {
+                                        Some(thread) => AnnotationEditor::for_thread(thread),
+                                        None => AnnotationEditor::new(filename, target),
+                                    });
+                            }
+                            if had_selection {
+                                state.clear_selection();
+                            }
+                        }
+                        KeyCode::Char('x') => {
+                            let thread_id = target_at_cursor(&mut state).and_then(|(filename, target)| {
+                                let thread = state.thread_at(&filename, &target, true)?;
+                                Some(thread.id.clone())
+                            });
+                            match thread_id {
+                                Some(thread_id) => state.toggle_thread_resolved(&thread_id),
+                                None => {
+                                    notice = Some(("no thread here".to_string(), Instant::now()));
                                 }
                             }
                         }
                         KeyCode::Char('I') => {
-                            // Open annotations menu
-                            if !state.annotations.is_empty() {
-                                let mut sorted_annotations = state.annotations.clone();
-                                sorted_annotations.sort_by_key(|a| a.created_at);
-                                let items: Vec<String> = sorted_annotations
-                                    .iter()
-                                    .map(format_annotation_preview)
-                                    .collect();
-                                active_modal = Some(Modal::annotations(
-                                    "Annotations",
-                                    items,
-                                    sorted_annotations,
-                                ));
+                            if !state.threads.is_empty() {
+                                active_modal = Some(threads_modal(&state.threads));
                             }
                         }
                         KeyCode::Char('r') => {
@@ -1936,21 +2100,43 @@ fn run_app_internal<'a>(
                                     session.picker_items(&state),
                                     session.active(),
                                 ));
+                                open_picker = Some(Picker::Repository);
                             }
                         }
+                        KeyCode::Char('A') => {
+                            let panes = agent.candidates(&review_roots);
+                            let attached = panes
+                                .iter()
+                                .position(|pane| Some(pane.block.as_str()) == agent.attached_block());
+                            let mut items = vec!["none".to_string()];
+                            items.extend(panes.iter().map(AgentPane::picker_label));
+                            active_modal = Some(Modal::select(
+                                "Agent that answers comments",
+                                items,
+                                attached.map_or(0, |index| index + 1),
+                            ));
+                            open_picker = Some(Picker::Agent(panes));
+                        }
                         KeyCode::Char('s') => {
-                            let n = match &workspace_session {
-                                Some(session) => session.annotation_count(&state),
-                                None => state.annotations.len(),
-                            };
-                            if n > 0 {
-                                let noun = if n == 1 { "annotation" } else { "annotations" };
+                            let queued = queued_total(&state, workspace_session.as_ref());
+                            if queued == 0 {
+                                notice = Some(("no queued comments".to_string(), Instant::now()));
+                            } else if agent.is_attached() {
+                                let message = send_queued(
+                                    &mut state,
+                                    workspace_session.as_mut(),
+                                    &mut agent,
+                                    None,
+                                )
+                                .unwrap_or_else(|error| error);
+                                notice = Some((message, Instant::now()));
+                            } else {
                                 let msg = format!(
-                                    "Exit lumiere and write {} {} to stdout?\n\n\
+                                    "No agent is attached. Exit lumiere and write {} to stdout?\n\n\
                                      Use this to pipe feedback back to a coding agent.",
-                                    n, noun,
+                                    count_of(queued, "queued comment"),
                                 );
-                                active_modal = Some(Modal::confirm("Send annotations", msg));
+                                active_modal = Some(Modal::confirm("Send comments", msg));
                             }
                         }
                         KeyCode::Char('y') => {
@@ -2124,11 +2310,15 @@ fn run_app_internal<'a>(
                                                 description: "Switch repository (workspace folder)",
                                             },
                                             KeyBind {
+                                                key: "A",
+                                                description: "Choose the agent that answers comments",
+                                            },
+                                            KeyBind {
                                                 key: "1 / 2",
                                                 description: "Focus sidebar / diff",
                                             },
                                             KeyBind {
-                                                key: "ctrl+j / ctrl+k",
+                                                key: "option+down/k, option+up/j",
                                                 description: "Next / previous file",
                                             },
                                             KeyBind {
@@ -2262,7 +2452,7 @@ fn run_app_internal<'a>(
                                         ],
                                     },
                                     KeyBindSection {
-                                        title: "Selection & Annotations",
+                                        title: "Selection & Review threads",
                                         bindings: vec![
                                             KeyBind {
                                                 key: "y",
@@ -2270,15 +2460,31 @@ fn run_app_internal<'a>(
                                             },
                                             KeyBind {
                                                 key: "i",
-                                                description: "Annotate selection / hunk / file",
+                                                description: "Comment on selection / hunk / file, or reply",
+                                            },
+                                            KeyBind {
+                                                key: "enter",
+                                                description: "In a comment: save and send to the agent",
+                                            },
+                                            KeyBind {
+                                                key: "alt+enter / ctrl+s",
+                                                description: "In a comment: save and queue",
+                                            },
+                                            KeyBind {
+                                                key: "shift+enter / ctrl+j",
+                                                description: "In a comment: new line",
+                                            },
+                                            KeyBind {
+                                                key: "x",
+                                                description: "Resolve / reopen the thread here",
                                             },
                                             KeyBind {
                                                 key: "I",
-                                                description: "View all annotations",
+                                                description: "View all threads",
                                             },
                                             KeyBind {
                                                 key: "s",
-                                                description: "Exit & send annotations to stdout",
+                                                description: "Send queued comments (exits if no agent)",
                                             },
                                         ],
                                     },
@@ -2303,13 +2509,17 @@ fn run_app_internal<'a>(
 
     if send_annotations_on_exit {
         let formatted = match &workspace_session {
-            Some(session) => session.format_annotations_for_export(&state),
-            None => state.format_annotations_for_export(),
+            Some(session) => session.format_threads_for_export(&state, true),
+            None => state.format_threads_for_export(true),
         };
         let stdout = io::stdout();
         let mut handle = stdout.lock();
         handle.write_all(formatted.as_bytes())?;
         handle.write_all(b"\n")?;
+        state.mark_sent(None);
+        if let Some(session) = workspace_session.as_mut() {
+            session.mark_parked_sent();
+        }
     }
 
     Ok(())
@@ -2339,4 +2549,38 @@ fn generate_file_anchor(filename: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(filename.as_bytes());
     format!("{:x}", hasher.finalize())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::command::diff::types::FileDiff;
+
+    #[test]
+    fn test_showing_a_thread_puts_its_first_line_on_the_top_row() {
+        let numbered_lines: String = (1..=80).map(|line| format!("line {}\n", line)).collect();
+        let mut state = AppState::new(
+            vec![FileDiff {
+                filename: "a.rs".to_string(),
+                old_content: String::new(),
+                new_content: numbered_lines,
+                status: FileStatus::Added,
+                is_binary: false,
+            }],
+            None,
+        );
+        let on_line = |line: usize| AnnotationTarget::LineRange {
+            panel: DiffPanelFocus::New,
+            start_line: line,
+            end_line: line,
+        };
+        // A thread above the target whose comment takes more rows than a screen.
+        state.add_thread("a.rs".to_string(), on_line(6), "long\n".repeat(60));
+        let (thread_id, _) = state.add_thread("a.rs".to_string(), on_line(30), "here".to_string());
+
+        assert!(show_thread(&mut state, &thread_id));
+
+        let top_row = &state.side_by_side_ref()[state.scroll as usize];
+        assert_eq!(top_row.line_number(DiffPanelFocus::New), Some(30));
+    }
 }

@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use super::app::new_review_state;
+use super::app::{new_review_state, open_thread_store};
 use super::git::{get_changed_files, load_file_diffs, validate_reference};
 use super::state::AppState;
 use super::DiffOptions;
@@ -49,6 +49,20 @@ impl Workspace {
             })
             .collect();
         Some(Self { repositories })
+    }
+
+    /// Name and working tree root of every repository.
+    pub fn repository_roots(&self) -> Vec<(String, PathBuf)> {
+        self.repositories
+            .iter()
+            .map(|repository| {
+                let root = match &repository.backend {
+                    Ok(backend) => backend.working_tree_root().to_path_buf(),
+                    Err(_) => repository.path.clone(),
+                };
+                (repository.name.clone(), root)
+            })
+            .collect()
     }
 
     pub fn backend(&self, index: usize) -> Result<&dyn VcsBackend, String> {
@@ -128,11 +142,51 @@ impl<'a> WorkspaceSession<'a> {
         }
     }
 
-    pub fn annotation_count(&self, active_state: &AppState) -> usize {
+    /// Comments not sent yet, across every repository opened in this session.
+    pub fn queued_count(&self, active_state: &AppState) -> usize {
         (0..self.parked_states.len())
             .filter_map(|index| self.state_of(index, active_state))
-            .map(|state| state.annotations.len())
+            .map(AppState::queued_count)
             .sum()
+    }
+
+    /// The queued comments as text for the agent, grouped by repository: one comment
+    /// of the repository on screen, or all of them across the repositories opened.
+    pub fn queued_text_for_agent(
+        &self,
+        active_state: &AppState,
+        only: Option<(&str, &str)>,
+    ) -> String {
+        self.workspace
+            .repositories
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| only.is_none() || *index == self.active)
+            .filter_map(|(index, repository)| {
+                let text = self.state_of(index, active_state)?.queued_text_for_agent(only);
+                (!text.is_empty())
+                    .then(|| repository_section(&repository.name, &repository.path, &text))
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    }
+
+    /// Marks the queued comments of the repositories that are off screen as sent.
+    /// Returns how many there were.
+    pub fn mark_parked_sent(&mut self) -> usize {
+        self.parked_states
+            .iter_mut()
+            .flatten()
+            .map(|parked_state| parked_state.mark_sent(None))
+            .sum()
+    }
+
+    pub fn repository_roots(&self) -> Vec<PathBuf> {
+        self.workspace
+            .repository_roots()
+            .into_iter()
+            .map(|(_, root)| root)
+            .collect()
     }
 
     pub fn picker_items(&self, active_state: &AppState) -> Vec<String> {
@@ -148,12 +202,12 @@ impl<'a> WorkspaceSession<'a> {
                 if repository.backend.is_err() {
                     item.push_str(" · unavailable");
                 }
-                let annotation_count = self
+                let thread_count = self
                     .state_of(index, active_state)
-                    .map_or(0, |state| state.annotations.len());
-                if annotation_count > 0 {
-                    let noun = if annotation_count == 1 { "annotation" } else { "annotations" };
-                    item.push_str(&format!(" · {} {}", annotation_count, noun));
+                    .map_or(0, |state| state.threads.len());
+                if thread_count > 0 {
+                    let noun = if thread_count == 1 { "thread" } else { "threads" };
+                    item.push_str(&format!(" · {} {}", thread_count, noun));
                 }
                 item
             })
@@ -181,7 +235,9 @@ impl<'a> WorkspaceSession<'a> {
             None => {
                 let backend = self.workspace.reviewable_backend(index, options)?;
                 let file_diffs = load_file_diffs(options, backend);
-                (backend, new_review_state(options, file_diffs, backend, None))
+                let mut review_state = new_review_state(options, file_diffs, backend, None);
+                open_thread_store(&mut review_state, backend);
+                (backend, review_state)
             }
         };
         next_state.watching = state.watching;
@@ -191,7 +247,7 @@ impl<'a> WorkspaceSession<'a> {
         Ok(backend)
     }
 
-    pub fn format_annotations_for_export(&self, active_state: &AppState) -> String {
+    pub fn format_threads_for_export(&self, active_state: &AppState, only_queued: bool) -> String {
         let sections: Vec<(&str, &Path, &AppState)> = self
             .workspace
             .repositories
@@ -202,37 +258,41 @@ impl<'a> WorkspaceSession<'a> {
                 Some((repository.name.as_str(), repository.path.as_path(), state))
             })
             .collect();
-        format_repository_sections(&sections)
+        format_repository_sections(&sections, only_queued)
     }
 }
 
-/// Annotations of every repository that has some, each under a heading naming
-/// the repository and its absolute path.
-fn format_repository_sections(sections: &[(&str, &Path, &AppState)]) -> String {
+/// Threads of every repository that has some to export, each under a heading
+/// naming the repository and its absolute path.
+fn format_repository_sections(sections: &[(&str, &Path, &AppState)], only_queued: bool) -> String {
     sections
         .iter()
-        .filter(|(_, _, state)| !state.annotations.is_empty())
+        .filter(|(_, _, state)| {
+            state
+                .threads
+                .iter()
+                .any(|thread| !only_queued || thread.queued_count() > 0)
+        })
         .map(|(name, path, state)| {
-            format!(
-                "# Repository: {} ({})\n\n{}",
-                name,
-                path.display(),
-                state.format_annotations_for_export()
-            )
+            repository_section(name, path, &state.format_threads_for_export(only_queued))
         })
         .collect::<Vec<_>>()
         .join("\n\n")
 }
 
+/// `content` under a heading naming the repository and its absolute path.
+fn repository_section(name: &str, path: &Path, content: &str) -> String {
+    format!("# Repository: {} ({})\n\n{}", name, path.display(), content)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::command::diff::state::AnnotationTarget;
+    use crate::command::diff::review_thread::AnnotationTarget;
     use crate::command::diff::types::{DiffPanelFocus, FileDiff, FileStatus};
     use crate::commit_reference::CommitReference;
     use crate::vcs::test_utils::{git, make_temp_dir};
     use std::fs;
-    use std::time::SystemTime;
 
     fn options_for(reference: Option<CommitReference>) -> DiffOptions {
         DiffOptions {
@@ -246,6 +306,7 @@ mod tests {
             focus: None,
             origin: None,
             wrap: false,
+            agent_block: None,
         }
     }
 
@@ -286,7 +347,7 @@ mod tests {
     }
 
     fn annotate(state: &mut AppState, filename: &str, content: &str) {
-        state.add_annotation(
+        state.add_thread(
             filename.to_string(),
             AnnotationTarget::LineRange {
                 panel: DiffPanelFocus::New,
@@ -294,7 +355,6 @@ mod tests {
                 end_line: 1,
             },
             content.to_string(),
-            SystemTime::now(),
         );
     }
 
@@ -391,16 +451,19 @@ mod tests {
 
         assert_eq!(session.active_name(), "web");
         assert_eq!(filenames(&state), vec!["web.txt"]);
-        assert!(state.annotations.is_empty());
+        assert!(state.threads.is_empty());
         assert!(web_backend.working_tree_root().ends_with("web"));
-        assert_eq!(session.annotation_count(&state), 1);
+        assert_eq!(session.queued_count(&state), 1);
+        let text_for_agent = session.queued_text_for_agent(&state, None);
+        assert!(text_for_agent.starts_with("# Repository: api ("), "{}", text_for_agent);
+        assert!(text_for_agent.ends_with("you: check this"), "{}", text_for_agent);
 
         session.switch_to(0, &options, &mut state).expect("switch back to api");
 
         assert_eq!(session.active_name(), "api");
         assert_eq!(filenames(&state), vec!["api.txt"]);
-        assert_eq!(state.annotations.len(), 1);
-        assert_eq!(state.annotations[0].content, "check this");
+        assert_eq!(state.threads.len(), 1);
+        assert_eq!(state.threads[0].comments[0].body, "check this");
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -443,11 +506,14 @@ mod tests {
         let mut web_state = AppState::new(vec![file_diff("app.ts")], None);
         annotate(&mut web_state, "app.ts", "missing test");
 
-        let export = format_repository_sections(&[
-            ("api", Path::new("/work/api"), &api_state),
-            ("docs", Path::new("/work/docs"), &untouched_state),
-            ("web", Path::new("/work/web"), &web_state),
-        ]);
+        let export = format_repository_sections(
+            &[
+                ("api", Path::new("/work/api"), &api_state),
+                ("docs", Path::new("/work/docs"), &untouched_state),
+                ("web", Path::new("/work/web"), &web_state),
+            ],
+            true,
+        );
 
         assert_eq!(
             export,

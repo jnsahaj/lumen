@@ -1,7 +1,7 @@
 use clap::Parser;
 use command::LumenCommand;
 use commit_reference::CommitReference;
-use config::cli::{Cli, Commands};
+use config::cli::{Cli, Commands, ThreadAction};
 use config::LumenConfig;
 use error::LumenError;
 use git_entity::{commit::Commit, diff::Diff, GitEntity};
@@ -134,6 +134,7 @@ async fn run() -> Result<(), LumenError> {
             focus,
             origin,
             wrap,
+            agent_block,
         } => {
             let options = command::diff::DiffOptions {
                 reference,
@@ -146,11 +147,37 @@ async fn run() -> Result<(), LumenError> {
                 focus,
                 origin,
                 wrap: wrap || config.wrap.unwrap_or(false),
+                agent_block,
             };
             match command::diff::Workspace::discover(&cwd, vcs_override) {
                 Some(workspace) => command::diff::run_workspace_diff_ui(options, &workspace)?,
                 None => command::diff::run_diff_ui(options, open_backend()?.as_ref())?,
             }
+        }
+        Commands::Thread { action } => {
+            use command::diff::thread_cli;
+            let repositories_at = |repo: Option<std::path::PathBuf>| {
+                thread_cli::repositories_at(repo.as_deref().unwrap_or(&cwd), vcs_override)
+                    .map_err(LumenError::CommandError)
+            };
+            let output = match action {
+                ThreadAction::List { repo, json, awaiting } => {
+                    thread_cli::list(&repositories_at(repo)?, awaiting, json)
+                }
+                ThreadAction::Reply { thread_id, body, repo, author, .. } => {
+                    let repositories = repositories_at(repo)?;
+                    let body = match body {
+                        Some(body) => body,
+                        None => {
+                            let mut buffer = String::new();
+                            std::io::stdin().read_to_string(&mut buffer)?;
+                            buffer
+                        }
+                    };
+                    thread_cli::reply(&repositories, &thread_id, &body, &author)
+                }
+            };
+            println!("{}", output.map_err(LumenError::CommandError)?);
         }
         Commands::Configure => {
             open_backend()?;

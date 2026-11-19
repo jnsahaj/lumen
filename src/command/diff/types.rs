@@ -115,7 +115,8 @@ pub enum FocusedPanel {
 }
 
 /// Which panel in the diff view has selection focus (old vs new)
-#[derive(Clone, Copy, PartialEq, Default, Debug)]
+#[derive(Clone, Copy, PartialEq, Default, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum DiffPanelFocus {
     #[default]
     None,

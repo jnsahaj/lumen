@@ -6,6 +6,14 @@ use crate::command::diff::search::{SearchMode, SearchState};
 use crate::command::diff::theme;
 use crate::command::diff::PrInfo;
 
+/// The review's link to the agent, shown in the footer.
+pub struct ReviewStatus<'a> {
+    pub agent: &'a str,
+    pub queued_comments: usize,
+    /// A short message about the last action, shown in place of the hunk counter.
+    pub notice: Option<&'a str>,
+}
+
 pub struct FooterData<'a> {
     pub filename: &'a str,
     pub commit_ref: &'a str,
@@ -19,6 +27,7 @@ pub struct FooterData<'a> {
     pub focused_hunk: Option<usize>,
     pub search_state: &'a SearchState,
     pub area_width: u16,
+    pub review: &'a ReviewStatus<'a>,
 }
 
 /// Truncates a file path by abbreviating directory names to their first character.
@@ -204,6 +213,16 @@ pub fn render_footer(frame: &mut Frame, footer_area: Rect, data: FooterData) {
             ];
             spans.extend(stats_spans);
             spans.push(Span::styled(watch_indicator, Style::default().fg(t.ui.watching).bg(bg)));
+            spans.push(Span::styled(
+                format!(" · {}", data.review.agent),
+                Style::default().fg(t.ui.text_muted).bg(bg),
+            ));
+            if data.review.queued_comments > 0 {
+                spans.push(Span::styled(
+                    format!(" · {} queued", data.review.queued_comments),
+                    Style::default().fg(t.ui.status_modified).bg(bg),
+                ));
+            }
             spans
         };
 
@@ -232,6 +251,11 @@ pub fn render_footer(frame: &mut Frame, footer_area: Rect, data: FooterData) {
                     Style::default().fg(t.ui.text_muted).bg(bg),
                 ),
             ]
+        } else if let Some(notice) = data.review.notice {
+            vec![Span::styled(
+                format!("{} ", notice),
+                Style::default().fg(t.ui.highlight).bg(bg),
+            )]
         } else {
             vec![
                 Span::styled(
@@ -274,7 +298,8 @@ pub fn render_footer(frame: &mut Frame, footer_area: Rect, data: FooterData) {
         let right_len = right_line.width();
 
         // Simple left-aligned layout with right section
-        let padding = footer_width.saturating_sub(left_len + right_len);
+        // At least one space, so a narrow pane cuts the right part instead of gluing it on.
+        let padding = footer_width.saturating_sub(left_len + right_len).max(1);
 
         let mut final_spans: Vec<Span> = left_line.spans;
         final_spans.push(Span::styled(

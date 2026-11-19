@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand, ValueEnum};
+use std::path::PathBuf;
 use std::str::FromStr;
 
 use crate::commit_reference::CommitReference;
@@ -147,9 +148,58 @@ pub enum Commands {
         /// Soft-wrap long diff lines instead of scrolling horizontally
         #[arg(long)]
         wrap: bool,
+
+        /// Rex pane of the coding agent that answers review comments
+        /// (default: the latest active pi pane at this repository or folder)
+        #[arg(long = "agent-block", value_name = "BLOCK")]
+        agent_block: Option<String>,
+    },
+    /// Read and answer the review threads written in `lumiere diff`
+    Thread {
+        #[command(subcommand)]
+        action: ThreadAction,
     },
     /// Interactively configure Lumen (provider, API key)
     Configure,
+}
+
+#[derive(Subcommand)]
+pub enum ThreadAction {
+    /// Show review threads with their comments
+    List {
+        /// Repository, or folder of repositories (default: current directory)
+        #[arg(long, value_name = "PATH")]
+        repo: Option<PathBuf>,
+
+        /// Print JSON instead of text
+        #[arg(long)]
+        json: bool,
+
+        /// Only threads whose last comment is the reviewer's and that are not resolved
+        #[arg(long)]
+        awaiting: bool,
+    },
+    /// Add a reply to a thread
+    Reply {
+        /// Thread id, as shown by `lumiere thread list`
+        thread_id: String,
+
+        /// Text of the reply
+        #[arg(long, value_name = "TEXT", conflicts_with = "stdin", required_unless_present = "stdin")]
+        body: Option<String>,
+
+        /// Read the reply from standard input
+        #[arg(long)]
+        stdin: bool,
+
+        /// Repository, or folder of repositories (default: current directory)
+        #[arg(long, value_name = "PATH")]
+        repo: Option<PathBuf>,
+
+        /// Name shown as the author of the reply
+        #[arg(long, value_name = "NAME", default_value = "agent")]
+        author: String,
+    },
 }
 
 #[cfg(test)]
@@ -172,6 +222,16 @@ mod tests {
     fn test_vcs_not_specified() {
         let cli = Cli::try_parse_from(["lumen", "diff"]).unwrap();
         assert_eq!(cli.vcs, None);
+    }
+
+    #[test]
+    fn test_thread_reply_needs_a_body_or_stdin_but_not_both() {
+        let parse = |args: &[&str]| Cli::try_parse_from([&["lumiere", "thread", "reply", "1a2b"], args].concat());
+
+        assert!(parse(&[]).is_err());
+        assert!(parse(&["--body", "text", "--stdin"]).is_err());
+        assert!(parse(&["--stdin"]).is_ok());
+        assert!(parse(&["--body", "text"]).is_ok());
     }
 
     #[test]

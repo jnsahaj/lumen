@@ -7,7 +7,7 @@ use ratatui::{
 use crate::command::diff::global_search::{GlobalSearchState, LineChange};
 use crate::command::diff::render::diff_view::expand_tabs_in_spans;
 use crate::command::diff::search::MatchPanel;
-use crate::command::diff::state::Annotation;
+use crate::command::diff::review_thread::Thread;
 use crate::command::diff::theme;
 
 #[derive(Clone)]
@@ -61,7 +61,7 @@ pub enum ModalContent {
     Annotations {
         title: String,
         items: Vec<String>,
-        annotations: Vec<Annotation>,
+        annotations: Vec<Thread>,
         selected: usize,
         export_input: Option<String>,
         /// Error message to display (e.g., for failed export)
@@ -92,9 +92,9 @@ pub enum ModalResult {
         sbs_line_index: usize,
         panel: MatchPanel,
     },
-    AnnotationJump { annotation_id: u64 },
-    AnnotationEdit { annotation_id: u64 },
-    AnnotationDelete { annotation_id: u64 },
+    AnnotationJump { annotation_id: String },
+    AnnotationEdit { annotation_id: String },
+    AnnotationDelete { annotation_id: String },
     AnnotationCopyAll,
     AnnotationExport(String),
 }
@@ -169,7 +169,7 @@ impl Modal {
     pub fn annotations(
         title: impl Into<String>,
         items: Vec<String>,
-        annotations: Vec<Annotation>,
+        annotations: Vec<Thread>,
     ) -> Self {
         Self {
             content: ModalContent::Annotations {
@@ -878,7 +878,7 @@ impl Modal {
                 Span::styled(" jump  ", Style::default().fg(t.ui.text_muted)),
                 Span::styled("│  ", Style::default().fg(t.ui.border_unfocused)),
                 Span::styled("e", Style::default().fg(t.ui.text_muted)),
-                Span::styled(" edit  ", Style::default().fg(t.ui.text_muted)),
+                Span::styled(" edit/reply  ", Style::default().fg(t.ui.text_muted)),
                 Span::styled("│  ", Style::default().fg(t.ui.border_unfocused)),
                 Span::styled("d", Style::default().fg(t.ui.text_muted)),
                 Span::styled(" del  ", Style::default().fg(t.ui.text_muted)),
@@ -1050,13 +1050,13 @@ impl Modal {
             ModalContent::Select {
                 items, selected, ..
             } => match key.code {
-                KeyCode::Down | KeyCode::Char('j') => {
+                KeyCode::Down | KeyCode::Char('k') => {
                     if *selected < items.len().saturating_sub(1) {
                         *selected += 1;
                     }
                     None
                 }
-                KeyCode::Up | KeyCode::Char('k') => {
+                KeyCode::Up | KeyCode::Char('j') => {
                     *selected = selected.saturating_sub(1);
                     None
                 }
@@ -1073,11 +1073,11 @@ impl Modal {
 
                 match key.code {
                     KeyCode::Enter => Some(ModalResult::Dismissed),
-                    KeyCode::Down | KeyCode::Char('j') => {
+                    KeyCode::Down | KeyCode::Char('k') => {
                         *scroll = (*scroll + 1).min(max_scroll);
                         None
                     }
-                    KeyCode::Up | KeyCode::Char('k') => {
+                    KeyCode::Up | KeyCode::Char('j') => {
                         *scroll = scroll.saturating_sub(1);
                         None
                     }
@@ -1115,7 +1115,7 @@ impl Modal {
                 KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                     Some(ModalResult::Dismissed)
                 }
-                KeyCode::Down | KeyCode::Char('j')
+                KeyCode::Down | KeyCode::Char('k')
                     if key.modifiers.contains(KeyModifiers::CONTROL)
                         || key.code == KeyCode::Down =>
                 {
@@ -1124,7 +1124,7 @@ impl Modal {
                     }
                     None
                 }
-                KeyCode::Up | KeyCode::Char('k')
+                KeyCode::Up | KeyCode::Char('j')
                     if key.modifiers.contains(KeyModifiers::CONTROL) || key.code == KeyCode::Up =>
                 {
                     *selected = selected.saturating_sub(1);
@@ -1250,29 +1250,29 @@ impl Modal {
                         {
                             Some(ModalResult::Dismissed)
                         }
-                        KeyCode::Down | KeyCode::Char('j') => {
+                        KeyCode::Down | KeyCode::Char('k') => {
                             if *selected < items.len().saturating_sub(1) {
                                 *selected += 1;
                             }
                             None
                         }
-                        KeyCode::Up | KeyCode::Char('k') => {
+                        KeyCode::Up | KeyCode::Char('j') => {
                             *selected = selected.saturating_sub(1);
                             None
                         }
                         KeyCode::Enter => annotations.get(*selected).map(|ann| {
                             ModalResult::AnnotationJump {
-                                annotation_id: ann.id,
+                                annotation_id: ann.id.clone(),
                             }
                         }),
                         KeyCode::Char('e') => annotations.get(*selected).map(|ann| {
                             ModalResult::AnnotationEdit {
-                                annotation_id: ann.id,
+                                annotation_id: ann.id.clone(),
                             }
                         }),
                         KeyCode::Char('d') => annotations.get(*selected).map(|ann| {
                             ModalResult::AnnotationDelete {
-                                annotation_id: ann.id,
+                                annotation_id: ann.id.clone(),
                             }
                         }),
                         KeyCode::Char('y') => Some(ModalResult::AnnotationCopyAll),
@@ -1298,10 +1298,10 @@ impl Modal {
 
                 // "Next/prev result" — ↓ / Ctrl+n / Ctrl+j (all telescope-standard).
                 let is_down = matches!(key.code, KeyCode::Down)
-                    || (ctrl && matches!(key.code, KeyCode::Char('n') | KeyCode::Char('j')));
+                    || (ctrl && matches!(key.code, KeyCode::Char('n') | KeyCode::Char('k')));
                 // "Prev result" — ↑ / Ctrl+p / Ctrl+k.
                 let is_up = matches!(key.code, KeyCode::Up)
-                    || (ctrl && matches!(key.code, KeyCode::Char('p') | KeyCode::Char('k')));
+                    || (ctrl && matches!(key.code, KeyCode::Char('p') | KeyCode::Char('j')));
                 // Half-page down — PageDown / Ctrl+d. (Ctrl+u is taken by clear-query.)
                 let is_page_down =
                     matches!(key.code, KeyCode::PageDown) || (ctrl && matches!(key.code, KeyCode::Char('d')));

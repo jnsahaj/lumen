@@ -8,79 +8,200 @@ use ratatui::{
 use crate::command::diff::context::{compute_context_lines, ContextLine};
 use crate::command::diff::highlight::{highlight_line_spans, FileHighlighter};
 use crate::command::diff::search::{MatchPanel, SearchState};
-use crate::command::diff::state::{Annotation, AnnotationTarget};
 use crate::command::diff::theme;
+use crate::command::diff::review_thread::{AnnotationTarget, Author, Thread};
 use crate::command::diff::{annotation::AnnotationEditor, state::TreeCache};
 
-/// One overlay slot in the rendered diff: either a saved annotation or the
-/// active inline editor (new or editing an existing annotation).
+/// One overlay slot in the rendered diff: either a thread or the active inline
+/// editor (a new thread, a reply, or a comment being edited).
 enum OverlaySlot<'a, 'e> {
-    Saved(&'a Annotation),
+    /// `rows` are the thread's screen rows, without the gutter column.
+    Saved {
+        thread: &'a Thread,
+        rows: Vec<Line<'static>>,
+    },
     Editor(&'e AnnotationEditor<'e>),
 }
 
 impl<'a, 'e> OverlaySlot<'a, 'e> {
     fn height(&self) -> usize {
         match self {
-            OverlaySlot::Saved(a) => a.content.lines().count() + 2,
+            OverlaySlot::Saved { rows, .. } => rows.len(),
             OverlaySlot::Editor(e) => e.desired_height(),
         }
     }
 
     fn target(&self) -> &AnnotationTarget {
         match self {
-            OverlaySlot::Saved(a) => &a.target,
+            OverlaySlot::Saved { thread, .. } => &thread.target,
             OverlaySlot::Editor(e) => &e.target,
         }
     }
 }
 
-/// Build the file-level overlay slot list for a given file, weaving in the
-/// active editor when it targets this file (replacing the existing annotation
-/// when editing, appended at the end when creating).
-fn build_file_slots<'a, 'e>(
-    saved: &[&'a Annotation],
+/// Overlay slots of one file, for its file-level threads or for its line-range
+/// threads. The active editor follows the thread it replies to; while it edits a
+/// comment, that comment is left out of the thread. An editor starting a new
+/// thread comes last. `width_for` gives the overlay width for a target.
+fn build_slots<'a, 'e>(
+    threads: &'a [Thread],
     editor: Option<&'e AnnotationEditor<'e>>,
     filename: &str,
+    file_level: bool,
+    width_for: &dyn Fn(&AnnotationTarget) -> u16,
+    t: &theme::Theme,
 ) -> Vec<OverlaySlot<'a, 'e>> {
-    let edit_id = editor
-        .filter(|e| e.filename == filename && matches!(e.target, AnnotationTarget::File))
-        .and_then(|e| e.id);
-    let mut slots: Vec<OverlaySlot<'a, 'e>> = saved
+    let is_wanted_level =
+        |target: &AnnotationTarget| matches!(target, AnnotationTarget::File) == file_level;
+    let mut editor = editor.filter(|e| e.filename == filename && is_wanted_level(&e.target));
+    let mut slots: Vec<OverlaySlot<'a, 'e>> = Vec::new();
+
+    for thread in threads
         .iter()
-        .filter(|a| Some(a.id) != edit_id)
-        .map(|a| OverlaySlot::Saved(*a))
-        .collect();
-    if let Some(e) = editor {
-        if e.filename == filename && matches!(e.target, AnnotationTarget::File) {
-            slots.push(OverlaySlot::Editor(e));
+        .filter(|thread| thread.filename == filename && is_wanted_level(&thread.target))
+    {
+        let editor_in_thread = editor.filter(|e| e.thread_id.as_deref() == Some(&thread.id));
+        let edited_comment = editor_in_thread.and_then(|e| e.comment_id.as_deref());
+        let rows_width = width_for(&thread.target).saturating_sub(1) as usize;
+        let rows = thread_rows(thread, edited_comment, rows_width, t);
+        if !rows.is_empty() {
+            slots.push(OverlaySlot::Saved { thread, rows });
         }
+        if let Some(e) = editor_in_thread {
+            slots.push(OverlaySlot::Editor(e));
+            editor = None;
+        }
+    }
+    if let Some(e) = editor {
+        slots.push(OverlaySlot::Editor(e));
     }
     slots
 }
 
-/// Build the line-range overlay slot list for a given file.
-fn build_line_slots<'a, 'e>(
-    saved: &[&'a Annotation],
-    editor: Option<&'e AnnotationEditor<'e>>,
-    filename: &str,
-) -> Vec<OverlaySlot<'a, 'e>> {
-    let edit_id = editor
-        .filter(|e| {
-            e.filename == filename && matches!(e.target, AnnotationTarget::LineRange { .. })
-        })
-        .and_then(|e| e.id);
-    let mut slots: Vec<OverlaySlot<'a, 'e>> = saved
+fn char_count(text: &str) -> usize {
+    text.chars().count()
+}
+
+fn truncate_chars(text: &str, max_chars: usize) -> String {
+    if char_count(text) <= max_chars {
+        text.to_string()
+    } else {
+        let kept: String = text.chars().take(max_chars.saturating_sub(1)).collect();
+        format!("{}…", kept)
+    }
+}
+
+/// Splits `text` into rows of at most `width` characters, breaking at spaces
+/// where possible. Line breaks in `text` are kept.
+fn wrap_text(text: &str, width: usize) -> Vec<String> {
+    let width = width.max(1);
+    let mut rows = Vec::new();
+    for paragraph in text.lines() {
+        let mut row = String::new();
+        for word in paragraph.split(' ') {
+            let mut word: Vec<char> = word.chars().collect();
+            let separator = usize::from(!row.is_empty());
+            if char_count(&row) + separator + word.len() > width && !row.is_empty() {
+                rows.push(std::mem::take(&mut row));
+            } else if separator == 1 {
+                row.push(' ');
+            }
+            while word.len() > width {
+                rows.push(word.drain(..width).collect());
+            }
+            row.extend(word);
+        }
+        rows.push(row);
+    }
+    rows
+}
+
+/// Screen rows of a thread, each `width` characters wide: a box holding every
+/// comment under its author, or a single row when the thread is resolved.
+/// The comment `edited_comment` is left out. Empty when nothing is left to show.
+fn thread_rows(
+    thread: &Thread,
+    edited_comment: Option<&str>,
+    width: usize,
+    t: &theme::Theme,
+) -> Vec<Line<'static>> {
+    let comments: Vec<_> = thread
+        .comments
         .iter()
-        .filter(|a| Some(a.id) != edit_id)
-        .map(|a| OverlaySlot::Saved(*a))
+        .filter(|comment| Some(comment.id.as_str()) != edited_comment)
         .collect();
-    if let Some(e) = editor {
-        if e.filename == filename && matches!(e.target, AnnotationTarget::LineRange { .. }) {
-            slots.push(OverlaySlot::Editor(e));
+    let Some(first_comment) = comments.first() else {
+        return Vec::new();
+    };
+    let muted = Style::default().fg(t.ui.text_muted);
+
+    if thread.resolved {
+        let summary = format!(
+            " ✓ resolved · {}: {}",
+            first_comment.author_name,
+            first_comment.body.lines().next().unwrap_or_default()
+        );
+        let summary = truncate_chars(&summary, width);
+        return vec![Line::from(Span::styled(format!("{:<width$}", summary), muted))];
+    }
+
+    let border = Style::default().fg(t.ui.highlight);
+    let inner_width = width.saturating_sub(2);
+    let text_width = inner_width.saturating_sub(1);
+    let mut rows = Vec::new();
+
+    let mut badges = Vec::new();
+    if thread.outdated {
+        badges.push("outdated");
+    }
+    if thread.awaiting_agent() {
+        badges.push("awaiting agent");
+    }
+    let badge = if badges.is_empty() {
+        String::new()
+    } else {
+        truncate_chars(&format!(" {} ", badges.join(" · ")), inner_width.saturating_sub(1))
+    };
+    let leading_dashes = usize::from(!badge.is_empty());
+    let trailing_dashes = inner_width.saturating_sub(leading_dashes + char_count(&badge));
+    rows.push(Line::from(vec![
+        Span::styled(format!("┌{}", "─".repeat(leading_dashes)), border),
+        Span::styled(badge, Style::default().fg(t.ui.status_modified)),
+        Span::styled(format!("{}┐", "─".repeat(trailing_dashes)), border),
+    ]));
+
+    let boxed = |spans: Vec<Span<'static>>| {
+        let used: usize = spans.iter().map(|span| char_count(&span.content)).sum();
+        let mut row = vec![Span::styled("│ ", border)];
+        row.extend(spans);
+        row.push(Span::raw(" ".repeat(text_width.saturating_sub(used))));
+        row.push(Span::styled("│", border));
+        Line::from(row)
+    };
+    for comment in comments {
+        let (name_color, body_color) = match comment.author {
+            Author::Human => (t.ui.highlight, t.ui.text_secondary),
+            Author::Agent => (t.ui.status_added, t.ui.text_primary),
+        };
+        let name = truncate_chars(&comment.author_name, text_width.saturating_sub(16));
+        let mut header = vec![
+            Span::styled(name, Style::default().fg(name_color).bold()),
+            Span::styled(format!(" · {}", comment.format_time()), muted),
+        ];
+        if comment.queued {
+            header.push(Span::styled(" · queued", Style::default().fg(t.ui.status_modified)));
+        }
+        rows.push(boxed(header));
+        for text_row in wrap_text(&comment.body, text_width) {
+            rows.push(boxed(vec![Span::styled(text_row, Style::default().fg(body_color))]));
         }
     }
-    slots
+
+    rows.push(Line::from(Span::styled(
+        format!("└{}┘", "─".repeat(inner_width)),
+        border,
+    )));
+    rows
 }
 use crate::command::diff::types::{
     ChangeType, DiffFullscreen, DiffLine, DiffPanelFocus, DiffViewSettings, FileDiff, FocusedPanel,
@@ -88,7 +209,7 @@ use crate::command::diff::types::{
 };
 use crate::command::diff::PrInfo;
 
-use super::footer::{render_footer, FooterData};
+use super::footer::{render_footer, FooterData, ReviewStatus};
 use super::sidebar::render_sidebar;
 
 /// Render the header bar for stacked diff mode showing commit info with navigation arrows
@@ -1067,131 +1188,12 @@ fn file_slots_height(slots: &[OverlaySlot]) -> usize {
     slots.iter().map(|s| s.height()).sum()
 }
 
-/// Render annotation overlays at specified positions.
+/// Render a single overlay slot (thread or editor) at a given position.
 ///
-/// This function renders annotation boxes that can span single or multiple panels.
-/// The `content_x`, `content_start_y`, `content_width`, and `max_area` parameters
-/// allow flexible positioning for both single-panel and side-by-side views.
-///
-/// Each overlay's screen rect is appended to `annotation_rects` so mouse handlers
-/// can hit-test clicks against existing annotations.
-#[allow(clippy::too_many_arguments)]
-fn render_annotation_overlays(
-    frame: &mut Frame,
-    overlays: &[(usize, &Annotation)],
-    content_x: u16,
-    content_start_y: u16,
-    content_width: u16,
-    max_area: Rect,
-    bg: Color,
-    t: &crate::command::diff::theme::Theme,
-    suppress_gutter: bool,
-    annotation_rects: &mut Vec<(u64, Rect)>,
-) {
-    // Annotation accent color — a subtle but visible tint
-    let ann_accent = t.ui.highlight;
-
-    for (line_pos, annotation) in overlays {
-        let screen_y = content_start_y + *line_pos as u16;
-        let content_lines: Vec<&str> = annotation.content.lines().collect();
-        let num_lines = content_lines.len() + 2; // +2 for top and bottom borders
-
-        // Check if annotation is visible
-        if screen_y >= max_area.y + max_area.height {
-            continue;
-        }
-
-        let available_height = (max_area.y + max_area.height).saturating_sub(screen_y) as usize;
-        if available_height == 0 {
-            continue;
-        }
-
-        let overlay_height = num_lines.min(available_height) as u16;
-        let overlay_area = Rect::new(content_x, screen_y, content_width, overlay_height);
-
-        // Clear the area first
-        frame.render_widget(ratatui::widgets::Clear, overlay_area);
-
-        // Build annotation lines
-        let mut ann_lines: Vec<Line> = Vec::new();
-        let note_style = Style::default().fg(t.ui.text_secondary);
-        let border_style_ann = Style::default().fg(ann_accent);
-        let indicator_style = Style::default().fg(ann_accent);
-        let border_width = content_width.saturating_sub(3) as usize;
-
-        // For line-range annotations, show a gutter indicator connecting to the lines above.
-        // Suppressed for new-panel annotations in side-by-side mode, where the indicator
-        // is rendered on the shared border via buffer_mut() instead.
-        let has_gutter =
-            !suppress_gutter && matches!(annotation.target, AnnotationTarget::LineRange { .. });
-
-        // Add top border — gutter indicator continues into the box
-        if has_gutter {
-            ann_lines.push(Line::from(vec![
-                Span::styled("▍", indicator_style),
-                Span::styled(format!("┌{}┐", "─".repeat(border_width)), border_style_ann),
-            ]));
-        } else {
-            ann_lines.push(Line::from(vec![Span::styled(
-                format!(" ┌{}┐", "─".repeat(border_width)),
-                border_style_ann,
-            )]));
-        }
-
-        // Add content lines
-        for content_line in content_lines
-            .iter()
-            .take(available_height.saturating_sub(2))
-        {
-            let content_width_inner = border_width.saturating_sub(1);
-            let padded_content = format!("{:<width$}", content_line, width = content_width_inner);
-            if has_gutter {
-                ann_lines.push(Line::from(vec![
-                    Span::styled("▍", indicator_style),
-                    Span::styled("│ ", border_style_ann),
-                    Span::styled(padded_content, note_style),
-                    Span::styled("│", border_style_ann),
-                ]));
-            } else {
-                ann_lines.push(Line::from(vec![
-                    Span::styled(" │ ", border_style_ann),
-                    Span::styled(padded_content, note_style),
-                    Span::styled("│", border_style_ann),
-                ]));
-            }
-        }
-
-        // Add bottom border with time if there's room
-        if ann_lines.len() < available_height {
-            let time_str = annotation.format_time();
-            let time_with_padding = format!(" {} ", time_str);
-            let time_len = time_with_padding.len();
-            let dashes_before = border_width.saturating_sub(time_len + 1);
-            if has_gutter {
-                ann_lines.push(Line::from(vec![
-                    Span::styled("▍", indicator_style),
-                    Span::styled(format!("└{}", "─".repeat(dashes_before)), border_style_ann),
-                    Span::styled(time_with_padding, Style::default().fg(t.ui.text_muted)),
-                    Span::styled("─┘", border_style_ann),
-                ]));
-            } else {
-                ann_lines.push(Line::from(vec![
-                    Span::styled(format!(" └{}", "─".repeat(dashes_before)), border_style_ann),
-                    Span::styled(time_with_padding, Style::default().fg(t.ui.text_muted)),
-                    Span::styled("─┘", border_style_ann),
-                ]));
-            }
-        }
-
-        let ann_para = Paragraph::new(ann_lines).style(Style::default().bg(bg));
-        frame.render_widget(ann_para, overlay_area);
-
-        annotation_rects.push((annotation.id, overlay_area));
-    }
-}
-
-/// Render a single overlay slot (saved annotation or editor) at a given position.
-/// Append the resulting rect to `annotation_rects` if the slot is a saved annotation.
+/// A thread's screen rect is appended to `annotation_rects` so mouse handlers can
+/// hit-test clicks against it. Line-range overlays get a gutter marker connecting
+/// them to the lines above, unless `suppress_gutter` is set: for new-panel overlays
+/// in side-by-side mode the marker is drawn on the shared border instead.
 #[allow(clippy::too_many_arguments)]
 fn render_overlay_slot(
     frame: &mut Frame,
@@ -1204,40 +1206,39 @@ fn render_overlay_slot(
     bg: Color,
     t: &crate::command::diff::theme::Theme,
     suppress_gutter: bool,
-    annotation_rects: &mut Vec<(u64, Rect)>,
+    annotation_rects: &mut Vec<(String, Rect)>,
     editor_rect: &mut Option<Rect>,
 ) {
+    let screen_y = content_start_y + line_pos as u16;
+    if screen_y >= max_area.y + max_area.height {
+        return;
+    }
+    let available = (max_area.y + max_area.height).saturating_sub(screen_y) as usize;
+    if available == 0 {
+        return;
+    }
+    let height = slot.height().min(available) as u16;
+    let area = Rect::new(content_x, screen_y, content_width, height);
+    let has_gutter = !suppress_gutter && matches!(slot.target(), AnnotationTarget::LineRange { .. });
+
     match slot {
-        OverlaySlot::Saved(a) => render_annotation_overlays(
-            frame,
-            &[(line_pos, a)],
-            content_x,
-            content_start_y,
-            content_width,
-            max_area,
-            bg,
-            t,
-            suppress_gutter,
-            annotation_rects,
-        ),
+        OverlaySlot::Saved { thread, rows } => {
+            frame.render_widget(ratatui::widgets::Clear, area);
+            let gutter = if has_gutter { "▍" } else { " " };
+            let lines: Vec<Line> = rows
+                .iter()
+                .take(available)
+                .map(|row| {
+                    let mut spans = vec![Span::styled(gutter, Style::default().fg(t.ui.highlight))];
+                    spans.extend(row.spans.iter().cloned());
+                    Line::from(spans)
+                })
+                .collect();
+            frame.render_widget(Paragraph::new(lines).style(Style::default().bg(bg)), area);
+            annotation_rects.push((thread.id.clone(), area));
+        }
         OverlaySlot::Editor(editor) => {
-            let screen_y = content_start_y + line_pos as u16;
-            if screen_y >= max_area.y + max_area.height {
-                return;
-            }
-            let available = (max_area.y + max_area.height).saturating_sub(screen_y) as usize;
-            if available == 0 {
-                return;
-            }
-            let height = editor.desired_height().min(available) as u16;
-            let area = Rect::new(content_x, screen_y, content_width, height);
-            editor.render_inline(
-                frame,
-                area,
-                t.ui.highlight,
-                bg,
-                !suppress_gutter && matches!(editor.target, AnnotationTarget::LineRange { .. }),
-            );
+            editor.render_inline(frame, area, t.ui.highlight, bg, has_gutter);
             *editor_rect = Some(area);
         }
     }
@@ -1281,7 +1282,7 @@ pub fn render_diff(
     stacked_total: usize,
     side_by_side: &[DiffLine],
     vcs_name: &str,
-    annotations: &[Annotation],
+    annotations: &[Thread],
     selection: &Selection,
     old_highlighter: &FileHighlighter,
     new_highlighter: &FileHighlighter,
@@ -1289,7 +1290,8 @@ pub fn render_diff(
     total_added: usize,
     total_removed: usize,
     editor: Option<&AnnotationEditor>,
-) -> (usize, Vec<(usize, usize)>, Vec<(u64, Rect)>, Option<Rect>) {
+    review: &ReviewStatus,
+) -> (usize, Vec<(usize, usize)>, Vec<(String, Rect)>, Option<Rect>) {
     let area = frame.area();
     let t = theme::get();
     let bg = t.ui.bg;
@@ -1393,6 +1395,7 @@ pub fn render_diff(
                 focused_hunk: None,
                 search_state,
                 area_width: area.width,
+                review,
             },
         );
         return (0, Vec::new(), Vec::new(), None);
@@ -1409,7 +1412,7 @@ pub fn render_diff(
     // Track inline annotation overlay gaps for mouse coordinate mapping
     let mut overlay_gaps: Vec<(usize, usize)> = Vec::new();
     // Track rendered annotation screen rects for click hit-testing
-    let mut annotation_rects: Vec<(u64, Rect)> = Vec::new();
+    let mut annotation_rects: Vec<(String, Rect)> = Vec::new();
     // Tracks the screen rect of the inline editor, when one is rendered this frame.
     let mut editor_rect: Option<Rect> = None;
 
@@ -1433,23 +1436,9 @@ pub fn render_diff(
         let context_count = new_context.len();
         let scroll_usize = scroll as usize;
 
-        // Get file-level annotations for this file
-        let file_annotations: Vec<&Annotation> = annotations
-            .iter()
-            .filter(|a| a.filename == diff.filename && matches!(a.target, AnnotationTarget::File))
-            .collect();
-
-        // Collect line-range annotations for this file (New panel only)
-        let line_annotations: Vec<&Annotation> = annotations
-            .iter()
-            .filter(|a| {
-                a.filename == diff.filename
-                    && matches!(a.target, AnnotationTarget::LineRange { .. })
-            })
-            .collect();
-
-        let file_slots = build_file_slots(&file_annotations, editor, &diff.filename);
-        let line_slots = build_line_slots(&line_annotations, editor, &diff.filename);
+        let slot_width = |_: &AnnotationTarget| main_area.width.saturating_sub(2);
+        let file_slots = build_slots(annotations, editor, &diff.filename, true, &slot_width, t);
+        let line_slots = build_slots(annotations, editor, &diff.filename, false, &slot_width, t);
 
         let annotation_height = file_slots_height(&file_slots);
         content_row_offset = context_count + annotation_height;
@@ -1609,23 +1598,9 @@ pub fn render_diff(
         let context_count = old_context.len();
         let scroll_usize = scroll as usize;
 
-        // Get file-level annotations for this file
-        let file_annotations: Vec<&Annotation> = annotations
-            .iter()
-            .filter(|a| a.filename == diff.filename && matches!(a.target, AnnotationTarget::File))
-            .collect();
-
-        // Collect line-range annotations for this file (Old panel only)
-        let line_annotations: Vec<&Annotation> = annotations
-            .iter()
-            .filter(|a| {
-                a.filename == diff.filename
-                    && matches!(a.target, AnnotationTarget::LineRange { .. })
-            })
-            .collect();
-
-        let file_slots = build_file_slots(&file_annotations, editor, &diff.filename);
-        let line_slots = build_line_slots(&line_annotations, editor, &diff.filename);
+        let slot_width = |_: &AnnotationTarget| main_area.width.saturating_sub(2);
+        let file_slots = build_slots(annotations, editor, &diff.filename, true, &slot_width, t);
+        let line_slots = build_slots(annotations, editor, &diff.filename, false, &slot_width, t);
 
         let annotation_height = file_slots_height(&file_slots);
         content_row_offset = context_count + annotation_height;
@@ -1818,23 +1793,45 @@ pub fn render_diff(
         let mut new_lines: Vec<Line> = Vec::new();
         let mut slot_overlays: Vec<(usize, &OverlaySlot)> = Vec::new();
 
-        // Collect file-level annotations
-        let file_annotations: Vec<&Annotation> = annotations
-            .iter()
-            .filter(|a| a.filename == diff.filename && matches!(a.target, AnnotationTarget::File))
-            .collect();
-
-        // Collect line-range annotations for this file
-        let line_annotations: Vec<&Annotation> = annotations
-            .iter()
-            .filter(|a| {
-                a.filename == diff.filename
-                    && matches!(a.target, AnnotationTarget::LineRange { .. })
-            })
-            .collect();
-
-        let file_slots = build_file_slots(&file_annotations, editor, &diff.filename);
-        let line_slots = build_line_slots(&line_annotations, editor, &diff.filename);
+        let is_side_by_side = old_area.is_some() && new_area.is_some();
+        // Where the overlay for a target is drawn: x, width, first row, and whether
+        // its gutter marker is left to the shared border.
+        let slot_geometry = |target: &AnnotationTarget| -> (u16, u16, u16, bool) {
+            match target {
+                AnnotationTarget::File => {
+                    // File-level: span both panels
+                    let render_area = old_area.or(new_area).unwrap_or(main_area);
+                    let x = render_area.x + 1;
+                    let w = if is_side_by_side {
+                        old_area.unwrap().width + new_area.unwrap().width - 2
+                    } else {
+                        render_area.width.saturating_sub(2)
+                    };
+                    (x, w, render_area.y + 1, false)
+                }
+                AnnotationTarget::LineRange { panel, .. } => {
+                    // Line-range: render in the specific panel
+                    let is_new_panel = matches!(panel, DiffPanelFocus::New | DiffPanelFocus::None);
+                    let area = match panel {
+                        DiffPanelFocus::Old => old_area.unwrap_or(main_area),
+                        _ => new_area.unwrap_or(main_area),
+                    };
+                    // In side-by-side mode, new panel annotations use border markers on the
+                    // shared border (via buffer_mut) instead of an inline gutter indicator,
+                    // so suppress the gutter in the overlay.
+                    let suppress = is_new_panel && is_side_by_side;
+                    (
+                        area.x + 1,
+                        area.width.saturating_sub(2),
+                        area.y + 1,
+                        suppress,
+                    )
+                }
+            }
+        };
+        let slot_width = |target: &AnnotationTarget| slot_geometry(target).1;
+        let file_slots = build_slots(annotations, editor, &diff.filename, true, &slot_width, t);
+        let line_slots = build_slots(annotations, editor, &diff.filename, false, &slot_width, t);
 
         let file_ann_height = file_slots_height(&file_slots);
         content_row_offset = context_count + file_ann_height;
@@ -2284,39 +2281,9 @@ pub fn render_diff(
 
         // Render overlay slots (saved annotations + active editor) per-panel for line-range,
         // spanning both panels for file-level.
-        let is_side_by_side = old_area.is_some() && new_area.is_some();
         for &(line_pos, slot) in &slot_overlays {
-            let (overlay_x, overlay_width, overlay_start_y, suppress_gutter) = match slot.target() {
-                AnnotationTarget::File => {
-                    // File-level: span both panels
-                    let render_area = old_area.or(new_area).unwrap_or(main_area);
-                    let x = render_area.x + 1;
-                    let w = if is_side_by_side {
-                        old_area.unwrap().width + new_area.unwrap().width - 2
-                    } else {
-                        render_area.width.saturating_sub(2)
-                    };
-                    (x, w, render_area.y + 1, false)
-                }
-                AnnotationTarget::LineRange { panel, .. } => {
-                    // Line-range: render in the specific panel
-                    let is_new_panel = matches!(panel, DiffPanelFocus::New | DiffPanelFocus::None);
-                    let area = match panel {
-                        DiffPanelFocus::Old => old_area.unwrap_or(main_area),
-                        _ => new_area.unwrap_or(main_area),
-                    };
-                    // In side-by-side mode, new panel annotations use border markers on the
-                    // shared border (via buffer_mut) instead of an inline gutter indicator,
-                    // so suppress the gutter in the overlay.
-                    let suppress = is_new_panel && is_side_by_side;
-                    (
-                        area.x + 1,
-                        area.width.saturating_sub(2),
-                        area.y + 1,
-                        suppress,
-                    )
-                }
-            };
+            let (overlay_x, overlay_width, overlay_start_y, suppress_gutter) =
+                slot_geometry(slot.target());
             render_overlay_slot(
                 frame,
                 line_pos,
@@ -2396,6 +2363,7 @@ pub fn render_diff(
             focused_hunk,
             search_state,
             area_width: area.width,
+            review,
         },
     );
 

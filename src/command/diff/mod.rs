@@ -1,3 +1,4 @@
+mod agent;
 mod annotation;
 mod app;
 mod context;
@@ -12,6 +13,9 @@ mod state;
 mod sticky_lines;
 mod text_edit;
 pub mod theme;
+mod review_thread;
+pub mod thread_cli;
+mod thread_store;
 mod types;
 mod watcher;
 mod workspace;
@@ -39,6 +43,8 @@ pub struct DiffOptions {
     pub focus: Option<String>,
     pub origin: Option<String>,
     pub wrap: bool,
+    /// Rex pane of the agent that answers review threads.
+    pub agent_block: Option<String>,
 }
 
 #[derive(Clone)]

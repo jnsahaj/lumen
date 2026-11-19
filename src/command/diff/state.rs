@@ -1,5 +1,4 @@
 use std::collections::{HashMap, HashSet};
-use std::time::SystemTime;
 
 use tree_sitter::{Parser, Tree};
 
@@ -8,6 +7,10 @@ use crate::command::diff::diff_algo::{compute_side_by_side, count_added_removed,
 use crate::command::diff::highlight::FileHighlighter;
 
 use crate::command::diff::search::SearchState;
+use crate::command::diff::review_thread::{
+    anchor_text_for, refresh_anchors, AnnotationTarget, Comment, Thread,
+};
+use crate::command::diff::thread_store::{StoreStamp, ThreadStore};
 use crate::command::diff::types::{
     build_file_tree, CursorPosition, DiffFullscreen, DiffLine, DiffPanelFocus,
     DiffViewSettings, FileDiff, FocusedPanel, Selection, SelectionMode, SidebarItem,
@@ -69,79 +72,6 @@ fn build_sidebar_visible_indices(
     visible
 }
 
-/// The target of an annotation: either a whole file or a specific line range on one panel.
-#[derive(Clone)]
-pub enum AnnotationTarget {
-    /// Annotation applies to the whole file
-    File,
-    /// Annotation applies to a range of lines on a specific panel
-    LineRange {
-        panel: DiffPanelFocus,
-        start_line: usize,
-        end_line: usize,
-    },
-}
-
-/// An annotation attached to a file or line range.
-///
-/// Annotations allow users to add notes to code changes during review.
-/// Each annotation is uniquely identified by its `id`.
-#[derive(Clone)]
-pub struct Annotation {
-    pub id: u64,
-    pub filename: String,
-    pub target: AnnotationTarget,
-    pub content: String,
-    pub created_at: SystemTime,
-}
-
-impl Annotation {
-    /// Format the creation time as HH:MM in local time
-    #[cfg(feature = "jj")]
-    pub fn format_time(&self) -> String {
-        use chrono::{DateTime, Local};
-        let datetime: DateTime<Local> = self.created_at.into();
-        datetime.format("%H:%M").to_string()
-    }
-
-    /// Format the creation time as HH:MM (UTC fallback when chrono unavailable)
-    #[cfg(not(feature = "jj"))]
-    pub fn format_time(&self) -> String {
-        use std::time::UNIX_EPOCH;
-        let duration = self.created_at.duration_since(UNIX_EPOCH).unwrap_or_default();
-        let secs = duration.as_secs();
-        let hours = (secs / 3600) % 24;
-        let minutes = (secs / 60) % 60;
-        format!("{:02}:{:02}", hours, minutes)
-    }
-
-    /// Get a display label for the target type
-    pub fn target_label(&self) -> &'static str {
-        match &self.target {
-            AnnotationTarget::File => "file",
-            AnnotationTarget::LineRange { panel, .. } => match panel {
-                DiffPanelFocus::Old => "old",
-                DiffPanelFocus::New => "new",
-                DiffPanelFocus::None => "new",
-            },
-        }
-    }
-
-    /// Get the line range display string
-    pub fn line_range_display(&self) -> String {
-        match &self.target {
-            AnnotationTarget::File => String::new(),
-            AnnotationTarget::LineRange { start_line, end_line, .. } => {
-                if start_line == end_line {
-                    format!("L{}", start_line)
-                } else {
-                    format!("L{}-{}", start_line, end_line)
-                }
-            }
-        }
-    }
-}
-
 #[derive(Debug, Default)]
 pub struct TreeCache {
     pub old_file_trees: HashMap<String, Tree>,
@@ -172,9 +102,13 @@ pub struct AppState {
     pub needs_reload: bool,
     pub watching: bool,
     pub focused_hunk: Option<usize>,
-    // Annotation fields
-    pub annotations: Vec<Annotation>,
-    annotation_next_id: u64,
+    /// Review threads of this repository, as last read from or written to the store.
+    pub threads: Vec<Thread>,
+    /// Where threads are kept between sessions. Without it they live in memory only.
+    thread_store: Option<ThreadStore>,
+    thread_store_stamp: Option<StoreStamp>,
+    /// Why threads stopped being saved, until the UI has shown it.
+    pub thread_store_error: Option<String>,
     // Stacked mode fields
     pub stacked_mode: bool,
     pub stacked_commits: Vec<StackedCommitInfo>,
@@ -218,7 +152,7 @@ pub struct AppState {
     /// Screen rectangles of currently-rendered annotation overlays.
     /// Set by render_diff each frame; used by mouse handlers to open the inline
     /// editor when the user clicks an existing annotation.
-    pub annotation_rects: Vec<(u64, ratatui::layout::Rect)>,
+    pub annotation_rects: Vec<(String, ratatui::layout::Rect)>,
     /// Screen rectangle of the active inline annotation editor, when present.
     /// Set by render_diff each frame; used by mouse handlers to detect clicks
     /// outside the editor (save if non-empty, cancel if empty).
@@ -306,8 +240,10 @@ impl AppState {
             needs_reload: false,
             watching: false,
             focused_hunk,
-            annotations: Vec::new(),
-            annotation_next_id: 0,
+            threads: Vec::new(),
+            thread_store: None,
+            thread_store_stamp: None,
+            thread_store_error: None,
             stacked_mode: false,
             stacked_commits: Vec::new(),
             current_commit_index: 0,
@@ -807,9 +743,7 @@ impl AppState {
         self.total_removed = total_removed;
         self.sidebar_items = build_file_tree(&self.file_diffs);
 
-        // Retain annotations whose file still exists
         let filenames: HashSet<&str> = self.file_diffs.iter().map(|f| f.filename.as_str()).collect();
-        self.annotations.retain(|ann| filenames.contains(ann.filename.as_str()));
         self.viewed_hunks.retain(|fname, _| filenames.contains(fname.as_str()));
 
         // Convert viewed filenames back to indices in the new file_diffs
@@ -846,6 +780,8 @@ impl AppState {
             self.scroll = old_scroll.min(max_scroll as u16);
             self.h_scroll = old_h_scroll;
         }
+
+        self.refresh_thread_anchors();
     }
 
     pub fn select_file(&mut self, file_index: usize) {
@@ -864,89 +800,233 @@ impl AppState {
         self.focused_hunk = if hunks.is_empty() { None } else { Some(0) };
     }
 
-    /// Get annotation by id
-    pub fn get_annotation_by_id(&self, id: u64) -> Option<&Annotation> {
-        self.annotations.iter().find(|a| a.id == id)
-    }
-
-    /// Get all annotations for a file
-    #[allow(dead_code)]
-    pub fn get_annotations_for_file(&self, filename: &str) -> Vec<&Annotation> {
-        self.annotations
-            .iter()
-            .filter(|a| a.filename == filename)
-            .collect()
-    }
-
-    /// Add a new annotation, returns its id
-    pub fn add_annotation(&mut self, filename: String, target: AnnotationTarget, content: String, created_at: SystemTime) -> u64 {
-        let id = self.annotation_next_id;
-        self.annotation_next_id += 1;
-        self.annotations.push(Annotation {
-            id,
-            filename,
-            target,
-            content,
-            created_at,
-        });
-        id
-    }
-
-    /// Update an existing annotation's content
-    pub fn update_annotation(&mut self, id: u64, content: String) {
-        if let Some(ann) = self.annotations.iter_mut().find(|a| a.id == id) {
-            ann.content = content;
+    /// Keeps this repository's threads in `store` from now on, starting from what it holds.
+    pub fn open_thread_store(&mut self, store: ThreadStore) {
+        // Taken before reading, so that a write landing in between is noticed later.
+        let stamp = store.stamp();
+        match store.load() {
+            Ok(threads) => {
+                self.threads = threads;
+                self.thread_store_stamp = stamp;
+                self.thread_store = Some(store);
+                self.refresh_thread_anchors();
+            }
+            Err(error) => self.thread_store_error = Some(error),
         }
     }
 
-    /// Remove an annotation by id
-    pub fn remove_annotation(&mut self, id: u64) {
-        self.annotations.retain(|a| a.id != id);
+    /// Picks up threads changed by another process. Returns whether anything was read.
+    pub fn reload_threads_if_changed(&mut self) -> bool {
+        let Some(store) = &self.thread_store else {
+            return false;
+        };
+        let stamp = store.stamp();
+        if stamp == self.thread_store_stamp {
+            return false;
+        }
+        match store.load() {
+            Ok(threads) => {
+                self.threads = threads;
+                self.thread_store_stamp = stamp;
+            }
+            Err(error) => self.stop_saving_threads(error),
+        }
+        true
     }
 
-    /// Format all annotations for export (GitHub PR review comment style).
-    ///
-    /// Uses `path`, `line`/`start_line`, and `side` references instead of
-    /// embedding full source code — matching the shape of the GitHub Pull
-    /// Request review comment API.
-    pub fn format_annotations_for_export(&self) -> String {
+    fn stop_saving_threads(&mut self, error: String) {
+        self.thread_store = None;
+        self.thread_store_stamp = None;
+        self.thread_store_error = Some(error);
+    }
+
+    /// Applies `change` to the threads, through the store when there is one so that
+    /// replies written by another process in the meantime are kept.
+    fn change_threads<T>(&mut self, change: impl Fn(&mut Vec<Thread>) -> T) -> T {
+        if let Some(store) = &self.thread_store {
+            match store.update(&change) {
+                // The stamp is left alone: the next check reads the file again, which
+                // also picks up anything another process wrote right after this.
+                Ok((threads, outcome)) => {
+                    self.threads = threads;
+                    return outcome;
+                }
+                Err(error) => self.stop_saving_threads(error),
+            }
+        }
+        change(&mut self.threads)
+    }
+
+    fn refresh_thread_anchors(&mut self) {
+        if self.threads.is_empty() {
+            return;
+        }
+        let file_diffs = std::mem::take(&mut self.file_diffs);
+        self.change_threads(|threads| refresh_anchors(threads, &file_diffs));
+        self.file_diffs = file_diffs;
+    }
+
+    pub fn thread_by_id(&self, id: &str) -> Option<&Thread> {
+        self.threads.iter().find(|thread| thread.id == id)
+    }
+
+    /// The first open thread on the lines `target` covers. When none is open and
+    /// `or_resolved` is set, the first resolved one.
+    pub fn thread_at(
+        &self,
+        filename: &str,
+        target: &AnnotationTarget,
+        or_resolved: bool,
+    ) -> Option<&Thread> {
+        let first_thread = |resolved: bool| {
+            self.threads
+                .iter()
+                .find(|thread| thread.overlaps(filename, target) && thread.resolved == resolved)
+        };
+        first_thread(false).or_else(|| first_thread(true).filter(|_| or_resolved))
+    }
+
+    /// Starts a thread with a queued comment. Returns the thread id and the comment id.
+    pub fn add_thread(
+        &mut self,
+        filename: String,
+        target: AnnotationTarget,
+        body: String,
+    ) -> (String, String) {
+        let anchor_text = anchor_text_for(&self.file_diffs, &filename, &target);
+        let comment = Comment::human(body, true);
+        let thread = Thread::new(filename, target, anchor_text, comment);
+        let ids = (thread.id.clone(), thread.comments[0].id.clone());
+        self.change_threads(|threads| threads.push(thread.clone()));
+        ids
+    }
+
+    /// Adds a queued reply to a thread, reopening it when it was resolved. Returns
+    /// the comment id, or `None` when the thread no longer exists.
+    pub fn add_reply(&mut self, thread_id: &str, body: String) -> Option<String> {
+        let comment = Comment::human(body, true);
+        let comment_id = comment.id.clone();
+        self.change_threads(|threads| {
+            let thread = threads.iter_mut().find(|thread| thread.id == thread_id)?;
+            thread.comments.push(comment.clone());
+            thread.resolved = false;
+            Some(())
+        })?;
+        Some(comment_id)
+    }
+
+    pub fn update_comment(&mut self, thread_id: &str, comment_id: &str, body: String) {
+        self.change_threads(|threads| {
+            let comment = threads
+                .iter_mut()
+                .filter(|thread| thread.id == thread_id)
+                .flat_map(|thread| thread.comments.iter_mut())
+                .find(|comment| comment.id == comment_id);
+            if let Some(comment) = comment {
+                comment.body = body.clone();
+            }
+        });
+    }
+
+    /// Removes one comment, and its thread when it was the only one.
+    pub fn remove_comment(&mut self, thread_id: &str, comment_id: &str) {
+        self.change_threads(|threads| {
+            if let Some(thread) = threads.iter_mut().find(|thread| thread.id == thread_id) {
+                thread.comments.retain(|comment| comment.id != comment_id);
+            }
+            threads.retain(|thread| !thread.comments.is_empty());
+        });
+    }
+
+    pub fn remove_thread(&mut self, thread_id: &str) {
+        self.change_threads(|threads| threads.retain(|thread| thread.id != thread_id));
+    }
+
+    pub fn toggle_thread_resolved(&mut self, thread_id: &str) {
+        self.change_threads(|threads| {
+            if let Some(thread) = threads.iter_mut().find(|thread| thread.id == thread_id) {
+                thread.resolved = !thread.resolved;
+            }
+        });
+    }
+
+    pub fn queued_count(&self) -> usize {
+        self.threads.iter().map(Thread::queued_count).sum()
+    }
+
+    /// The queued comments as text for the agent, each under its thread and the code
+    /// it is about: one comment of one thread, or all of them. Empty when there are none.
+    pub fn queued_text_for_agent(&self, only: Option<(&str, &str)>) -> String {
+        self.threads
+            .iter()
+            .filter_map(|thread| {
+                let comments: Vec<&Comment> = thread
+                    .comments
+                    .iter()
+                    .filter(|comment| {
+                        comment.queued
+                            && only.is_none_or(|(thread_id, comment_id)| {
+                                thread.id == thread_id && comment.id == comment_id
+                            })
+                    })
+                    .collect();
+                (!comments.is_empty()).then(|| thread.describe(comments.into_iter()))
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    }
+
+    /// Marks queued comments as sent: one comment of one thread, or all of them.
+    /// Returns how many were sent.
+    pub fn mark_sent(&mut self, only: Option<(&str, &str)>) -> usize {
+        self.change_threads(|threads| {
+            threads
+                .iter_mut()
+                .filter(|thread| only.is_none_or(|(thread_id, _)| thread.id == thread_id))
+                .map(|thread| thread.mark_sent(only.map(|(_, comment_id)| comment_id)))
+                .sum()
+        })
+    }
+
+    /// Format threads for export (GitHub PR review comment style): the file, the
+    /// line or line range and the side, then the comments. With `only_queued`,
+    /// just the comments that were not sent yet and the threads that have some.
+    pub fn format_threads_for_export(&self, only_queued: bool) -> String {
         let mut result = String::new();
 
         if let Some(ref reference) = self.diff_reference {
             result.push_str(&format!("# {}\n\n", reference));
         }
 
-        for (i, ann) in self.annotations.iter().enumerate() {
-            if i > 0 {
+        let mut is_first = true;
+        for thread in &self.threads {
+            let comments: Vec<&Comment> = thread
+                .comments
+                .iter()
+                .filter(|comment| comment.queued || !only_queued)
+                .collect();
+            if comments.is_empty() {
+                continue;
+            }
+            if !is_first {
                 result.push_str("---\n\n");
             }
+            is_first = false;
 
-            match &ann.target {
-                AnnotationTarget::File => {
-                    result.push_str(&format!("**{}**\n\n", ann.filename));
-                }
-                AnnotationTarget::LineRange { panel, start_line, end_line, .. } => {
-                    let side = match panel {
-                        DiffPanelFocus::Old => "LEFT",
-                        _ => "RIGHT",
-                    };
-                    if start_line == end_line {
-                        result.push_str(&format!(
-                            "**{}** line {} ({})\n\n",
-                            ann.filename, start_line, side,
-                        ));
-                    } else {
-                        result.push_str(&format!(
-                            "**{}** lines {}-{} ({})\n\n",
-                            ann.filename, start_line, end_line, side,
-                        ));
-                    }
-                }
+            result.push_str(&format!("**{}**", thread.filename));
+            if let Some(line_reference) = thread.line_reference() {
+                result.push_str(&format!(" {}", line_reference));
             }
-
-            // Comment body
-            result.push_str(&ann.content);
             result.push_str("\n\n");
+
+            let names_authors = !only_queued && thread.comments.len() > 1;
+            for comment in comments {
+                if names_authors {
+                    result.push_str(&format!("{}: ", comment.author_name));
+                }
+                result.push_str(&comment.body);
+                result.push_str("\n\n");
+            }
         }
 
         result.trim_end().to_string()
@@ -1067,6 +1147,120 @@ mod tests {
         } else {
             panic!("sidebar_selected should point to a file");
         }
+    }
+
+    fn line_target(line: usize) -> AnnotationTarget {
+        AnnotationTarget::LineRange {
+            panel: DiffPanelFocus::New,
+            start_line: line,
+            end_line: line,
+        }
+    }
+
+    #[test]
+    fn test_new_comments_are_queued_until_they_are_marked_sent() {
+        let mut state = AppState::new(vec![make_file_diff("a.rs")], None);
+        let (thread_id, comment_id) =
+            state.add_thread("a.rs".to_string(), line_target(1), "first".to_string());
+        state.add_thread("a.rs".to_string(), AnnotationTarget::File, "second".to_string());
+
+        assert_eq!(state.queued_count(), 2);
+        assert!(!state.threads[0].awaiting_agent());
+        assert_eq!(
+            state.queued_text_for_agent(Some((&thread_id, &comment_id))),
+            format!("## Thread {} · a.rs line 1 (RIGHT)\n\n```\ncontent\n```\n\nyou: first", thread_id)
+        );
+        assert_eq!(state.queued_text_for_agent(None).matches("## Thread ").count(), 2);
+
+        assert_eq!(state.mark_sent(Some((&thread_id, &comment_id))), 1);
+        assert_eq!(state.queued_count(), 1);
+        assert!(state.threads[0].awaiting_agent());
+        assert_eq!(state.format_threads_for_export(true), "**a.rs**\n\nsecond");
+
+        assert_eq!(state.mark_sent(None), 1);
+        assert_eq!(state.mark_sent(None), 0);
+    }
+
+    #[test]
+    fn test_replying_to_a_resolved_thread_reopens_it() {
+        let mut state = AppState::new(vec![make_file_diff("a.rs")], None);
+        let (thread_id, _) =
+            state.add_thread("a.rs".to_string(), line_target(1), "first".to_string());
+        state.toggle_thread_resolved(&thread_id);
+        assert!(state.threads[0].resolved);
+
+        state.add_reply(&thread_id, "one more thing".to_string());
+
+        assert!(!state.threads[0].resolved);
+    }
+
+    #[test]
+    fn test_an_open_thread_is_found_before_an_older_resolved_one_on_the_same_lines() {
+        let mut state = AppState::new(vec![make_file_diff("a.rs")], None);
+        let (older_id, _) =
+            state.add_thread("a.rs".to_string(), line_target(1), "first".to_string());
+        state.toggle_thread_resolved(&older_id);
+        let (newer_id, _) =
+            state.add_thread("a.rs".to_string(), line_target(1), "second".to_string());
+        let thread_to_toggle = |state: &AppState| {
+            state
+                .thread_at("a.rs", &line_target(1), true)
+                .map(|thread| thread.id.clone())
+        };
+
+        assert_eq!(thread_to_toggle(&state), Some(newer_id.clone()));
+
+        state.toggle_thread_resolved(&newer_id);
+        assert_eq!(thread_to_toggle(&state), Some(older_id));
+    }
+
+    #[test]
+    fn test_threads_persist_and_replies_written_by_another_process_are_picked_up() {
+        let repository_root = crate::vcs::test_utils::make_temp_dir("state-thread-store");
+        let open_state = || {
+            let mut state = AppState::new(vec![make_file_diff("a.rs")], None);
+            state.open_thread_store(ThreadStore::for_repository(&repository_root).unwrap());
+            state
+        };
+        let mut state = open_state();
+        let (thread_id, _) =
+            state.add_thread("a.rs".to_string(), line_target(1), "why?".to_string());
+        state.mark_sent(None);
+        assert_eq!(state.threads[0].anchor_text.as_deref(), Some("content"));
+        let bodies = |state: &AppState| -> Vec<String> {
+            state.threads[0].comments.iter().map(|c| c.body.clone()).collect()
+        };
+        let reply_as_agent = |body: &str| {
+            ThreadStore::for_repository(&repository_root)
+                .unwrap()
+                .update(|threads| {
+                    threads[0].add_agent_reply(Comment::agent(body.to_string(), "pi".to_string()))
+                })
+                .unwrap();
+        };
+
+        // A reply shows up in the open review without the reviewer doing anything.
+        reply_as_agent("because");
+        assert!(state.reload_threads_if_changed());
+        assert_eq!(bodies(&state), vec!["why?", "because"]);
+
+        // A reply written just before the reviewer's own change is not overwritten.
+        reply_as_agent("and also");
+        state.add_reply(&thread_id, "ok".to_string());
+        assert_eq!(bodies(&state), vec!["why?", "because", "and also", "ok"]);
+        assert_eq!(bodies(&open_state()), vec!["why?", "because", "and also", "ok"]);
+        let _ = std::fs::remove_dir_all(&repository_root);
+    }
+
+    #[test]
+    fn test_reload_keeps_threads_of_files_that_left_the_diff_as_outdated() {
+        let mut state = AppState::new(vec![make_file_diff("a.rs")], None);
+        state.add_thread("a.rs".to_string(), line_target(1), "first".to_string());
+
+        state.reload(vec![make_file_diff("b.rs")], None);
+
+        assert_eq!(state.threads.len(), 1);
+        assert!(state.threads[0].outdated);
     }
 
     #[test]
