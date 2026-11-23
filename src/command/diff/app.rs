@@ -449,7 +449,7 @@ fn send_queued(
     };
     agent
         .send_comments(&comments)
-        .map_err(|error| format!("not sent, still queued: {}", error))?;
+        .map_err(|error| format!("{}: still queued", error))?;
     let sent = match only {
         Some(_) => state.mark_sent(only),
         None => {
@@ -461,10 +461,26 @@ fn send_queued(
     Ok(format!("sent {} to the agent", count_of(sent, "comment")))
 }
 
+/// The list of agent panes to choose from, as of the last search, with the attached
+/// pane selected. The first item is "none", then `agent.known_candidates()` in order.
+fn agent_picker(agent: &AgentLink) -> Modal {
+    let panes = agent.known_candidates();
+    let attached = panes
+        .iter()
+        .position(|pane| Some(pane.block.as_str()) == agent.attached_block());
+    let mut items = vec!["none".to_string()];
+    items.extend(panes.iter().map(AgentPane::picker_label));
+    Modal::select(
+        "Agent that answers comments",
+        items,
+        attached.map_or(0, |index| index + 1),
+    )
+}
+
 /// What the open selection list is for.
 enum Picker {
     Repository,
-    Agent(Vec<AgentPane>),
+    Agent,
     Quit,
 }
 
@@ -659,6 +675,8 @@ fn run_app_internal<'a>(
         review_path,
     );
     let mut agent_refreshed_at = Instant::now();
+    // The agent list was opened from the last search: search again once it is drawn.
+    let mut agent_picker_is_stale = false;
     // A short message about the last action, shown in the footer for a few seconds.
     let mut notice: Option<(String, Instant)> = None;
 
@@ -899,6 +917,14 @@ fn run_app_internal<'a>(
             state.annotation_overlay_gaps = gaps_cell.into_inner();
             state.annotation_rects = rects_cell.into_inner();
             state.editor_rect = editor_rect_cell.get();
+        }
+
+        if agent_picker_is_stale {
+            agent_picker_is_stale = false;
+            if matches!(open_picker, Some(Picker::Agent)) {
+                agent.find_candidates(&review_roots);
+                active_modal = Some(agent_picker(&agent));
+            }
         }
 
         // Poll for new events if no pending events
@@ -1169,10 +1195,10 @@ fn run_app_internal<'a>(
                                             }
                                         }
                                         // The first item is "none".
-                                        Some(Picker::Agent(mut panes)) => {
-                                            let pane = (selected_index > 0
-                                                && selected_index <= panes.len())
-                                            .then(|| panes.remove(selected_index - 1));
+                                        Some(Picker::Agent) => {
+                                            let pane = selected_index.checked_sub(1).and_then(
+                                                |index| agent.known_candidates().get(index).cloned(),
+                                            );
                                             agent.set_pane(pane);
                                         }
                                         Some(Picker::Quit) => match selected_index {
@@ -2162,18 +2188,9 @@ fn run_app_internal<'a>(
                             }
                         }
                         KeyCode::Char('A') => {
-                            let panes = agent.candidates(&review_roots);
-                            let attached = panes
-                                .iter()
-                                .position(|pane| Some(pane.block.as_str()) == agent.attached_block());
-                            let mut items = vec!["none".to_string()];
-                            items.extend(panes.iter().map(AgentPane::picker_label));
-                            active_modal = Some(Modal::select(
-                                "Agent that answers comments",
-                                items,
-                                attached.map_or(0, |index| index + 1),
-                            ));
-                            open_picker = Some(Picker::Agent(panes));
+                            active_modal = Some(agent_picker(&agent));
+                            open_picker = Some(Picker::Agent);
+                            agent_picker_is_stale = true;
                         }
                         KeyCode::Char('s') => {
                             let queued = queued_total(&state, workspace_session.as_ref());

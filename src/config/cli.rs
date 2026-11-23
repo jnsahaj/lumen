@@ -89,7 +89,7 @@ pub enum Commands {
         view: Option<ViewMode>,
 
         /// Rex pane of the coding agent that answers review comments
-        /// (default: the latest active pi pane at this repository or folder)
+        /// (default: the latest active agent pane at this repository or folder)
         #[arg(long = "agent-block", value_name = "BLOCK")]
         agent_block: Option<String>,
     },

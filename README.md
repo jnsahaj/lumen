@@ -98,10 +98,19 @@ panel is shown (`0`).
 | `I` | List the threads. There, `x` resolves or reopens the selected one. |
 | `A` | Choose the agent, or none |
 
-- **Agent.** Lumiere looks for [Rex](https://rex.dev) panes running `pi` whose working
-  directory is a reviewed repository, the folder Lumiere was started from, or a folder
-  inside one of them. It attaches to the most recently active one; `--agent-block BLOCK`
-  names the pane instead. The footer shows the agent and its state, or `no agent`.
+- **Agent.** Lumiere looks for [Rex](https://rex.dev) panes running a coding agent
+  whose working directory is a reviewed repository, the folder Lumiere was started
+  from, or a folder inside one of them. It attaches to the most recently active one;
+  `--agent-block BLOCK` names the pane instead. The footer shows the agent and its
+  state, or `no agent`.
+- **Which agents.** An agent is recognised by the
+  [status](https://www.superlogical.com/rex/docs/build/program-status) it reports to
+  Rex: pi, Claude Code, Codex (0.163 or later) and Antigravity, and by name only,
+  untested, OpenCode, Hermes and Grok. An agent that reports no status is not found.
+  The agent may ask your permission before it runs `lumiere thread reply`.
+- **Agent waiting for you.** While the agent is asking you something, such as a
+  permission, nothing is sent and the comment stays queued: submitting would answer
+  its question. Answer the agent, then press `s`.
 - **Sending.** Lumiere pastes one message into the agent's prompt and submits it. The
   message holds each comment with its thread id, file, lines and code, and the command
   to reply with. A follow-up in a thread leaves the code out and says how to read the
