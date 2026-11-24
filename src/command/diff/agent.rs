@@ -211,15 +211,15 @@ pub struct AgentPane {
 }
 
 impl AgentPane {
+    /// The agent's name, its Rex session, its state, then where it runs.
     pub fn picker_label(&self) -> String {
-        let mut label = format!("{} · {}", self.status.app, self.cwd.display());
-        if !self.session_label.is_empty() {
-            label.push_str(&format!(" · {}", self.session_label));
-        }
-        if !self.status.state.is_empty() {
-            label.push_str(&format!(" · {}", self.status.state));
-        }
-        label
+        let cwd = self.cwd.display().to_string();
+        [&self.status.app, &self.session_label, &self.status.state, &cwd]
+            .into_iter()
+            .filter(|part| !part.is_empty())
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .join(" · ")
     }
 }
 
@@ -557,7 +557,7 @@ mod tests {
         assert_eq!(blocks(link.known_candidates()), vec!["subdirectory", "at-the-root", "older"]);
         assert_eq!(
             link.known_candidates()[1].picker_label(),
-            "claude-code · /work · label of s2 · idle"
+            "claude-code · label of s2 · idle · /work"
         );
     }
 

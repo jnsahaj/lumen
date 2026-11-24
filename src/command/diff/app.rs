@@ -471,7 +471,7 @@ fn agent_picker(agent: &AgentLink) -> Modal {
     let mut items = vec!["none".to_string()];
     items.extend(panes.iter().map(AgentPane::picker_label));
     Modal::select(
-        "Agent that answers comments",
+        "Agents",
         items,
         attached.map_or(0, |index| index + 1),
     )
