@@ -265,15 +265,27 @@ fn format_annotation_preview(thread: &Thread) -> String {
     )
 }
 
-/// The threads list, oldest first, opened on `selected_thread` when it is given.
-fn threads_modal(threads: &[Thread], selected_thread: Option<&str>) -> Modal {
-    let mut sorted_threads = threads.to_vec();
-    sorted_threads.sort_by_key(|thread| thread.created_at);
-    let items = sorted_threads.iter().map(format_annotation_preview).collect();
+/// The threads list, oldest first, opened on `selected_thread` when it is given and
+/// listed. Resolved threads are listed only when `show_resolved` is set; the title
+/// says how many are left out.
+fn threads_modal(threads: &[Thread], selected_thread: Option<&str>, show_resolved: bool) -> Modal {
+    let mut listed_threads: Vec<Thread> = threads
+        .iter()
+        .filter(|thread| show_resolved || !thread.resolved)
+        .cloned()
+        .collect();
+    listed_threads.sort_by_key(|thread| thread.created_at);
+    let items = listed_threads.iter().map(format_annotation_preview).collect();
     let selected = selected_thread
-        .and_then(|id| sorted_threads.iter().position(|thread| thread.id == id))
+        .and_then(|id| listed_threads.iter().position(|thread| thread.id == id))
         .unwrap_or(0);
-    Modal::annotations("Threads", items, sorted_threads, selected)
+    let hidden = threads.len() - listed_threads.len();
+    let title = if hidden > 0 {
+        format!("Threads ({}) · {} resolved hidden", listed_threads.len(), hidden)
+    } else {
+        format!("Threads ({})", listed_threads.len())
+    };
+    Modal::annotations(title, items, listed_threads, selected)
 }
 
 fn count_of(count: usize, noun: &str) -> String {
@@ -648,6 +660,8 @@ fn run_app_internal<'a>(
     let mut pending_watch_event: Option<WatchEvent> = None;
     let mut pending_events: VecDeque<Event> = VecDeque::new();
     let mut send_annotations_on_exit = false;
+    // Whether the threads list also shows resolved threads: chosen there with `r`.
+    let mut show_resolved_threads = false;
 
     // The agent may work in any reviewed repository or in the folder lumiere was
     // started from, which is also the folder a workspace review covers.
@@ -1072,13 +1086,24 @@ fn run_app_internal<'a>(
                                     active_modal = if state.threads.is_empty() {
                                         None
                                     } else {
-                                        Some(threads_modal(&state.threads, None))
+                                        Some(threads_modal(&state.threads, None, show_resolved_threads))
                                     };
                                 }
                                 ModalResult::AnnotationToggleResolved { annotation_id } => {
                                     state.toggle_thread_resolved(&annotation_id);
-                                    active_modal =
-                                        Some(threads_modal(&state.threads, Some(&annotation_id)));
+                                    active_modal = Some(threads_modal(
+                                        &state.threads,
+                                        Some(&annotation_id),
+                                        show_resolved_threads,
+                                    ));
+                                }
+                                ModalResult::AnnotationsToggleResolvedShown { selected_id } => {
+                                    show_resolved_threads = !show_resolved_threads;
+                                    active_modal = Some(threads_modal(
+                                        &state.threads,
+                                        selected_id.as_deref(),
+                                        show_resolved_threads,
+                                    ));
                                 }
                                 ModalResult::AnnotationCopyAll => {
                                     // Copy all annotations to clipboard
@@ -2171,7 +2196,8 @@ fn run_app_internal<'a>(
                         }
                         KeyCode::Char('I') => {
                             if !state.threads.is_empty() {
-                                active_modal = Some(threads_modal(&state.threads, None));
+                                active_modal =
+                                    Some(threads_modal(&state.threads, None, show_resolved_threads));
                             }
                         }
                         KeyCode::Char('r') => {
@@ -2564,7 +2590,7 @@ fn run_app_internal<'a>(
                                             },
                                             KeyBind {
                                                 key: "I",
-                                                description: "View all threads (x resolves one there)",
+                                                description: "List threads (there: x resolves, r shows resolved)",
                                             },
                                             KeyBind {
                                                 key: "s",
@@ -2739,7 +2765,7 @@ mod tests {
         state.add_thread("a.rs".to_string(), AnnotationTarget::File, "first".to_string());
         let (second_id, _) =
             state.add_thread("a.rs".to_string(), AnnotationTarget::File, "second".to_string());
-        let mut list = threads_modal(&state.threads, Some(&second_id));
+        let mut list = threads_modal(&state.threads, Some(&second_id), true);
         let x = crossterm::event::KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE);
 
         let Some(ModalResult::AnnotationToggleResolved { annotation_id }) = list.handle_input(x, 40)
@@ -2751,11 +2777,47 @@ mod tests {
         state.toggle_thread_resolved(&annotation_id);
         let resolved: Vec<bool> = state.threads.iter().map(|thread| thread.resolved).collect();
         assert_eq!(resolved, [false, true]);
-        let reopened_list = threads_modal(&state.threads, Some(&annotation_id));
+        let reopened_list = threads_modal(&state.threads, Some(&annotation_id), true);
         assert!(matches!(
             reopened_list.content,
             ModalContent::Annotations { selected: 1, .. }
         ));
+    }
+
+    fn listed(list: &Modal) -> (String, Vec<String>) {
+        let ModalContent::Annotations { title, annotations, .. } = &list.content else {
+            panic!("not a threads list");
+        };
+        let bodies = annotations.iter().map(|thread| thread.comments[0].body.clone()).collect();
+        (title.clone(), bodies)
+    }
+
+    #[test]
+    fn test_the_threads_list_leaves_out_resolved_threads_until_r_is_pressed() {
+        let mut state = state_with_file("a\n", "b\n");
+        let (first_id, _) =
+            state.add_thread("a.rs".to_string(), AnnotationTarget::File, "first".to_string());
+        state.add_thread("a.rs".to_string(), AnnotationTarget::File, "second".to_string());
+        state.toggle_thread_resolved(&first_id);
+
+        let mut list = threads_modal(&state.threads, None, false);
+        assert_eq!(
+            listed(&list),
+            ("Threads (1) · 1 resolved hidden".to_string(), vec!["second".to_string()])
+        );
+
+        let r = crossterm::event::KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE);
+        let Some(ModalResult::AnnotationsToggleResolvedShown { selected_id }) =
+            list.handle_input(r, 40)
+        else {
+            panic!("r asks to show the resolved threads");
+        };
+        let list = threads_modal(&state.threads, selected_id.as_deref(), true);
+        assert_eq!(
+            listed(&list),
+            ("Threads (2)".to_string(), vec!["first".to_string(), "second".to_string()])
+        );
+        assert!(matches!(list.content, ModalContent::Annotations { selected: 1, .. }));
     }
 
     #[test]

@@ -97,6 +97,8 @@ pub enum ModalResult {
     AnnotationEdit { annotation_id: String },
     AnnotationDelete { annotation_id: String },
     AnnotationToggleResolved { annotation_id: String },
+    /// Show the resolved threads in the list, or hide them again.
+    AnnotationsToggleResolvedShown { selected_id: Option<String> },
     AnnotationCopyAll,
     AnnotationExport(String),
 }
@@ -702,7 +704,7 @@ impl Modal {
         let t = theme::get();
 
         // Compact title with count
-        let title_text = format!(" {} ({}) ", title, items.len());
+        let title_text = format!(" {} ", title);
 
         let block = Block::default()
             .title(title_text)
@@ -902,6 +904,9 @@ impl Modal {
                 Span::styled("│  ", Style::default().fg(t.ui.border_unfocused)),
                 Span::styled("x", Style::default().fg(t.ui.text_muted)),
                 Span::styled(" resolve  ", Style::default().fg(t.ui.text_muted)),
+                Span::styled("│  ", Style::default().fg(t.ui.border_unfocused)),
+                Span::styled("r", Style::default().fg(t.ui.text_muted)),
+                Span::styled(" resolved  ", Style::default().fg(t.ui.text_muted)),
                 Span::styled("│  ", Style::default().fg(t.ui.border_unfocused)),
                 Span::styled("d", Style::default().fg(t.ui.text_muted)),
                 Span::styled(" del  ", Style::default().fg(t.ui.text_muted)),
@@ -1302,6 +1307,9 @@ impl Modal {
                             ModalResult::AnnotationToggleResolved {
                                 annotation_id: ann.id.clone(),
                             }
+                        }),
+                        KeyCode::Char('r') => Some(ModalResult::AnnotationsToggleResolvedShown {
+                            selected_id: annotations.get(*selected).map(|ann| ann.id.clone()),
                         }),
                         KeyCode::Char('y') => Some(ModalResult::AnnotationCopyAll),
                         KeyCode::Char('o') => {

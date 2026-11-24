@@ -312,7 +312,7 @@ fn message_for_agent(review_path: &Path, comments: &str) -> String {
     let message = format!(
         "Lumiere review comments. Answer each thread below with:\n\
          {lumiere} thread reply <thread-id> --repo '{path}' --body '<reply>'\n\
-         Reply in the thread first, in a few sentences, saying whether you agree and what \
+         Reply in the thread first, saying whether you agree and what \
          you would change. That command is your whole answer: write nothing after it. \
          Edit code only after I approve in that thread.\
          {earlier_comments}\n\n\

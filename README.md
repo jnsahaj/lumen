@@ -106,7 +106,7 @@ panel is shown (`0`).
 | `Shift+Enter`, `Ctrl+J` | New line |
 | `s` | Send every queued comment as one message |
 | `x` | Resolve or reopen the thread. Replying to a resolved thread reopens it. |
-| `I` | List the threads. There, `x` resolves or reopens the selected one. |
+| `I` | List the open threads. There, `x` resolves the selected one and `r` shows or hides the resolved ones. |
 | `A` | Choose the agent, or none |
 
 - **Agent.** Lumiere looks for [Rex](https://rex.dev) panes running a coding agent
