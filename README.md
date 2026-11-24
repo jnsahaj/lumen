@@ -15,6 +15,17 @@ agent wrote; the agent answers inside the same thread while the review stays ope
 - Git and Jujutsu
 - A `/lumiere` command for the [pi](https://github.com/earendil-works/pi) coding agent
 
+<table>
+  <tr>
+    <td width="50%"><img src="assets/screenshots/diff.png" alt="A file shown side by side, old on the left and new on the right" /><br /><sub>Side by side, with the whole file.</sub></td>
+    <td width="50%"><img src="assets/screenshots/hunks-only.png" alt="The same file with unchanged lines folded" /><br /><sub><code>z</code> folds the unchanged lines.</sub></td>
+  </tr>
+  <tr>
+    <td><img src="assets/screenshots/thread.png" alt="A comment on a hunk and the agent's reply under it" /><br /><sub>Comment on a hunk; the agent answers in the thread.</sub></td>
+    <td><img src="assets/screenshots/agents.png" alt="The list of coding agents found in the repository" /><br /><sub><code>A</code> lists the agents running in the repository.</sub></td>
+  </tr>
+</table>
+
 Lumiere is a fork of [Lumen](https://github.com/jnsahaj/lumen) by Sahaj Jain. See
 [Relation to Lumen](#relation-to-lumen).
 
