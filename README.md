@@ -80,6 +80,11 @@ after `A` has moved on.
 
 `lumiere diff` works from any directory of a repository.
 
+- On Linux, `--watch` does not watch the folders Git ignores, such as `node_modules` or
+  `.venv`.
+- A file over 1 MB is coloured line by line, so a string or comment spanning several
+  lines may get the wrong colour, and the enclosing function is not pinned at the top.
+
 ### Hunks only or full file
 
 By default Lumiere shows each change with three unchanged lines around it. A row such
@@ -261,6 +266,9 @@ cargo build
 cargo test
 cargo clippy --all-targets
 ```
+
+`bench/` measures how fast Lumiere starts and reacts, to compare a change before and
+after. See [bench/README.md](bench/README.md).
 
 ## License
 

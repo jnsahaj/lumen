@@ -43,7 +43,6 @@ use super::diff_algo::{hunk_comment_lines, hunk_lines_on};
 use super::git::{
     get_current_branch, load_file_diffs, load_pr_file_diffs, load_single_commit_diffs,
 };
-use super::highlight;
 use super::render::{
     render_diff, render_empty_state, truncate_path, FilePickerItem, KeyBind, KeyBindSection, Modal,
     ModalContent, ModalFileStatus, ModalResult, ReviewStatus,
@@ -418,6 +417,8 @@ fn save_comment(state: &mut AppState, editor: &AnnotationEditor) -> Option<(Stri
     }
 }
 
+const LARGE_FILE_NOTICE: &str = "large file: colours are approximate";
+
 /// Whether an arrow or `j`/`k` key press asks for another file instead of scrolling:
 /// with option held, or with ctrl held on a letter.
 fn changes_file(key: &crossterm::event::KeyEvent) -> bool {
@@ -597,7 +598,6 @@ fn run_app_internal<'a>(
     mut workspace_session: Option<WorkspaceSession<'a>>,
 ) -> io::Result<()> {
     theme::init(options.theme.as_deref());
-    highlight::init();
 
     // Initialize state before TUI so we can sync viewed files
     let mut state = new_review_state(&options, file_diffs, backend, options.focus.as_deref());
@@ -681,18 +681,15 @@ fn run_app_internal<'a>(
     review_roots.extend(launch_dir);
     let rex = RexCli;
     let rex_session = std::env::var("REX_SESSION").ok();
-    let mut agent = AgentLink::attach(
-        &rex,
-        options.agent_block.as_deref(),
-        rex_session.as_deref(),
-        &review_roots,
-        review_path,
-    );
+    // Finding the agent takes a few calls to Rex: it is done once the review is on screen.
+    let mut agent = AgentLink::new(&rex, review_path);
     let mut agent_refreshed_at = Instant::now();
     // The agent list was opened from the last search: search again once it is drawn.
     let mut agent_picker_is_stale = false;
     // A short message about the last action, shown in the footer for a few seconds.
     let mut notice: Option<(String, Instant)> = None;
+    // The file the large-file notice was last decided for.
+    let mut noticed_file: Option<String> = None;
 
     'main: loop {
         state.reload_threads_if_changed();
@@ -759,6 +756,13 @@ fn run_app_internal<'a>(
                 }
             })?;
         } else {
+            let filename = &state.file_diffs[state.current_file].filename;
+            if noticed_file.as_deref() != Some(filename.as_str()) {
+                noticed_file = Some(filename.clone());
+                if state.current_file_is_too_large_to_parse() {
+                    notice = Some((LARGE_FILE_NOTICE.to_string(), Instant::now()));
+                }
+            }
             // Use cached side_by_side (avoids recomputing diff every frame during drag etc.)
             state.update_search_matches();
             // Ensure highlighters are cached (only recomputed when file changes)
@@ -931,6 +935,12 @@ fn run_app_internal<'a>(
             state.annotation_overlay_gaps = gaps_cell.into_inner();
             state.annotation_rects = rects_cell.into_inner();
             state.editor_rect = editor_rect_cell.get();
+        }
+
+        if !agent.has_searched() {
+            agent.attach(options.agent_block.as_deref(), rex_session.as_deref(), &review_roots);
+            agent_refreshed_at = Instant::now();
+            continue 'main;
         }
 
         if agent_picker_is_stale {

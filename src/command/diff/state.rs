@@ -8,7 +8,7 @@ use crate::command::diff::diff_algo::{
     compute_side_by_side, count_added_removed, find_hunk_starts, hide_unchanged_rows,
     HUNK_CONTEXT_ROWS,
 };
-use crate::command::diff::highlight::FileHighlighter;
+use crate::command::diff::highlight::{too_large_to_parse, FileHighlighter};
 
 use crate::command::diff::search::SearchState;
 use crate::command::diff::review_thread::{
@@ -395,6 +395,12 @@ impl AppState {
 
     fn parse_syntax_trees(&mut self) {
         let diff = &self.file_diffs[self.current_file];
+        if self.current_file_is_too_large_to_parse() {
+            // Trees parsed before the file grew would pin lines that moved since.
+            self.cached_trees.old_file_trees.remove(&diff.filename);
+            self.cached_trees.new_file_trees.remove(&diff.filename);
+            return;
+        }
         let Some(lang_ctx) = get_language_context(&diff.filename) else {
             return;
         };
@@ -470,12 +476,25 @@ impl AppState {
         };
         if needs_recompute {
             let diff = &self.file_diffs[current];
-            let old_hl = FileHighlighter::new(&diff.old_content, &diff.filename);
-            let new_hl = FileHighlighter::new(&diff.new_content, &diff.filename);
+            let (old_hl, new_hl) = if self.current_file_is_too_large_to_parse() {
+                (FileHighlighter::default(), FileHighlighter::default())
+            } else {
+                (
+                    FileHighlighter::new(&diff.old_content, &diff.filename),
+                    FileHighlighter::new(&diff.new_content, &diff.filename),
+                )
+            };
             self.cached_highlighters = Some((current, old_hl, new_hl));
         }
         let (_, old_hl, new_hl) = self.cached_highlighters.as_ref().unwrap();
         (old_hl, new_hl)
+    }
+
+    /// Whether the current file is coloured line by line: see `too_large_to_parse`.
+    pub fn current_file_is_too_large_to_parse(&self) -> bool {
+        self.file_diffs
+            .get(self.current_file)
+            .is_some_and(|diff| too_large_to_parse(&diff.old_content, &diff.new_content))
     }
 
     /// Get cached highlighters without triggering recompute.
@@ -1361,6 +1380,60 @@ mod tests {
 
         assert_eq!(state.threads.len(), 1);
         assert!(state.threads[0].outdated);
+    }
+
+    /// A Python file with one line added at its end.
+    fn python_file_diff(filename: &str, old_content: String) -> FileDiff {
+        FileDiff {
+            filename: filename.to_string(),
+            new_content: format!("{}added = True\n", old_content),
+            old_content,
+            status: FileStatus::Modified,
+            is_binary: false,
+        }
+    }
+
+    fn small_python_source() -> String {
+        "def f():\n    return 1\n".to_string()
+    }
+
+    /// Just over one megabyte, every line different.
+    fn large_python_source() -> String {
+        (0..60_000).map(|n| format!("value_{} = {}\n", n, n)).collect()
+    }
+
+    #[test]
+    fn test_a_file_over_the_size_limit_is_not_parsed_as_a_whole() {
+        let mut state = AppState::new(
+            vec![
+                python_file_diff("a_small.py", small_python_source()),
+                python_file_diff("b_large.py", large_python_source()),
+            ],
+            None,
+        );
+
+        assert!(!state.current_file_is_too_large_to_parse());
+        assert!(!state.get_highlighters().1.is_empty());
+        assert!(state.cached_trees.new_file_trees.contains_key("a_small.py"));
+
+        state.select_file(1);
+        assert!(state.current_file_is_too_large_to_parse());
+        let (old_highlighter, new_highlighter) = state.get_highlighters();
+        assert!(old_highlighter.is_empty() && new_highlighter.is_empty());
+        assert!(!state.cached_trees.old_file_trees.contains_key("b_large.py"));
+        assert!(!state.cached_trees.new_file_trees.contains_key("b_large.py"));
+    }
+
+    #[test]
+    fn test_a_file_that_grew_over_the_size_limit_loses_its_parsed_trees() {
+        let mut state = AppState::new(vec![python_file_diff("a.py", small_python_source())], None);
+        assert!(state.cached_trees.new_file_trees.contains_key("a.py"));
+
+        state.reload(vec![python_file_diff("a.py", large_python_source())], None);
+        state.ensure_cache();
+
+        assert!(!state.cached_trees.old_file_trees.contains_key("a.py"));
+        assert!(!state.cached_trees.new_file_trees.contains_key("a.py"));
     }
 
     #[test]

@@ -10,7 +10,7 @@ use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher};
 
 use super::diff_algo::compute_side_by_side;
-use super::highlight::FileHighlighter;
+use super::highlight::{too_large_to_parse, FileHighlighter};
 use super::search::MatchPanel;
 use super::text_edit::erase_word_backward;
 use super::types::{ChangeType, DiffLine, DiffViewSettings, FileDiff};
@@ -295,7 +295,11 @@ impl GlobalSearchState {
             return Vec::new();
         };
         let content = if is_new { &file.new } else { &file.old };
-        let highlighter = FileHighlighter::new(content, &file.filename);
+        let highlighter = if too_large_to_parse(&file.old, &file.new) {
+            FileHighlighter::default()
+        } else {
+            FileHighlighter::new(content, &file.filename)
+        };
         let spans = highlighter.get_line_spans(line_no, bg);
         self.highlighter_cache.borrow_mut().insert(key, highlighter);
         spans
