@@ -1,5 +1,6 @@
 mod diff_view;
 mod footer;
+mod markdown;
 pub mod modal;
 mod sidebar;
 

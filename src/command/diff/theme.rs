@@ -115,6 +115,7 @@ pub struct UiColors {
     pub text_muted: Color,
     pub line_number: Color,
     pub bg: Color,
+    pub code_bg: Color,
     pub footer_branch_bg: Color,
     pub footer_branch_fg: Color,
     pub status_added: Color,
@@ -184,6 +185,7 @@ impl Theme {
                 text_muted: Color::Rgb(140, 140, 160),
                 line_number: Color::DarkGray,
                 bg: Color::Reset,
+                code_bg: Color::Rgb(40, 40, 50),
                 footer_branch_bg: Color::Rgb(50, 50, 70),
                 footer_branch_fg: Color::Rgb(180, 180, 220),
                 status_added: Color::Green,
@@ -245,6 +247,7 @@ impl Theme {
                 text_muted: Color::Rgb(140, 149, 159),
                 line_number: Color::Rgb(140, 149, 159),
                 bg: Color::Reset,
+                code_bg: Color::Rgb(235, 238, 242),
                 footer_branch_bg: Color::Rgb(221, 244, 255),
                 footer_branch_fg: Color::Rgb(9, 105, 218),
                 status_added: Color::Rgb(26, 127, 55),
@@ -331,6 +334,7 @@ impl Theme {
                 text_muted: Color::Rgb(108, 112, 134),       // overlay0
                 line_number: Color::Rgb(88, 91, 112),        // overlay0
                 bg: Color::Rgb(24, 24, 37),                  // mantle
+                code_bg: Color::Rgb(49, 50, 68),             // surface0
                 footer_branch_bg: Color::Rgb(49, 50, 68),    // surface0
                 footer_branch_fg: Color::Rgb(137, 180, 250), // blue
                 status_added: Color::Rgb(166, 227, 161),     // green
@@ -392,6 +396,7 @@ impl Theme {
                 text_muted: Color::Rgb(140, 143, 161),
                 line_number: Color::Rgb(140, 143, 161),
                 bg: Color::Rgb(230, 233, 239),
+                code_bg: Color::Rgb(204, 208, 218),
                 footer_branch_bg: Color::Rgb(204, 208, 218),
                 footer_branch_fg: Color::Rgb(30, 102, 245),
                 status_added: Color::Rgb(64, 160, 43),
@@ -453,6 +458,7 @@ impl Theme {
                 text_muted: Color::Rgb(98, 114, 164),
                 line_number: Color::Rgb(98, 114, 164),
                 bg: Color::Rgb(33, 34, 44),
+                code_bg: Color::Rgb(52, 55, 70),
                 footer_branch_bg: Color::Rgb(68, 71, 90),
                 footer_branch_fg: Color::Rgb(189, 147, 249),
                 status_added: Color::Rgb(80, 250, 123),
@@ -514,6 +520,7 @@ impl Theme {
                 text_muted: Color::Rgb(76, 86, 106),       // nord3
                 line_number: Color::Rgb(76, 86, 106),
                 bg: Color::Rgb(59, 66, 82),               // nord1
+                code_bg: Color::Rgb(46, 52, 64),          // nord0
                 footer_branch_bg: Color::Rgb(67, 76, 94), // nord2
                 footer_branch_fg: Color::Rgb(136, 192, 208),
                 status_added: Color::Rgb(163, 190, 140),
@@ -575,6 +582,7 @@ impl Theme {
                 text_muted: Color::Rgb(146, 131, 116),
                 line_number: Color::Rgb(124, 111, 100),
                 bg: Color::Rgb(50, 48, 47),
+                code_bg: Color::Rgb(40, 40, 40),
                 footer_branch_bg: Color::Rgb(80, 73, 69),
                 footer_branch_fg: Color::Rgb(250, 189, 47),
                 status_added: Color::Rgb(184, 187, 38),
@@ -636,6 +644,7 @@ impl Theme {
                 text_muted: Color::Rgb(146, 131, 116),
                 line_number: Color::Rgb(146, 131, 116),
                 bg: Color::Rgb(235, 219, 178),
+                code_bg: Color::Rgb(251, 241, 199),
                 footer_branch_bg: Color::Rgb(213, 196, 161),
                 footer_branch_fg: Color::Rgb(69, 133, 136),
                 status_added: Color::Rgb(152, 151, 26),
@@ -697,6 +706,7 @@ impl Theme {
                 text_muted: Color::Rgb(92, 99, 112),
                 line_number: Color::Rgb(76, 82, 99),
                 bg: Color::Rgb(33, 37, 43),
+                code_bg: Color::Rgb(48, 53, 64),
                 footer_branch_bg: Color::Rgb(62, 68, 81),
                 footer_branch_fg: Color::Rgb(97, 175, 239),
                 status_added: Color::Rgb(152, 195, 121),
@@ -758,6 +768,7 @@ impl Theme {
                 text_muted: Color::Rgb(88, 110, 117),    // base01
                 line_number: Color::Rgb(88, 110, 117),
                 bg: Color::Rgb(7, 54, 66), // base02
+                code_bg: Color::Rgb(0, 43, 54), // base03
                 footer_branch_bg: Color::Rgb(88, 110, 117),
                 footer_branch_fg: Color::Rgb(38, 139, 210),
                 status_added: Color::Rgb(133, 153, 0),
@@ -819,6 +830,7 @@ impl Theme {
                 text_muted: Color::Rgb(147, 161, 161),   // base1
                 line_number: Color::Rgb(147, 161, 161),
                 bg: Color::Rgb(238, 232, 213), // base2
+                code_bg: Color::Rgb(253, 246, 227), // base3
                 footer_branch_bg: Color::Rgb(147, 161, 161),
                 footer_branch_fg: Color::Rgb(38, 139, 210),
                 status_added: Color::Rgb(133, 153, 0),
@@ -880,6 +892,7 @@ impl Theme {
                 text_muted: Color::Rgb(87, 86, 83),        // tx-3
                 line_number: Color::Rgb(87, 86, 83),       // tx-3
                 bg: Color::Rgb(28, 27, 26),                // bg-2
+                code_bg: Color::Rgb(16, 15, 15),           // bg
                 footer_branch_bg: Color::Rgb(52, 51, 49),  // ui-2
                 footer_branch_fg: Color::Rgb(58, 169, 159),
                 status_added: Color::Rgb(135, 154, 57),
@@ -941,6 +954,7 @@ impl Theme {
                 text_muted: Color::Rgb(183, 181, 172),       // tx-3
                 line_number: Color::Rgb(183, 181, 172),      // tx-3
                 bg: Color::Rgb(242, 240, 229),               // bg-2
+                code_bg: Color::Rgb(255, 252, 240),          // bg
                 footer_branch_bg: Color::Rgb(218, 216, 206), // ui-2
                 footer_branch_fg: Color::Rgb(36, 131, 123),
                 status_added: Color::Rgb(102, 128, 11),

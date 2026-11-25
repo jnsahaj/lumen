@@ -50,6 +50,7 @@ fn build_slots<'a, 'e>(
     filename: &str,
     file_level: bool,
     width_for: &dyn Fn(&AnnotationTarget) -> u16,
+    tab_width: usize,
     t: &theme::Theme,
 ) -> Vec<OverlaySlot<'a, 'e>> {
     let is_wanted_level =
@@ -64,7 +65,7 @@ fn build_slots<'a, 'e>(
         let editor_in_thread = editor.filter(|e| e.thread_id.as_deref() == Some(&thread.id));
         let edited_comment = editor_in_thread.and_then(|e| e.comment_id.as_deref());
         let rows_width = width_for(&thread.target).saturating_sub(1) as usize;
-        let rows = thread_rows(thread, edited_comment, rows_width, t);
+        let rows = thread_rows(thread, edited_comment, rows_width, tab_width, t);
         if !rows.is_empty() {
             slots.push(OverlaySlot::Saved { thread, rows });
         }
@@ -92,31 +93,6 @@ fn truncate_chars(text: &str, max_chars: usize) -> String {
     }
 }
 
-/// Splits `text` into rows of at most `width` characters, breaking at spaces
-/// where possible. Line breaks in `text` are kept.
-fn wrap_text(text: &str, width: usize) -> Vec<String> {
-    let width = width.max(1);
-    let mut rows = Vec::new();
-    for paragraph in text.lines() {
-        let mut row = String::new();
-        for word in paragraph.split(' ') {
-            let mut word: Vec<char> = word.chars().collect();
-            let separator = usize::from(!row.is_empty());
-            if char_count(&row) + separator + word.len() > width && !row.is_empty() {
-                rows.push(std::mem::take(&mut row));
-            } else if separator == 1 {
-                row.push(' ');
-            }
-            while word.len() > width {
-                rows.push(word.drain(..width).collect());
-            }
-            row.extend(word);
-        }
-        rows.push(row);
-    }
-    rows
-}
-
 /// Screen rows of a thread, each `width` characters wide: a box holding every
 /// comment under its author, or a single row when the thread is resolved.
 /// The comment `edited_comment` is left out. Empty when nothing is left to show.
@@ -124,6 +100,7 @@ fn thread_rows(
     thread: &Thread,
     edited_comment: Option<&str>,
     width: usize,
+    tab_width: usize,
     t: &theme::Theme,
 ) -> Vec<Line<'static>> {
     let comments: Vec<_> = thread
@@ -172,7 +149,7 @@ fn thread_rows(
     ]));
 
     let boxed = |spans: Vec<Span<'static>>| {
-        let used: usize = spans.iter().map(|span| char_count(&span.content)).sum();
+        let used: usize = spans.iter().map(Span::width).sum();
         let mut row = vec![Span::styled("│ ", border)];
         row.extend(spans);
         row.push(Span::raw(" ".repeat(text_width.saturating_sub(used))));
@@ -193,8 +170,15 @@ fn thread_rows(
             header.push(Span::styled(" · queued", Style::default().fg(t.ui.status_modified)));
         }
         rows.push(boxed(header));
-        for text_row in wrap_text(&comment.body, text_width) {
-            rows.push(boxed(vec![Span::styled(text_row, Style::default().fg(body_color))]));
+        for md_row in super::markdown::render_markdown(
+            &comment.body,
+            text_width,
+            body_color,
+            &thread.filename,
+            tab_width,
+            t,
+        ) {
+            rows.push(boxed(md_row));
         }
     }
 
@@ -1462,8 +1446,24 @@ pub fn render_diff(
         let scroll_usize = scroll as usize;
 
         let slot_width = |_: &AnnotationTarget| main_area.width.saturating_sub(2);
-        let file_slots = build_slots(annotations, editor, &diff.filename, true, &slot_width, t);
-        let line_slots = build_slots(annotations, editor, &diff.filename, false, &slot_width, t);
+        let file_slots = build_slots(
+            annotations,
+            editor,
+            &diff.filename,
+            true,
+            &slot_width,
+            settings.tab_width,
+            t,
+        );
+        let line_slots = build_slots(
+            annotations,
+            editor,
+            &diff.filename,
+            false,
+            &slot_width,
+            settings.tab_width,
+            t,
+        );
 
         let annotation_height = file_slots_height(&file_slots);
         content_row_offset = context_count + annotation_height;
@@ -1624,8 +1624,24 @@ pub fn render_diff(
         let scroll_usize = scroll as usize;
 
         let slot_width = |_: &AnnotationTarget| main_area.width.saturating_sub(2);
-        let file_slots = build_slots(annotations, editor, &diff.filename, true, &slot_width, t);
-        let line_slots = build_slots(annotations, editor, &diff.filename, false, &slot_width, t);
+        let file_slots = build_slots(
+            annotations,
+            editor,
+            &diff.filename,
+            true,
+            &slot_width,
+            settings.tab_width,
+            t,
+        );
+        let line_slots = build_slots(
+            annotations,
+            editor,
+            &diff.filename,
+            false,
+            &slot_width,
+            settings.tab_width,
+            t,
+        );
 
         let annotation_height = file_slots_height(&file_slots);
         content_row_offset = context_count + annotation_height;
@@ -1855,8 +1871,24 @@ pub fn render_diff(
             }
         };
         let slot_width = |target: &AnnotationTarget| slot_geometry(target).1;
-        let file_slots = build_slots(annotations, editor, &diff.filename, true, &slot_width, t);
-        let line_slots = build_slots(annotations, editor, &diff.filename, false, &slot_width, t);
+        let file_slots = build_slots(
+            annotations,
+            editor,
+            &diff.filename,
+            true,
+            &slot_width,
+            settings.tab_width,
+            t,
+        );
+        let line_slots = build_slots(
+            annotations,
+            editor,
+            &diff.filename,
+            false,
+            &slot_width,
+            settings.tab_width,
+            t,
+        );
 
         let file_ann_height = file_slots_height(&file_slots);
         content_row_offset = context_count + file_ann_height;
@@ -2432,5 +2464,44 @@ pub fn render_diff(
     );
 
     (content_row_offset, overlay_gaps, annotation_rects, editor_rect)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::command::diff::review_thread::Comment;
+
+    #[test]
+    fn test_thread_rows_aligns_box_borders_for_markdown_comments() {
+        let t = theme::get();
+        let mut thread = Thread::new(
+            "src/app.py".to_string(),
+            AnnotationTarget::File,
+            None,
+            Comment::agent(
+                "⚠️ Use `def foo()` and **bold** text:\n<details>\n<summary>More</summary>\n</details>\n```\ndef foo():\n    return \"🧑‍💻\"\n```"
+                    .to_string(),
+                "pi".to_string(),
+            ),
+        );
+        let width = 30;
+        let rows = thread_rows(&thread, None, width, 4, t);
+        assert!(rows.len() >= 7);
+        for (idx, row) in rows.iter().enumerate() {
+            assert_eq!(row.width(), width, "row {} misaligned", idx);
+            for span in &row.spans {
+                assert!(
+                    !span.content.contains('\n') && !span.content.contains('\r'),
+                    "row {} contained raw newline in span {:?}",
+                    idx,
+                    span.content
+                );
+            }
+        }
+
+        thread.resolved = true;
+        let resolved_rows = thread_rows(&thread, None, width, 4, t);
+        assert_eq!(resolved_rows.len(), 1);
+    }
 }
 

@@ -112,6 +112,24 @@ pub fn config_for_extension(extension: &str) -> Option<&'static LanguageConfig> 
         .and_then(Language::config)
 }
 
+/// The highlighting rules for a Markdown fence language tag (extension, language
+/// name, or common alias), compiled on first use.
+pub fn config_for_language(tag: &str) -> Option<&'static LanguageConfig> {
+    let token = tag.split_whitespace().next()?.to_ascii_lowercase();
+    let canonical = match token.as_str() {
+        "c++" => "cpp",
+        "c#" | "csharp" => "c_sharp",
+        "shell" | "zsh" => "bash",
+        "python3" | "py3" => "python",
+        "golang" => "go",
+        other => other,
+    };
+    LANGUAGES
+        .iter()
+        .find(|language| language.name == canonical || language.extensions.contains(&canonical))
+        .and_then(Language::config)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -128,5 +146,29 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_config_for_language_resolves_names_extensions_and_aliases() {
+        for tag in [
+            "py",
+            "python",
+            "Python3",
+            "rust",
+            "rs",
+            "ts title=\"demo.ts\"",
+            "typescript",
+            "c++",
+            "C#",
+            "csharp",
+            "shell",
+            "zsh",
+            "golang",
+        ] {
+            assert!(config_for_language(tag).is_some(), "expected config for {}", tag);
+        }
+        assert!(config_for_language("").is_none());
+        assert!(config_for_language("   ").is_none());
+        assert!(config_for_language("sql").is_none());
     }
 }

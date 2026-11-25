@@ -1,6 +1,7 @@
 mod config;
 mod queries;
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -8,7 +9,7 @@ use ratatui::prelude::*;
 use tree_sitter_highlight::{HighlightEvent, Highlighter};
 
 use super::theme;
-use config::{config_for_extension, LanguageConfig, HIGHLIGHT_NAMES};
+use config::{config_for_extension, config_for_language, LanguageConfig, HIGHLIGHT_NAMES};
 
 pub fn highlight_color(index: usize) -> Color {
     let t = theme::get();
@@ -216,6 +217,85 @@ pub fn highlight_line_spans<'a>(line: &str, filename: &str, bg: Option<Color>) -
             Span::styled(text, Style::default().fg(fg).bg(bg_color))
         })
         .collect()
+}
+
+thread_local! {
+    static SNIPPET_HIGHLIGHTER: RefCell<Highlighter> = RefCell::new(Highlighter::new());
+}
+
+fn plain_code_lines(code: &str, base_style: Style) -> Vec<Vec<Span<'static>>> {
+    let style = base_style.fg(theme::get().syntax.default_text);
+    code.split('\n')
+        .map(|line| {
+            if line.is_empty() {
+                Vec::new()
+            } else {
+                vec![Span::styled(line.to_string(), style)]
+            }
+        })
+        .collect()
+}
+
+/// Highlights `code` line by line using `language` when provided and non-empty,
+/// otherwise falling back to the language rules for `fallback_filename`.
+/// Preserves every line (including empty lines) and merges `base_style` with
+/// each token's syntax foreground color.
+pub fn highlight_code_lines(
+    code: &str,
+    language: Option<&str>,
+    fallback_filename: &str,
+    base_style: Style,
+) -> Vec<Vec<Span<'static>>> {
+    let lang_config = match language.map(str::trim).filter(|tag| !tag.is_empty()) {
+        Some(tag) => config_for_language(tag),
+        None => get_config_for_file(fallback_filename),
+    };
+    let Some(lang_config) = lang_config else {
+        return plain_code_lines(code, base_style);
+    };
+
+    let default_fg = theme::get().syntax.default_text;
+    SNIPPET_HIGHLIGHTER.with(|cell| {
+        let mut highlighter = cell.borrow_mut();
+        let Ok(highlights) =
+            highlighter.highlight(&lang_config.config, code.as_bytes(), None, |_| None)
+        else {
+            return plain_code_lines(code, base_style);
+        };
+
+        let mut lines: Vec<Vec<Span<'static>>> = vec![Vec::new()];
+        let mut stack: Vec<usize> = Vec::new();
+
+        for event in highlights.flatten() {
+            match event {
+                HighlightEvent::Source { start, end } => {
+                    let fg = stack
+                        .last()
+                        .copied()
+                        .map(highlight_color)
+                        .unwrap_or(default_fg);
+                    let style = base_style.fg(fg);
+                    let text = &code[start..end];
+                    for (i, part) in text.split('\n').enumerate() {
+                        if i > 0 {
+                            lines.push(Vec::new());
+                        }
+                        if !part.is_empty() {
+                            lines
+                                .last_mut()
+                                .unwrap()
+                                .push(Span::styled(part.to_string(), style));
+                        }
+                    }
+                }
+                HighlightEvent::HighlightStart(h) => stack.push(h.0),
+                HighlightEvent::HighlightEnd => {
+                    stack.pop();
+                }
+            }
+        }
+        lines
+    })
 }
 
 #[cfg(test)]
@@ -544,5 +624,49 @@ function foo() {}"#;
         let line12_spans = highlighter.get_line_spans(12, None);
         let has_function = line12_spans.iter().any(|s| s.content.contains("function"));
         assert!(has_function, "Line 12 should contain 'function'");
+    }
+
+    #[test]
+    fn test_highlight_code_lines_for_inline_fragments_and_fences() {
+        let t = theme::get();
+        let bg = t.ui.code_bg;
+        let base = Style::default().bg(bg).bold();
+
+        let py_lines = highlight_code_lines("def xxx", None, "src/app.py", base);
+        assert_eq!(py_lines.len(), 1);
+        let def_span = py_lines[0]
+            .iter()
+            .find(|s| s.content == "def")
+            .expect("def token");
+        assert_eq!(def_span.style.fg, Some(t.syntax.keyword));
+        assert_eq!(def_span.style.bg, Some(bg));
+        assert!(def_span.style.add_modifier.contains(Modifier::BOLD));
+
+        let ts_lines =
+            highlight_code_lines("zero(\"EUR\") + this.subtotal()", None, "src/cart.ts", Style::default());
+        assert_eq!(ts_lines.len(), 1);
+        assert!(ts_lines[0]
+            .iter()
+            .any(|s| s.content == "zero" && s.style.fg == Some(t.syntax.function)));
+        assert!(ts_lines[0]
+            .iter()
+            .any(|s| s.content == "\"EUR\"" && s.style.fg == Some(t.syntax.string)));
+        assert!(ts_lines[0]
+            .iter()
+            .any(|s| s.content == "subtotal" && s.style.fg == Some(t.syntax.variable_member)));
+
+        let override_lines =
+            highlight_code_lines("fn main() {}\n\nlet x = 1;", Some("rust"), "src/app.py", Style::default());
+        assert_eq!(override_lines.len(), 3);
+        assert!(override_lines[0]
+            .iter()
+            .any(|s| s.content == "fn" && s.style.fg == Some(t.syntax.keyword)));
+        assert!(override_lines[1].is_empty());
+
+        let unknown_lines =
+            highlight_code_lines("SELECT * FROM t", Some("sql"), "src/app.py", Style::default().bg(bg));
+        assert_eq!(unknown_lines.len(), 1);
+        assert_eq!(unknown_lines[0][0].style.fg, Some(t.syntax.default_text));
+        assert_eq!(unknown_lines[0][0].style.bg, Some(bg));
     }
 }
