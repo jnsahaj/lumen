@@ -10,8 +10,17 @@ use crate::command::diff::diff_algo::hunk_comment_lines;
 use crate::command::diff::highlight::{highlight_line_spans, FileHighlighter};
 use crate::command::diff::search::{MatchPanel, SearchState};
 use crate::command::diff::theme;
-use crate::command::diff::review_thread::{AnnotationTarget, Author, Thread};
+use crate::command::diff::review_thread::{AnnotationTarget, Thread};
 use crate::command::diff::{annotation::AnnotationEditor, state::TreeCache};
+
+/// Screen rect of a rendered inline thread overlay, plus the screen `y` rows of
+/// any `⋯` truncation indicators inside it (clicking those opens the thread modal).
+#[derive(Clone, Debug)]
+pub struct ThreadHitRect {
+    pub thread_id: String,
+    pub area: Rect,
+    pub expand_rows: Vec<u16>,
+}
 
 /// One overlay slot in the rendered diff: either a thread or the active inline
 /// editor (a new thread, a reply, or a comment being edited).
@@ -20,6 +29,7 @@ enum OverlaySlot<'a, 'e> {
     Saved {
         thread: &'a Thread,
         rows: Vec<Line<'static>>,
+        expand_rows: Vec<usize>,
     },
     Editor(&'e AnnotationEditor<'e>),
 }
@@ -44,12 +54,14 @@ impl<'a, 'e> OverlaySlot<'a, 'e> {
 /// threads. The active editor follows the thread it replies to; while it edits a
 /// comment, that comment is left out of the thread. An editor starting a new
 /// thread comes last. `width_for` gives the overlay width for a target.
+#[allow(clippy::too_many_arguments)]
 fn build_slots<'a, 'e>(
     threads: &'a [Thread],
     editor: Option<&'e AnnotationEditor<'e>>,
     filename: &str,
     file_level: bool,
     width_for: &dyn Fn(&AnnotationTarget) -> u16,
+    visible_height: usize,
     tab_width: usize,
     t: &theme::Theme,
 ) -> Vec<OverlaySlot<'a, 'e>> {
@@ -58,6 +70,18 @@ fn build_slots<'a, 'e>(
     let mut editor = editor.filter(|e| e.filename == filename && is_wanted_level(&e.target));
     let mut slots: Vec<OverlaySlot<'a, 'e>> = Vec::new();
 
+    let open_file_threads = if file_level {
+        threads
+            .iter()
+            .filter(|thread| {
+                thread.filename == filename && is_wanted_level(&thread.target) && !thread.resolved
+            })
+            .count()
+            .max(1)
+    } else {
+        1
+    };
+
     for thread in threads
         .iter()
         .filter(|thread| thread.filename == filename && is_wanted_level(&thread.target))
@@ -65,9 +89,19 @@ fn build_slots<'a, 'e>(
         let editor_in_thread = editor.filter(|e| e.thread_id.as_deref() == Some(&thread.id));
         let edited_comment = editor_in_thread.and_then(|e| e.comment_id.as_deref());
         let rows_width = width_for(&thread.target).saturating_sub(1) as usize;
-        let rows = thread_rows(thread, edited_comment, rows_width, tab_width, t);
-        if !rows.is_empty() {
-            slots.push(OverlaySlot::Saved { thread, rows });
+        let max_rows = inline_thread_max_rows(
+            visible_height,
+            file_level,
+            open_file_threads,
+            editor_in_thread.map(AnnotationEditor::desired_height),
+        );
+        let rendered = thread_rows(thread, edited_comment, rows_width, max_rows, tab_width, t);
+        if !rendered.rows.is_empty() {
+            slots.push(OverlaySlot::Saved {
+                thread,
+                rows: rendered.rows,
+                expand_rows: rendered.expand_rows,
+            });
         }
         if let Some(e) = editor_in_thread {
             slots.push(OverlaySlot::Editor(e));
@@ -78,6 +112,32 @@ fn build_slots<'a, 'e>(
         slots.push(OverlaySlot::Editor(e));
     }
     slots
+}
+
+fn inline_thread_max_rows(
+    visible_height: usize,
+    file_level: bool,
+    open_file_threads: usize,
+    editor_height: Option<usize>,
+) -> usize {
+    let base_cap = if file_level {
+        (visible_height * 40 / 100 / open_file_threads.max(1)).max(6)
+    } else {
+        (visible_height * 60 / 100).max(6)
+    }
+    .min(visible_height);
+
+    match editor_height {
+        Some(editor_h) => {
+            let remaining_screen = visible_height.saturating_sub(editor_h);
+            base_cap
+                .saturating_sub(editor_h)
+                .max(4)
+                .min(remaining_screen)
+                .max(3)
+        }
+        None => base_cap.max(3),
+    }
 }
 
 fn char_count(text: &str) -> usize {
@@ -93,23 +153,50 @@ fn truncate_chars(text: &str, max_chars: usize) -> String {
     }
 }
 
-/// Screen rows of a thread, each `width` characters wide: a box holding every
-/// comment under its author, or a single row when the thread is resolved.
-/// The comment `edited_comment` is left out. Empty when nothing is left to show.
+struct RenderedThread {
+    rows: Vec<Line<'static>>,
+    expand_rows: Vec<usize>,
+}
+
+fn truncation_indicator_row(
+    count: usize,
+    singular_label: &str,
+    text_width: usize,
+    t: &theme::Theme,
+) -> Vec<Span<'static>> {
+    let suffix = if count == 1 { "" } else { "s" };
+    let with_hint = format!("⋯ {} {}{} (t to view)", count, singular_label, suffix);
+    let text = if Span::raw(&with_hint).width() <= text_width {
+        with_hint
+    } else {
+        let short = format!("⋯ {} {}{}", count, singular_label, suffix);
+        super::markdown::truncate_with_ellipsis(&short, text_width)
+    };
+    vec![Span::styled(text, Style::default().fg(t.ui.text_muted).italic())]
+}
+
+/// Screen rows of a thread, each `width` characters wide: a box holding comments
+/// under their authors (capped to `max_rows`, dropping older comments first), or
+/// a single row when the thread is resolved. The comment `edited_comment` is left
+/// out. Empty when nothing is left to show.
 fn thread_rows(
     thread: &Thread,
     edited_comment: Option<&str>,
     width: usize,
+    max_rows: usize,
     tab_width: usize,
     t: &theme::Theme,
-) -> Vec<Line<'static>> {
+) -> RenderedThread {
     let comments: Vec<_> = thread
         .comments
         .iter()
         .filter(|comment| Some(comment.id.as_str()) != edited_comment)
         .collect();
     let Some(first_comment) = comments.first() else {
-        return Vec::new();
+        return RenderedThread {
+            rows: Vec::new(),
+            expand_rows: Vec::new(),
+        };
     };
     let muted = Style::default().fg(t.ui.text_muted);
 
@@ -119,14 +206,22 @@ fn thread_rows(
             first_comment.author_name,
             first_comment.body.lines().next().unwrap_or_default()
         );
-        let summary = truncate_chars(&summary, width);
-        return vec![Line::from(Span::styled(format!("{:<width$}", summary), muted))];
+        let summary = super::markdown::truncate_with_ellipsis(&summary, width);
+        let pad = width.saturating_sub(Span::raw(&summary).width());
+        return RenderedThread {
+            rows: vec![Line::from(Span::styled(
+                format!("{}{}", summary, " ".repeat(pad)),
+                muted,
+            ))],
+            expand_rows: Vec::new(),
+        };
     }
 
     let border = Style::default().fg(t.ui.highlight);
     let inner_width = width.saturating_sub(2);
     let text_width = inner_width.saturating_sub(1);
     let mut rows = Vec::new();
+    let mut expand_rows = Vec::new();
 
     let mut badges = Vec::new();
     if thread.outdated {
@@ -156,29 +251,78 @@ fn thread_rows(
         row.push(Span::styled("│", border));
         Line::from(row)
     };
-    for comment in comments {
-        let (name_color, body_color) = match comment.author {
-            Author::Human => (t.ui.highlight, t.ui.text_secondary),
-            Author::Agent => (t.ui.status_added, t.ui.text_primary),
-        };
-        let name = truncate_chars(&comment.author_name, text_width.saturating_sub(16));
-        let mut header = vec![
-            Span::styled(name, Style::default().fg(name_color).bold()),
-            Span::styled(format!(" · {}", comment.format_time()), muted),
-        ];
-        if comment.queued {
-            header.push(Span::styled(" · queued", Style::default().fg(t.ui.status_modified)));
+
+    let rendered_comments: Vec<Vec<Vec<Span<'static>>>> = comments
+        .iter()
+        .map(|comment| {
+            super::markdown::render_comment_rows(comment, &thread.filename, text_width, tab_width, t)
+        })
+        .collect();
+    let total_inner: usize = rendered_comments.iter().map(Vec::len).sum();
+    let max_inner = max_rows.saturating_sub(2).max(1);
+
+    if total_inner <= max_inner {
+        for comment_rows in rendered_comments {
+            for row in comment_rows {
+                rows.push(boxed(row));
+            }
         }
-        rows.push(boxed(header));
-        for md_row in super::markdown::render_markdown(
-            &comment.body,
-            text_width,
-            body_color,
-            &thread.filename,
-            tab_width,
-            t,
-        ) {
-            rows.push(boxed(md_row));
+    } else {
+        let budget_for_whole = max_inner.saturating_sub(1);
+        let mut kept_from_end = 0usize;
+        let mut used = 0usize;
+        for comment_rows in rendered_comments.iter().rev() {
+            if used + comment_rows.len() <= budget_for_whole {
+                used += comment_rows.len();
+                kept_from_end += 1;
+            } else {
+                break;
+            }
+        }
+
+        if kept_from_end > 0 {
+            let hidden_comments = rendered_comments.len() - kept_from_end;
+            expand_rows.push(rows.len());
+            rows.push(boxed(truncation_indicator_row(
+                hidden_comments,
+                "earlier comment",
+                text_width,
+                t,
+            )));
+            for comment_rows in &rendered_comments[hidden_comments..] {
+                for row in comment_rows {
+                    rows.push(boxed(row.clone()));
+                }
+            }
+        } else if let Some(last) = rendered_comments.last() {
+            let hidden_comments = rendered_comments.len().saturating_sub(1);
+            let mut remaining = max_inner;
+            if hidden_comments > 0 && remaining > 0 {
+                expand_rows.push(rows.len());
+                rows.push(boxed(truncation_indicator_row(
+                    hidden_comments,
+                    "earlier comment",
+                    text_width,
+                    t,
+                )));
+                remaining -= 1;
+            }
+            if remaining > 0 {
+                let keep = remaining.saturating_sub(1).min(last.len());
+                let hidden_lines = last.len().saturating_sub(keep);
+                for row in &last[..keep] {
+                    rows.push(boxed(row.clone()));
+                }
+                if hidden_lines > 0 {
+                    expand_rows.push(rows.len());
+                    rows.push(boxed(truncation_indicator_row(
+                        hidden_lines,
+                        "more line",
+                        text_width,
+                        t,
+                    )));
+                }
+            }
         }
     }
 
@@ -186,7 +330,7 @@ fn thread_rows(
         format!("└{}┘", "─".repeat(inner_width)),
         border,
     )));
-    rows
+    RenderedThread { rows, expand_rows }
 }
 use crate::command::diff::types::{
     ChangeType, DiffFullscreen, DiffLine, DiffPanelFocus, DiffViewSettings, FileDiff, FocusedPanel,
@@ -1215,14 +1359,15 @@ fn render_overlay_slot(
     bg: Color,
     t: &crate::command::diff::theme::Theme,
     suppress_gutter: bool,
-    annotation_rects: &mut Vec<(String, Rect)>,
+    annotation_rects: &mut Vec<ThreadHitRect>,
     editor_rect: &mut Option<Rect>,
 ) {
+    let inner_bottom = max_area.y + max_area.height.saturating_sub(1);
     let screen_y = content_start_y + line_pos as u16;
-    if screen_y >= max_area.y + max_area.height {
+    if screen_y >= inner_bottom {
         return;
     }
-    let available = (max_area.y + max_area.height).saturating_sub(screen_y) as usize;
+    let available = inner_bottom.saturating_sub(screen_y) as usize;
     if available == 0 {
         return;
     }
@@ -1231,7 +1376,11 @@ fn render_overlay_slot(
     let has_gutter = !suppress_gutter && matches!(slot.target(), AnnotationTarget::LineRange { .. });
 
     match slot {
-        OverlaySlot::Saved { thread, rows } => {
+        OverlaySlot::Saved {
+            thread,
+            rows,
+            expand_rows,
+        } => {
             frame.render_widget(ratatui::widgets::Clear, area);
             let gutter = if has_gutter { "▍" } else { " " };
             let lines: Vec<Line> = rows
@@ -1244,7 +1393,17 @@ fn render_overlay_slot(
                 })
                 .collect();
             frame.render_widget(Paragraph::new(lines).style(Style::default().bg(bg)), area);
-            annotation_rects.push((thread.id.clone(), area));
+            let visible_expand_rows = expand_rows
+                .iter()
+                .copied()
+                .filter(|&row_idx| row_idx < available)
+                .map(|row_idx| screen_y + row_idx as u16)
+                .collect();
+            annotation_rects.push(ThreadHitRect {
+                thread_id: thread.id.clone(),
+                area,
+                expand_rows: visible_expand_rows,
+            });
         }
         OverlaySlot::Editor(editor) => {
             editor.render_inline(frame, area, t.ui.highlight, bg, has_gutter);
@@ -1300,7 +1459,7 @@ pub fn render_diff(
     total_removed: usize,
     editor: Option<&AnnotationEditor>,
     review: &ReviewStatus,
-) -> (usize, Vec<(usize, usize)>, Vec<(String, Rect)>, Option<Rect>) {
+) -> (usize, Vec<(usize, usize)>, Vec<ThreadHitRect>, Option<Rect>) {
     let area = frame.area();
     let t = theme::get();
     let bg = t.ui.bg;
@@ -1421,7 +1580,7 @@ pub fn render_diff(
     // Track inline annotation overlay gaps for mouse coordinate mapping
     let mut overlay_gaps: Vec<(usize, usize)> = Vec::new();
     // Track rendered annotation screen rects for click hit-testing
-    let mut annotation_rects: Vec<(String, Rect)> = Vec::new();
+    let mut annotation_rects: Vec<ThreadHitRect> = Vec::new();
     // Tracks the screen rect of the inline editor, when one is rendered this frame.
     let mut editor_rect: Option<Rect> = None;
 
@@ -1452,6 +1611,7 @@ pub fn render_diff(
             &diff.filename,
             true,
             &slot_width,
+            visible_height,
             settings.tab_width,
             t,
         );
@@ -1461,6 +1621,7 @@ pub fn render_diff(
             &diff.filename,
             false,
             &slot_width,
+            visible_height,
             settings.tab_width,
             t,
         );
@@ -1630,6 +1791,7 @@ pub fn render_diff(
             &diff.filename,
             true,
             &slot_width,
+            visible_height,
             settings.tab_width,
             t,
         );
@@ -1639,6 +1801,7 @@ pub fn render_diff(
             &diff.filename,
             false,
             &slot_width,
+            visible_height,
             settings.tab_width,
             t,
         );
@@ -1877,6 +2040,7 @@ pub fn render_diff(
             &diff.filename,
             true,
             &slot_width,
+            visible_height,
             settings.tab_width,
             t,
         );
@@ -1886,6 +2050,7 @@ pub fn render_diff(
             &diff.filename,
             false,
             &slot_width,
+            visible_height,
             settings.tab_width,
             t,
         );
@@ -2471,6 +2636,10 @@ mod tests {
     use super::*;
     use crate::command::diff::review_thread::Comment;
 
+    fn line_text(line: &Line<'_>) -> String {
+        line.spans.iter().map(|s| s.content.as_ref()).collect()
+    }
+
     #[test]
     fn test_thread_rows_aligns_box_borders_for_markdown_comments() {
         let t = theme::get();
@@ -2485,9 +2654,10 @@ mod tests {
             ),
         );
         let width = 30;
-        let rows = thread_rows(&thread, None, width, 4, t);
-        assert!(rows.len() >= 7);
-        for (idx, row) in rows.iter().enumerate() {
+        let rendered = thread_rows(&thread, None, width, 40, 4, t);
+        assert!(rendered.rows.len() >= 7);
+        assert!(rendered.expand_rows.is_empty());
+        for (idx, row) in rendered.rows.iter().enumerate() {
             assert_eq!(row.width(), width, "row {} misaligned", idx);
             for span in &row.spans {
                 assert!(
@@ -2500,8 +2670,136 @@ mod tests {
         }
 
         thread.resolved = true;
-        let resolved_rows = thread_rows(&thread, None, width, 4, t);
-        assert_eq!(resolved_rows.len(), 1);
+        let resolved = thread_rows(&thread, None, width, 40, 4, t);
+        assert_eq!(resolved.rows.len(), 1);
+        assert!(resolved.expand_rows.is_empty());
+    }
+
+    #[test]
+    fn test_thread_rows_tail_keeps_latest_comments_and_hides_earlier_ones() {
+        let t = theme::get();
+        let mut thread = Thread::new(
+            "src/app.rs".to_string(),
+            AnnotationTarget::File,
+            None,
+            Comment::human("first comment".to_string(), false),
+        );
+        thread.comments.push(Comment::agent("second comment".to_string(), "pi".to_string()));
+        thread.comments.push(Comment::human("third comment".to_string(), false));
+        thread.comments.push(Comment::agent("fourth comment".to_string(), "pi".to_string()));
+
+        // Each comment takes 2 rows (header + 1-line body) = 8 inner rows total.
+        // Cap to 7 total rows (5 inner): 1 indicator + 2 latest comments (4 rows).
+        let width = 46;
+        let rendered = thread_rows(&thread, None, width, 7, 4, t);
+        assert_eq!(rendered.rows.len(), 7);
+        assert_eq!(rendered.expand_rows, vec![1]);
+        for (idx, row) in rendered.rows.iter().enumerate() {
+            assert_eq!(row.width(), width, "row {} misaligned", idx);
+        }
+
+        let texts: Vec<String> = rendered.rows.iter().map(line_text).collect();
+        assert!(texts[1].contains("⋯ 2 earlier comments (t to view)"), "got: {}", texts[1]);
+        let all = texts.join("\n");
+        assert!(!all.contains("first comment"));
+        assert!(!all.contains("second comment"));
+        assert!(all.contains("third comment"));
+        assert!(all.contains("fourth comment"));
+        assert!(texts.last().unwrap().starts_with('└'));
+    }
+
+    #[test]
+    fn test_thread_rows_single_long_comment_keeps_top_and_marks_more_lines() {
+        let t = theme::get();
+        let long_body: String = (1..=15)
+            .map(|n| format!("line {:02}", n))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut thread = Thread::new(
+            "src/app.rs".to_string(),
+            AnnotationTarget::File,
+            None,
+            Comment::agent(long_body.clone(), "pi".to_string()),
+        );
+
+        let width = 46;
+        let single = thread_rows(&thread, None, width, 8, 4, t);
+        assert_eq!(single.rows.len(), 8);
+        assert_eq!(single.expand_rows, vec![6]);
+        let single_texts: Vec<String> = single.rows.iter().map(line_text).collect();
+        assert!(!single_texts.join("\n").contains("earlier comment"));
+        assert!(single_texts[1].contains("pi"));
+        assert!(single_texts[2].contains("line 01"));
+        assert!(single_texts[5].contains("line 04"));
+        assert!(single_texts[6].contains("⋯ 11 more lines (t to view)"), "got: {}", single_texts[6]);
+        for (idx, row) in single.rows.iter().enumerate() {
+            assert_eq!(row.width(), width, "single row {} misaligned", idx);
+        }
+
+        // Now add an earlier comment before the long latest comment.
+        thread.comments.insert(0, Comment::human("short opener".to_string(), false));
+        let multi = thread_rows(&thread, None, width, 8, 4, t);
+        assert_eq!(multi.rows.len(), 8);
+        assert_eq!(multi.expand_rows, vec![1, 6]);
+        let multi_texts: Vec<String> = multi.rows.iter().map(line_text).collect();
+        assert!(multi_texts[1].contains("⋯ 1 earlier comment (t to view)"), "got: {}", multi_texts[1]);
+        assert!(multi_texts[2].contains("pi"));
+        assert!(multi_texts[3].contains("line 01"));
+        assert!(multi_texts[5].contains("line 03"));
+        assert!(multi_texts[6].contains("⋯ 12 more lines (t to view)"), "got: {}", multi_texts[6]);
+    }
+
+    #[test]
+    fn test_build_slots_reserves_height_for_editor_and_caps_file_threads() {
+        let t = theme::get();
+        let mut thread = Thread::new(
+            "src/app.rs".to_string(),
+            AnnotationTarget::File,
+            None,
+            Comment::agent("line\n".repeat(40), "pi".to_string()),
+        );
+        thread.comments.push(Comment::human("follow up".to_string(), false));
+
+        let width_for = |_: &AnnotationTarget| 50u16;
+        let visible_height = 30;
+
+        let without_editor = build_slots(
+            std::slice::from_ref(&thread),
+            None,
+            "src/app.rs",
+            true,
+            &width_for,
+            visible_height,
+            4,
+            t,
+        );
+        assert_eq!(without_editor.len(), 1);
+        assert!(
+            without_editor[0].height() <= visible_height * 40 / 100,
+            "file-level thread took {} of {} rows",
+            without_editor[0].height(),
+            visible_height
+        );
+
+        let editor = AnnotationEditor::for_thread(&thread);
+        let with_editor = build_slots(
+            std::slice::from_ref(&thread),
+            Some(&editor),
+            "src/app.rs",
+            true,
+            &width_for,
+            visible_height,
+            4,
+            t,
+        );
+        assert_eq!(with_editor.len(), 2);
+        let combined: usize = with_editor.iter().map(OverlaySlot::height).sum();
+        assert!(
+            combined <= visible_height * 40 / 100,
+            "saved ({}) + editor ({}) exceeded budget",
+            with_editor[0].height(),
+            with_editor[1].height()
+        );
     }
 }
 

@@ -1,11 +1,17 @@
+use std::cell::Cell;
+
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use ratatui::{
     prelude::*,
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
 };
 
+use crate::command::diff::annotation::AnnotationEditor;
 use crate::command::diff::global_search::{GlobalSearchState, LineChange};
 use crate::command::diff::render::diff_view::expand_tabs_in_spans;
+use crate::command::diff::render::markdown::{
+    render_code_snippet, render_comment_rows, truncate_with_ellipsis,
+};
 use crate::command::diff::search::MatchPanel;
 use crate::command::diff::review_thread::Thread;
 use crate::command::diff::theme;
@@ -63,9 +69,17 @@ pub enum ModalContent {
         items: Vec<String>,
         annotations: Vec<Thread>,
         selected: usize,
-        export_input: Option<String>,
-        /// Error message to display (e.g., for failed export)
-        error_message: Option<String>,
+    },
+    /// Focused scrollable view of a single review thread.
+    ThreadView {
+        thread_id: String,
+        tab_width: usize,
+        return_to_list: bool,
+        scroll: usize,
+        pinned_to_bottom: bool,
+        last_max_scroll: Cell<usize>,
+        last_visible_height: Cell<usize>,
+        last_editor_rect: Cell<Option<Rect>>,
     },
     /// Telescope-style fuzzy search across all files, with a preview pane.
     GlobalSearch {
@@ -93,14 +107,15 @@ pub enum ModalResult {
         line_no: usize,
         panel: MatchPanel,
     },
+    AnnotationOpen { annotation_id: String },
     AnnotationJump { annotation_id: String },
     AnnotationEdit { annotation_id: String },
     AnnotationDelete { annotation_id: String },
     AnnotationToggleResolved { annotation_id: String },
     /// Show the resolved threads in the list, or hide them again.
     AnnotationsToggleResolvedShown { selected_id: Option<String> },
-    AnnotationCopyAll,
-    AnnotationExport(String),
+    ThreadReply { thread_id: String },
+    ThreadToggleResolved { thread_id: String },
 }
 
 /// The space between a key and its description in the help.
@@ -195,13 +210,53 @@ impl Modal {
                 items,
                 annotations,
                 selected,
-                export_input: None,
-                error_message: None,
             },
         }
     }
 
-    pub fn render(&self, frame: &mut Frame) {
+    pub fn thread_view(thread_id: String, tab_width: usize, return_to_list: bool) -> Self {
+        Self {
+            content: ModalContent::ThreadView {
+                thread_id,
+                tab_width,
+                return_to_list,
+                scroll: 0,
+                pinned_to_bottom: true,
+                last_max_scroll: Cell::new(0),
+                last_visible_height: Cell::new(0),
+                last_editor_rect: Cell::new(None),
+            },
+        }
+    }
+
+    pub fn is_thread_view(&self) -> bool {
+        matches!(self.content, ModalContent::ThreadView { .. })
+    }
+
+    pub fn pin_thread_to_bottom(&mut self) {
+        if let ModalContent::ThreadView {
+            pinned_to_bottom, ..
+        } = &mut self.content
+        {
+            *pinned_to_bottom = true;
+        }
+    }
+
+    pub fn editor_rect(&self) -> Option<Rect> {
+        match &self.content {
+            ModalContent::ThreadView {
+                last_editor_rect, ..
+            } => last_editor_rect.get(),
+            _ => None,
+        }
+    }
+
+    pub fn render(
+        &self,
+        frame: &mut Frame,
+        threads: &[Thread],
+        editor: Option<&AnnotationEditor>,
+    ) {
         let area = frame.area();
 
         // GlobalSearch takes the full screen with its own two-pane layout.
@@ -257,14 +312,19 @@ impl Modal {
                 let height = (items_count + 5).min(area.height * 80 / 100).max(8);
                 (width, height)
             }
-            ModalContent::Annotations {
-                items, export_input, ..
-            } => {
+            ModalContent::Annotations { items, .. } => {
                 let width = 100.min(area.width.saturating_sub(4));
                 let items_count = items.len().min(12) as u16;
-                // Compact height
-                let extra = if export_input.is_some() { 4 } else { 2 };
-                let height = (items_count + extra + 2).min(area.height * 80 / 100).max(8);
+                let height = (items_count + 4).min(area.height * 80 / 100).max(8);
+                (width, height)
+            }
+            ModalContent::ThreadView { .. } => {
+                let width = (area.width * 85 / 100)
+                    .max(50)
+                    .min(area.width.saturating_sub(4));
+                let height = (area.height * 85 / 100)
+                    .max(12)
+                    .min(area.height.saturating_sub(2));
                 (width, height)
             }
             // Handled above with its own near-fullscreen layout.
@@ -315,11 +375,38 @@ impl Modal {
                 title,
                 items,
                 selected,
-                export_input,
-                error_message,
                 ..
             } => {
-                self.render_annotations(frame, modal_area, title, items, *selected, export_input.as_deref(), error_message.as_deref());
+                self.render_annotations(frame, modal_area, title, items, *selected);
+            }
+            ModalContent::ThreadView {
+                thread_id,
+                tab_width,
+                scroll,
+                pinned_to_bottom,
+                last_max_scroll,
+                last_visible_height,
+                last_editor_rect,
+                ..
+            } => {
+                if let Some(thread) = threads.iter().find(|t| t.id == *thread_id) {
+                    self.render_thread_view(
+                        frame,
+                        modal_area,
+                        thread,
+                        *tab_width,
+                        *scroll,
+                        *pinned_to_bottom,
+                        last_max_scroll,
+                        last_visible_height,
+                        last_editor_rect,
+                        editor,
+                    );
+                } else {
+                    last_max_scroll.set(0);
+                    last_visible_height.set(0);
+                    last_editor_rect.set(None);
+                }
             }
             ModalContent::GlobalSearch { .. } => unreachable!(),
         }
@@ -698,8 +785,6 @@ impl Modal {
         title: &str,
         items: &[String],
         selected: usize,
-        export_input: Option<&str>,
-        error_message: Option<&str>,
     ) {
         let t = theme::get();
 
@@ -718,24 +803,11 @@ impl Modal {
 
         use ratatui::layout::{Constraint, Direction, Layout};
 
-        // Different layout based on export input state
-        let (list_area, footer_area) = if export_input.is_some() {
-            let chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Min(1),
-                    Constraint::Length(3),
-                    Constraint::Length(1),
-                ])
-                .split(inner);
-            (chunks[0], chunks[2])
-        } else {
-            let chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Min(1), Constraint::Length(1)])
-                .split(inner);
-            (chunks[0], chunks[1])
-        };
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(1), Constraint::Length(1)])
+            .split(inner);
+        let (list_area, footer_area) = (chunks[0], chunks[1]);
 
         // Render annotations list
         let visible_count = list_area.height as usize;
@@ -844,82 +916,231 @@ impl Modal {
         let list = List::new(list_items);
         frame.render_widget(list, list_area);
 
-        // Render export input if active
-        if let Some(input) = export_input {
-            let input_area = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Min(1),
-                    Constraint::Length(3),
-                    Constraint::Length(1),
-                ])
-                .split(inner)[1];
-
-            let input_block = Block::default()
-                .title(" Export path ")
-                .title_style(Style::default().fg(t.ui.text_muted))
-                .borders(Borders::ALL)
-                .border_type(ratatui::widgets::BorderType::Rounded)
-                .border_style(Style::default().fg(t.ui.border_unfocused));
-
-            let input_inner = input_block.inner(input_area);
-            frame.render_widget(input_block, input_area);
-
-            let input_line = Line::from(vec![
-                Span::styled(input, Style::default().fg(t.ui.text_primary)),
-                Span::styled("_", Style::default().fg(t.ui.text_muted)),
-            ]);
-            frame.render_widget(Paragraph::new(input_line), input_inner);
-        }
-
-        // Display error message if present
-        if let Some(error) = error_message {
-            // Show error above footer
-            let error_line = Line::from(vec![
-                Span::styled("Error: ", Style::default().fg(t.ui.status_deleted).bold()),
-                Span::styled(error, Style::default().fg(t.ui.status_deleted)),
-            ]);
-            let error_para = Paragraph::new(error_line).alignment(ratatui::prelude::Alignment::Center);
-            // Render error in the list area's last line
-            let error_area = Rect::new(list_area.x, list_area.y + list_area.height.saturating_sub(1), list_area.width, 1);
-            frame.render_widget(error_para, error_area);
-        }
-
         // Compact footer
-        let footer_text = if export_input.is_some() {
-            Line::from(vec![
-                Span::styled("enter", Style::default().fg(t.ui.text_muted)),
-                Span::styled(" confirm  ", Style::default().fg(t.ui.text_muted)),
-                Span::styled("│  ", Style::default().fg(t.ui.border_unfocused)),
-                Span::styled("esc", Style::default().fg(t.ui.text_muted)),
-                Span::styled(" cancel", Style::default().fg(t.ui.text_muted)),
-            ])
-        } else {
-            Line::from(vec![
-                Span::styled("enter", Style::default().fg(t.ui.text_muted)),
-                Span::styled(" jump  ", Style::default().fg(t.ui.text_muted)),
-                Span::styled("│  ", Style::default().fg(t.ui.border_unfocused)),
-                Span::styled("e", Style::default().fg(t.ui.text_muted)),
-                Span::styled(" edit/reply  ", Style::default().fg(t.ui.text_muted)),
-                Span::styled("│  ", Style::default().fg(t.ui.border_unfocused)),
-                Span::styled("x", Style::default().fg(t.ui.text_muted)),
-                Span::styled(" resolve  ", Style::default().fg(t.ui.text_muted)),
-                Span::styled("│  ", Style::default().fg(t.ui.border_unfocused)),
-                Span::styled("r", Style::default().fg(t.ui.text_muted)),
-                Span::styled(" resolved  ", Style::default().fg(t.ui.text_muted)),
-                Span::styled("│  ", Style::default().fg(t.ui.border_unfocused)),
-                Span::styled("d", Style::default().fg(t.ui.text_muted)),
-                Span::styled(" del  ", Style::default().fg(t.ui.text_muted)),
-                Span::styled("│  ", Style::default().fg(t.ui.border_unfocused)),
-                Span::styled("y", Style::default().fg(t.ui.text_muted)),
-                Span::styled(" copy  ", Style::default().fg(t.ui.text_muted)),
-                Span::styled("│  ", Style::default().fg(t.ui.border_unfocused)),
-                Span::styled("o", Style::default().fg(t.ui.text_muted)),
-                Span::styled(" export", Style::default().fg(t.ui.text_muted)),
-            ])
-        };
+        let footer_text = Line::from(vec![
+            Span::styled("enter", Style::default().fg(t.ui.text_muted)),
+            Span::styled(" open  ", Style::default().fg(t.ui.text_muted)),
+            Span::styled("│  ", Style::default().fg(t.ui.border_unfocused)),
+            Span::styled("g", Style::default().fg(t.ui.text_muted)),
+            Span::styled(" jump  ", Style::default().fg(t.ui.text_muted)),
+            Span::styled("│  ", Style::default().fg(t.ui.border_unfocused)),
+            Span::styled("e", Style::default().fg(t.ui.text_muted)),
+            Span::styled(" edit/reply  ", Style::default().fg(t.ui.text_muted)),
+            Span::styled("│  ", Style::default().fg(t.ui.border_unfocused)),
+            Span::styled("x", Style::default().fg(t.ui.text_muted)),
+            Span::styled(" resolve  ", Style::default().fg(t.ui.text_muted)),
+            Span::styled("│  ", Style::default().fg(t.ui.border_unfocused)),
+            Span::styled("r", Style::default().fg(t.ui.text_muted)),
+            Span::styled(" resolved  ", Style::default().fg(t.ui.text_muted)),
+            Span::styled("│  ", Style::default().fg(t.ui.border_unfocused)),
+            Span::styled("d", Style::default().fg(t.ui.text_muted)),
+            Span::styled(" del", Style::default().fg(t.ui.text_muted)),
+        ]);
         let footer = Paragraph::new(footer_text).alignment(ratatui::prelude::Alignment::Center);
         frame.render_widget(footer, footer_area);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_thread_view(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        thread: &Thread,
+        tab_width: usize,
+        scroll: usize,
+        pinned_to_bottom: bool,
+        last_max_scroll: &Cell<usize>,
+        last_visible_height: &Cell<usize>,
+        last_editor_rect: &Cell<Option<Rect>>,
+        editor: Option<&AnnotationEditor>,
+    ) {
+        const MAX_ANCHOR_PREVIEW_LINES: usize = 8;
+
+        let t = theme::get();
+        let line_display = thread.line_range_display();
+        let location = if line_display.is_empty() {
+            thread.filename.clone()
+        } else {
+            format!("{}:{}", thread.filename, line_display)
+        };
+        let comment_noun = if thread.comments.len() == 1 {
+            "comment"
+        } else {
+            "comments"
+        };
+        let mut title = format!(
+            "{} [{}] · {} {}",
+            location,
+            thread.target_label(),
+            thread.comments.len(),
+            comment_noun,
+        );
+        if thread.outdated {
+            title.push_str(" · outdated");
+        }
+        if thread.resolved {
+            title.push_str(" · resolved");
+        }
+        if thread.awaiting_agent() {
+            title.push_str(" · awaiting agent");
+        }
+        let title = truncate_with_ellipsis(&title, area.width.saturating_sub(4) as usize);
+
+        let block = Block::default()
+            .title(format!(" {} ", title))
+            .title_style(Style::default().fg(t.ui.text_secondary).bold())
+            .borders(Borders::ALL)
+            .border_type(ratatui::widgets::BorderType::Rounded)
+            .border_style(Style::default().fg(t.ui.border_focused))
+            .style(Style::default().bg(t.ui.bg));
+
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+
+        if inner.height == 0 || inner.width == 0 {
+            last_max_scroll.set(0);
+            last_visible_height.set(0);
+            last_editor_rect.set(None);
+            return;
+        }
+
+        let docked_editor = editor.filter(|e| e.thread_id.as_deref() == Some(thread.id.as_str()));
+
+        use ratatui::layout::{Constraint, Direction, Layout};
+
+        let (comments_area, footer_area) = if let Some(ed) = docked_editor {
+            let max_editor_h = (inner.height / 2)
+                .max(4)
+                .min(inner.height.saturating_sub(1));
+            let editor_h = (ed.desired_height() as u16).min(max_editor_h);
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Min(1), Constraint::Length(editor_h)])
+                .split(inner);
+            ed.render_inline(frame, chunks[1], t.ui.highlight, t.ui.bg, false);
+            last_editor_rect.set(Some(chunks[1]));
+            (chunks[0], None)
+        } else {
+            last_editor_rect.set(None);
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Min(1), Constraint::Length(1)])
+                .split(inner);
+            (chunks[0], Some(chunks[1]))
+        };
+
+        let text_width = comments_area.width.saturating_sub(3).max(1) as usize;
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        let pad_row = |spans: Vec<Span<'static>>| {
+            let mut row = Vec::with_capacity(spans.len() + 1);
+            row.push(Span::raw(" "));
+            row.extend(spans);
+            Line::from(row)
+        };
+
+        if let Some(anchor) = thread.anchor_text.as_deref().filter(|a| !a.is_empty()) {
+            let anchor_lines: Vec<&str> = anchor.split('\n').collect();
+            let shown_count = anchor_lines.len().min(MAX_ANCHOR_PREVIEW_LINES);
+            let preview = anchor_lines[..shown_count].join("\n");
+            for code_row in render_code_snippet(&preview, &thread.filename, text_width, tab_width, t) {
+                lines.push(pad_row(code_row));
+            }
+            if anchor_lines.len() > shown_count {
+                let omitted = anchor_lines.len() - shown_count;
+                let noun = if omitted == 1 { "line" } else { "lines" };
+                lines.push(pad_row(vec![Span::styled(
+                    format!("⋯ {} more anchored {}", omitted, noun),
+                    Style::default().fg(t.ui.text_muted).italic(),
+                )]));
+            }
+            lines.push(pad_row(vec![Span::styled(
+                "─".repeat(text_width),
+                Style::default().fg(t.ui.border_unfocused),
+            )]));
+            lines.push(Line::from(""));
+        }
+
+        let edited_comment_id = docked_editor.and_then(|e| e.comment_id.as_deref());
+        let visible_comments = thread
+            .comments
+            .iter()
+            .filter(|c| Some(c.id.as_str()) != edited_comment_id);
+        for (idx, comment) in visible_comments.enumerate() {
+            if idx > 0 {
+                lines.push(Line::from(""));
+            }
+            for row in render_comment_rows(comment, &thread.filename, text_width, tab_width, t) {
+                lines.push(pad_row(row));
+            }
+        }
+
+        let visible_height = comments_area.height as usize;
+        let total_rows = lines.len();
+        let max_scroll = total_rows.saturating_sub(visible_height);
+        last_max_scroll.set(max_scroll);
+        last_visible_height.set(visible_height);
+
+        let effective_scroll = if pinned_to_bottom {
+            max_scroll
+        } else {
+            scroll.min(max_scroll)
+        };
+        let end = (effective_scroll + visible_height).min(total_rows);
+        let visible_slice = lines[effective_scroll..end].to_vec();
+
+        let content_area = Rect::new(
+            comments_area.x,
+            comments_area.y,
+            comments_area.width.saturating_sub(1),
+            comments_area.height,
+        );
+        frame.render_widget(
+            Paragraph::new(visible_slice).style(Style::default().bg(t.ui.bg)),
+            content_area,
+        );
+
+        if total_rows > visible_height {
+            let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(None)
+                .end_symbol(None)
+                .track_symbol(Some("│"))
+                .thumb_symbol("█");
+            let mut scrollbar_state =
+                ScrollbarState::new(max_scroll).position(effective_scroll);
+            frame.render_stateful_widget(scrollbar, comments_area, &mut scrollbar_state);
+        }
+
+        if let Some(footer_area) = footer_area {
+            let sep = Span::styled("│  ", Style::default().fg(t.ui.border_unfocused));
+            let muted = Style::default().fg(t.ui.text_muted);
+            let footer_text = Line::from(vec![
+                Span::styled("j/k", muted),
+                Span::styled(" scroll  ", muted),
+                sep.clone(),
+                Span::styled("i", muted),
+                Span::styled(" reply  ", muted),
+                sep.clone(),
+                Span::styled("x", muted),
+                Span::styled(
+                    if thread.resolved {
+                        " reopen  "
+                    } else {
+                        " resolve  "
+                    },
+                    muted,
+                ),
+                sep.clone(),
+                Span::styled("g", muted),
+                Span::styled(" jump  ", muted),
+                sep,
+                Span::styled("esc", muted),
+                Span::styled(" close", muted),
+            ]);
+            frame.render_widget(
+                Paragraph::new(footer_text).alignment(ratatui::prelude::Alignment::Center),
+                footer_area,
+            );
+        }
     }
 
     /// Handle mouse scroll for the modal.
@@ -947,6 +1168,25 @@ impl Modal {
                     }
                     MouseEventKind::ScrollUp => {
                         *scroll = scroll.saturating_sub(3);
+                        true
+                    }
+                    _ => false,
+                }
+            }
+            ModalContent::ThreadView {
+                scroll,
+                pinned_to_bottom,
+                last_max_scroll,
+                ..
+            } => {
+                let max_scroll = last_max_scroll.get();
+                match mouse.kind {
+                    MouseEventKind::ScrollDown => {
+                        scroll_thread_view(scroll, pinned_to_bottom, max_scroll, 3);
+                        true
+                    }
+                    MouseEventKind::ScrollUp => {
+                        scroll_thread_view(scroll, pinned_to_bottom, max_scroll, -3);
                         true
                     }
                     _ => false,
@@ -1044,13 +1284,11 @@ impl Modal {
     /// Handle keyboard input for the modal.
     /// Returns Some(ModalResult) if the modal should close.
     pub fn handle_input(&mut self, key: KeyEvent, terminal_height: u16) -> Option<ModalResult> {
-        // FilePicker, Annotations, and GlobalSearch handle their own dismiss logic
+        // FilePicker and GlobalSearch handle their own dismiss logic
         // (they consume printable chars for query input).
         if !matches!(
             self.content,
-            ModalContent::FilePicker { .. }
-                | ModalContent::Annotations { .. }
-                | ModalContent::GlobalSearch { .. }
+            ModalContent::FilePicker { .. } | ModalContent::GlobalSearch { .. }
         ) {
             // Close on Esc, q, or Ctrl+C
             if key.code == KeyCode::Esc
@@ -1209,115 +1447,105 @@ impl Modal {
                 items,
                 annotations,
                 selected,
-                export_input,
-                error_message,
+                ..
+            } => match key.code {
+                KeyCode::Down | KeyCode::Char('k') => {
+                    if *selected < items.len().saturating_sub(1) {
+                        *selected += 1;
+                    }
+                    None
+                }
+                KeyCode::Up | KeyCode::Char('j') => {
+                    *selected = selected.saturating_sub(1);
+                    None
+                }
+                KeyCode::Enter => annotations.get(*selected).map(|ann| {
+                    ModalResult::AnnotationOpen {
+                        annotation_id: ann.id.clone(),
+                    }
+                }),
+                KeyCode::Char('g') => annotations.get(*selected).map(|ann| {
+                    ModalResult::AnnotationJump {
+                        annotation_id: ann.id.clone(),
+                    }
+                }),
+                KeyCode::Char('e') => annotations.get(*selected).map(|ann| {
+                    ModalResult::AnnotationEdit {
+                        annotation_id: ann.id.clone(),
+                    }
+                }),
+                KeyCode::Char('d') => annotations.get(*selected).map(|ann| {
+                    ModalResult::AnnotationDelete {
+                        annotation_id: ann.id.clone(),
+                    }
+                }),
+                KeyCode::Char('x') => annotations.get(*selected).map(|ann| {
+                    ModalResult::AnnotationToggleResolved {
+                        annotation_id: ann.id.clone(),
+                    }
+                }),
+                KeyCode::Char('r') => Some(ModalResult::AnnotationsToggleResolvedShown {
+                    selected_id: annotations.get(*selected).map(|ann| ann.id.clone()),
+                }),
+                _ => None,
+            },
+            ModalContent::ThreadView {
+                thread_id,
+                scroll,
+                pinned_to_bottom,
+                last_max_scroll,
+                last_visible_height,
                 ..
             } => {
-                // Export input mode
-                if let Some(ref mut input) = export_input {
-                    match key.code {
-                        KeyCode::Esc => {
-                            *export_input = None;
-                            *error_message = None;
-                            None
-                        }
-                        KeyCode::Enter => {
-                            let filename = input.trim();
-                            // Basic path validation
-                            if filename.is_empty() {
-                                *error_message = Some("Path cannot be empty".to_string());
-                                return None;
-                            }
-                            if filename.contains("..") {
-                                *error_message = Some("Path cannot contain '..'".to_string());
-                                return None;
-                            }
-                            // Clear any previous error and proceed
-                            *error_message = None;
-                            Some(ModalResult::AnnotationExport(filename.to_string()))
-                        }
-                        // Word-erase: opt+backspace (macOS) / ctrl+w
-                        // (readline). Goes BEFORE plain Backspace so the
-                        // modified variant matches first.
-                        KeyCode::Backspace if key.modifiers.contains(KeyModifiers::ALT) => {
-                            crate::command::diff::text_edit::erase_word_backward(input);
-                            *error_message = None;
-                            None
-                        }
-                        KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            crate::command::diff::text_edit::erase_word_backward(input);
-                            *error_message = None;
-                            None
-                        }
-                        KeyCode::Backspace => {
-                            input.pop();
-                            *error_message = None; // Clear error on edit
-                            None
-                        }
-                        // Skip modified char keys so combos like opt+letter
-                        // don't insert the letter into the path.
-                        KeyCode::Char(c)
-                            if !key.modifiers.contains(KeyModifiers::ALT)
-                                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
-                        {
-                            input.push(c);
-                            *error_message = None; // Clear error on edit
-                            None
-                        }
-                        _ => None,
+                let max_scroll = last_max_scroll.get();
+                let visible_height = last_visible_height.get().max(1);
+                let half_page = (visible_height / 2).max(1) as isize;
+                let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+                match key.code {
+                    KeyCode::Down | KeyCode::Char('k') => {
+                        scroll_thread_view(scroll, pinned_to_bottom, max_scroll, 1);
+                        None
                     }
-                } else {
-                    // Normal mode
-                    match key.code {
-                        KeyCode::Esc
-                        | KeyCode::Char('q')
-                        | KeyCode::Char('c')
-                            if key.code == KeyCode::Esc
-                                || key.code == KeyCode::Char('q')
-                                || key.modifiers.contains(KeyModifiers::CONTROL) =>
-                        {
-                            Some(ModalResult::Dismissed)
-                        }
-                        KeyCode::Down | KeyCode::Char('k') => {
-                            if *selected < items.len().saturating_sub(1) {
-                                *selected += 1;
-                            }
-                            None
-                        }
-                        KeyCode::Up | KeyCode::Char('j') => {
-                            *selected = selected.saturating_sub(1);
-                            None
-                        }
-                        KeyCode::Enter => annotations.get(*selected).map(|ann| {
-                            ModalResult::AnnotationJump {
-                                annotation_id: ann.id.clone(),
-                            }
-                        }),
-                        KeyCode::Char('e') => annotations.get(*selected).map(|ann| {
-                            ModalResult::AnnotationEdit {
-                                annotation_id: ann.id.clone(),
-                            }
-                        }),
-                        KeyCode::Char('d') => annotations.get(*selected).map(|ann| {
-                            ModalResult::AnnotationDelete {
-                                annotation_id: ann.id.clone(),
-                            }
-                        }),
-                        KeyCode::Char('x') => annotations.get(*selected).map(|ann| {
-                            ModalResult::AnnotationToggleResolved {
-                                annotation_id: ann.id.clone(),
-                            }
-                        }),
-                        KeyCode::Char('r') => Some(ModalResult::AnnotationsToggleResolvedShown {
-                            selected_id: annotations.get(*selected).map(|ann| ann.id.clone()),
-                        }),
-                        KeyCode::Char('y') => Some(ModalResult::AnnotationCopyAll),
-                        KeyCode::Char('o') => {
-                            *export_input = Some(String::from("annotations.txt"));
-                            None
-                        }
-                        _ => None,
+                    KeyCode::Up | KeyCode::Char('j') => {
+                        scroll_thread_view(scroll, pinned_to_bottom, max_scroll, -1);
+                        None
                     }
+                    KeyCode::PageDown => {
+                        scroll_thread_view(scroll, pinned_to_bottom, max_scroll, half_page);
+                        None
+                    }
+                    KeyCode::PageUp => {
+                        scroll_thread_view(scroll, pinned_to_bottom, max_scroll, -half_page);
+                        None
+                    }
+                    KeyCode::Char('d') if ctrl => {
+                        scroll_thread_view(scroll, pinned_to_bottom, max_scroll, half_page);
+                        None
+                    }
+                    KeyCode::Char('u') if ctrl => {
+                        scroll_thread_view(scroll, pinned_to_bottom, max_scroll, -half_page);
+                        None
+                    }
+                    KeyCode::Home => {
+                        *scroll = 0;
+                        *pinned_to_bottom = max_scroll == 0;
+                        None
+                    }
+                    KeyCode::End | KeyCode::Char('G') => {
+                        *scroll = max_scroll;
+                        *pinned_to_bottom = true;
+                        None
+                    }
+                    KeyCode::Char('i') => Some(ModalResult::ThreadReply {
+                        thread_id: thread_id.clone(),
+                    }),
+                    KeyCode::Char('x') => Some(ModalResult::ThreadToggleResolved {
+                        thread_id: thread_id.clone(),
+                    }),
+                    KeyCode::Char('g') => Some(ModalResult::AnnotationJump {
+                        annotation_id: thread_id.clone(),
+                    }),
+                    _ => None,
                 }
             }
             ModalContent::GlobalSearch { state, .. } => {
@@ -1436,6 +1664,26 @@ impl Modal {
             *selected = filtered_indices.len().saturating_sub(1);
         }
     }
+}
+
+fn scroll_thread_view(
+    scroll: &mut usize,
+    pinned_to_bottom: &mut bool,
+    max_scroll: usize,
+    delta: isize,
+) {
+    let current = if *pinned_to_bottom {
+        max_scroll
+    } else {
+        (*scroll).min(max_scroll)
+    };
+    let next = if delta < 0 {
+        current.saturating_sub(delta.unsigned_abs())
+    } else {
+        current.saturating_add(delta as usize).min(max_scroll)
+    };
+    *scroll = next;
+    *pinned_to_bottom = next >= max_scroll;
 }
 
 fn fuzzy_match(text: &str, pattern: &str) -> bool {
@@ -1988,12 +2236,24 @@ mod tests {
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
 
-    fn drawn(modal: &Modal, columns: u16, rows: u16) -> String {
+    fn drawn_with_editor(
+        modal: &Modal,
+        threads: &[Thread],
+        editor: Option<&AnnotationEditor>,
+        columns: u16,
+        rows: u16,
+    ) -> String {
         let mut terminal = Terminal::new(TestBackend::new(columns, rows)).expect("terminal");
-        terminal.draw(|frame| modal.render(frame)).expect("draw");
+        terminal
+            .draw(|frame| modal.render(frame, threads, editor))
+            .expect("draw");
         let buffer = terminal.backend().buffer();
         let cells = buffer.content.iter().map(|cell| cell.symbol());
         cells.collect::<Vec<_>>().join("")
+    }
+
+    fn drawn(modal: &Modal, columns: u16, rows: u16) -> String {
+        drawn_with_editor(modal, &[], None, columns, rows)
     }
 
     #[test]
@@ -2010,5 +2270,101 @@ mod tests {
         let help = Modal::keybindings("Keybindings", sections);
 
         assert!(drawn(&help, 120, 20).contains(description));
+    }
+
+    #[test]
+    fn test_thread_view_opens_at_bottom_scrolls_and_docks_editor() {
+        use crate::command::diff::review_thread::{AnnotationTarget, Comment};
+        use crate::command::diff::types::DiffPanelFocus;
+
+        let anchor = (1..=10)
+            .map(|n| format!("let v{} = {};", n, n))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut thread = Thread::new(
+            "src/app.rs".to_string(),
+            AnnotationTarget::LineRange {
+                panel: DiffPanelFocus::New,
+                start_line: 10,
+                end_line: 19,
+            },
+            Some(anchor),
+            Comment::human("comment-01 opening".to_string(), false),
+        );
+        for i in 2..=8 {
+            thread.comments.push(Comment::agent(
+                format!("comment-{:02} body line\nsecond line {}", i, i),
+                "pi".to_string(),
+            ));
+        }
+
+        let mut modal = Modal::thread_view(thread.id.clone(), 4, false);
+
+        // Initial render is pinned to bottom: latest comment visible, earliest scrolled off.
+        let initial = drawn_with_editor(&modal, std::slice::from_ref(&thread), None, 90, 20);
+        assert!(initial.contains("src/app.rs:L10-19 [new] · 8 comments"));
+        assert!(initial.contains("comment-08 body line"));
+        assert!(!initial.contains("comment-01 opening"));
+        assert!(modal.editor_rect().is_none());
+
+        // Home scrolls to top: anchored snippet (capped to 8 lines) and first comment visible.
+        modal.handle_input(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE), 20);
+        let at_top = drawn_with_editor(&modal, std::slice::from_ref(&thread), None, 90, 20);
+        assert!(at_top.contains("let v1 = 1;"));
+        assert!(at_top.contains("let v8 = 8;"));
+        assert!(!at_top.contains("let v9 = 9;"));
+        assert!(at_top.contains("⋯ 2 more anchored lines"));
+
+        // End / G re-pins to bottom.
+        modal.handle_input(KeyEvent::new(KeyCode::Char('G'), KeyModifiers::NONE), 20);
+        let back_at_bottom =
+            drawn_with_editor(&modal, std::slice::from_ref(&thread), None, 90, 20);
+        assert!(back_at_bottom.contains("comment-08 body line"));
+
+        // Mouse wheel up scrolls up from bottom, shifting the last line out of view.
+        let wheel_up = MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 45,
+            row: 10,
+            modifiers: KeyModifiers::NONE,
+        };
+        assert!(modal.handle_mouse(wheel_up, 90, 20));
+        let scrolled_up = drawn_with_editor(&modal, std::slice::from_ref(&thread), None, 90, 20);
+        assert!(!scrolled_up.contains("second line 8"));
+
+        // Action keys return the expected ModalResults.
+        assert!(matches!(
+            modal.handle_input(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE), 20),
+            Some(ModalResult::ThreadReply { ref thread_id }) if thread_id == &thread.id
+        ));
+        assert!(matches!(
+            modal.handle_input(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE), 20),
+            Some(ModalResult::ThreadToggleResolved { ref thread_id }) if thread_id == &thread.id
+        ));
+        assert!(matches!(
+            modal.handle_input(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE), 20),
+            Some(ModalResult::AnnotationJump { ref annotation_id }) if annotation_id == &thread.id
+        ));
+        assert!(matches!(
+            modal.handle_input(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), 20),
+            Some(ModalResult::Dismissed)
+        ));
+
+        // Live replies in `threads` render immediately without replacing the modal,
+        // and docking an editor edits a queued draft while hiding it from history above.
+        thread
+            .comments
+            .push(Comment::human("unsent draft text".to_string(), true));
+        modal.pin_thread_to_bottom();
+        let live_reply = drawn_with_editor(&modal, std::slice::from_ref(&thread), None, 90, 24);
+        assert!(live_reply.contains("unsent draft text"));
+
+        let editor = AnnotationEditor::for_thread(&thread);
+        let with_editor =
+            drawn_with_editor(&modal, std::slice::from_ref(&thread), Some(&editor), 90, 24);
+        assert!(modal.editor_rect().is_some());
+        assert!(with_editor.contains("Enter send"));
+        assert!(with_editor.contains("comment-08 body line"));
+        assert_eq!(with_editor.matches("unsent draft text").count(), 1);
     }
 }

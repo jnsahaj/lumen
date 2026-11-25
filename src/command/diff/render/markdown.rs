@@ -3,6 +3,7 @@ use ratatui::prelude::*;
 
 use crate::command::diff::highlight::highlight_code_lines;
 use crate::command::diff::render::diff_view::expand_tabs_in_spans;
+use crate::command::diff::review_thread::{Author, Comment};
 use crate::command::diff::theme;
 
 enum Container {
@@ -64,6 +65,90 @@ pub fn render_markdown(
     }
     renderer.flush_inline();
     renderer.rows
+}
+
+/// Renders one review comment as wrapped rows of styled spans, each with display
+/// width at most `width`: its author/time header row followed by its Markdown body.
+pub fn render_comment_rows(
+    comment: &Comment,
+    filename: &str,
+    width: usize,
+    tab_width: usize,
+    t: &theme::Theme,
+) -> Vec<Vec<Span<'static>>> {
+    let width = width.max(1);
+    let (name_color, body_color) = match comment.author {
+        Author::Human => (t.ui.highlight, t.ui.text_secondary),
+        Author::Agent => (t.ui.status_added, t.ui.text_primary),
+    };
+    let muted = Style::default().fg(t.ui.text_muted);
+    let time_suffix = format!(" · {}", comment.format_time());
+    let queued_suffix = if comment.queued { " · queued" } else { "" };
+    let suffix_width = str_width(&time_suffix) + str_width(queued_suffix);
+    let name = truncate_with_ellipsis(&comment.author_name, width.saturating_sub(suffix_width));
+    let mut header = vec![
+        Span::styled(name, Style::default().fg(name_color).bold()),
+        Span::styled(time_suffix, muted),
+    ];
+    if comment.queued {
+        header.push(Span::styled(
+            queued_suffix,
+            Style::default().fg(t.ui.status_modified),
+        ));
+    }
+
+    let mut rows = vec![truncate_spans(&header, width)];
+    rows.extend(render_markdown(
+        &comment.body,
+        width,
+        body_color,
+        filename,
+        tab_width,
+        t,
+    ));
+    rows
+}
+
+/// Renders a raw code snippet (e.g. a thread's anchored lines) highlighted with
+/// `filename`'s language rules, wrapped to `width` with a muted left bar and `code_bg`.
+pub fn render_code_snippet(
+    code: &str,
+    filename: &str,
+    width: usize,
+    tab_width: usize,
+    t: &theme::Theme,
+) -> Vec<Vec<Span<'static>>> {
+    let normalized = code.replace("\r\n", "\n");
+    let trimmed = normalized.strip_suffix('\n').unwrap_or(&normalized);
+    let code_style = Style::default().bg(t.ui.code_bg);
+    let highlighted_lines = highlight_code_lines(trimmed, None, filename, code_style);
+    let mut rows = Vec::new();
+    for line_spans in highlighted_lines {
+        rows.extend(wrap_code_line(line_spans, &[], &[], width, tab_width, t));
+    }
+    rows
+}
+
+pub(super) fn truncate_with_ellipsis(text: &str, max_width: usize) -> String {
+    if str_width(text) <= max_width {
+        return text.to_string();
+    }
+    if max_width == 0 {
+        return String::new();
+    }
+    let keep_budget = max_width.saturating_sub(1);
+    let mut out = String::new();
+    let mut used = 0usize;
+    for g in Span::raw(text).styled_graphemes(Style::default()) {
+        let w = str_width(g.symbol);
+        if used + w > keep_budget {
+            break;
+        }
+        out.push_str(g.symbol);
+        used += w;
+    }
+    out.push('…');
+    out
 }
 
 struct MarkdownRenderer<'a> {

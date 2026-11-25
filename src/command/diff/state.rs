@@ -10,6 +10,7 @@ use crate::command::diff::diff_algo::{
 };
 use crate::command::diff::highlight::{too_large_to_parse, FileHighlighter};
 
+use crate::command::diff::render::ThreadHitRect;
 use crate::command::diff::search::SearchState;
 use crate::command::diff::review_thread::{
     anchor_text_for, refresh_anchors, AnnotationTarget, Comment, Thread,
@@ -156,9 +157,9 @@ pub struct AppState {
     /// Used by mouse handlers to correctly map screen rows to side_by_side indices.
     pub annotation_overlay_gaps: Vec<(usize, usize)>,
     /// Screen rectangles of currently-rendered annotation overlays.
-    /// Set by render_diff each frame; used by mouse handlers to open the inline
-    /// editor when the user clicks an existing annotation.
-    pub annotation_rects: Vec<(String, ratatui::layout::Rect)>,
+    /// Set by render_diff each frame; used by mouse handlers to open the focused
+    /// thread modal (on truncation rows) or the inline editor (on the thread body).
+    pub annotation_rects: Vec<ThreadHitRect>,
     /// Screen rectangle of the active inline annotation editor, when present.
     /// Set by render_diff each frame; used by mouse handlers to detect clicks
     /// outside the editor (save if non-empty, cancel if empty).
