@@ -51,6 +51,15 @@ pub trait VcsBackend {
     /// Get file content at a specific ref.
     fn get_file_content_at_ref(&self, reference: &str, path: &Path) -> Result<String, VcsError>;
 
+    /// Batch-fetch file contents at a single ref. Backends may override this to resolve
+    /// the commit/tree once for the whole batch.
+    fn get_files_content_at_ref(&self, reference: &str, paths: &[&Path]) -> Vec<Option<String>> {
+        paths
+            .iter()
+            .map(|p| self.get_file_content_at_ref(reference, p).ok())
+            .collect()
+    }
+
     /// Get current branch name (or bookmark for jj).
     fn get_current_branch(&self) -> Result<Option<String>, VcsError>;
 

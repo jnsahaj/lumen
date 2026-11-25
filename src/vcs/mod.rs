@@ -1,12 +1,11 @@
-//! VCS backend abstraction module.
-//!
-//! Provides a unified interface for working with git and jj repositories.
+//! VCS backend abstraction module supporting Git and Jujutsu repositories.
 
 mod backend;
 mod detection;
 mod git;
 #[cfg(feature = "jj")]
 mod jj;
+mod reference;
 #[cfg(test)]
 pub mod test_utils;
 
@@ -15,31 +14,18 @@ pub use detection::{detect_vcs_type, vcs_type_at, VcsType};
 pub use git::GitBackend;
 #[cfg(feature = "jj")]
 pub use jj::JjBackend;
+pub use reference::{CommitReference, ReferenceParseError};
 
 use std::path::Path;
 
-use crate::config::cli::VcsOverride;
-
-/// VCS backend type for explicit selection
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VcsBackendType {
     Git,
     Jj,
 }
 
-impl From<VcsOverride> for VcsBackendType {
-    fn from(vcs: VcsOverride) -> Self {
-        match vcs {
-            VcsOverride::Git => VcsBackendType::Git,
-            VcsOverride::Jj => VcsBackendType::Jj,
-        }
-    }
-}
-
-/// Get the appropriate VCS backend for the current directory.
-///
-/// If `override_type` is provided, uses that backend type explicitly.
-/// Otherwise auto-detects jj vs git repositories. Prefers jj when both are present (colocated).
+/// Get the VCS backend for `path`, preferring Jujutsu in colocated repositories
+/// unless `override_type` forces a specific backend.
 pub fn get_backend(
     path: &Path,
     override_type: Option<VcsBackendType>,
@@ -61,8 +47,9 @@ pub fn get_backend(
             }
             #[cfg(not(feature = "jj"))]
             {
-                // jj feature not enabled, fall back to git for colocated repos
-                eprintln!("Warning: jj repository detected but jj support not compiled in. Using git backend.");
+                eprintln!(
+                    "Warning: jj repository detected but jj support not compiled in. Using git backend."
+                );
                 GitBackend::new(path).map(|b| Box::new(b) as Box<dyn VcsBackend>)
             }
         }
@@ -88,7 +75,6 @@ mod tests {
     #[cfg(feature = "jj")]
     fn test_get_backend_in_jj_repo() {
         let Some(repo) = JjRepoGuard::new() else {
-            eprintln!("Skipping test: jj not available");
             return;
         };
 
@@ -100,19 +86,18 @@ mod tests {
     #[cfg(feature = "jj")]
     fn test_vcs_override_git_in_jj_repo() {
         let Some(repo) = JjRepoGuard::new() else {
-            eprintln!("Skipping test: jj not available");
             return;
         };
 
-        // Also need a git commit for git backend to work
         git(&repo.dir, &["add", "."]);
         git(&repo.dir, &["commit", "-m", "init"]);
 
-        // Override to git backend in a colocated repo
         let backend =
             get_backend(&repo.dir, Some(VcsBackendType::Git)).expect("should get backend");
         assert_eq!(backend.name(), "git");
-        backend.resolve_ref("HEAD").expect("git backend resolves HEAD");
+        backend
+            .resolve_ref("HEAD")
+            .expect("git backend resolves HEAD");
     }
 
     #[test]
@@ -120,11 +105,5 @@ mod tests {
         let temp = tempfile::TempDir::new().unwrap();
         let result = get_backend(temp.path(), None);
         assert!(matches!(result, Err(VcsError::NotARepository)));
-    }
-
-    #[test]
-    fn test_vcs_override_to_backend_type_conversion() {
-        assert_eq!(VcsBackendType::from(VcsOverride::Git), VcsBackendType::Git);
-        assert_eq!(VcsBackendType::from(VcsOverride::Jj), VcsBackendType::Jj);
     }
 }

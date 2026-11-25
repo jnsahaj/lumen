@@ -9,6 +9,10 @@ keywords = ["cli", "terminal", "git", "diff", "review"]
 categories = ["command-line-interface", "command-line-utilities"]
 repository = "https://github.com/aduverger/lumiere"
 
+[lib]
+name = "lumiere"
+path = "src/lib.rs"
+
 [[bin]]
 name = "lumiere"
 path = "src/main.rs"
@@ -45,13 +49,12 @@ tree-sitter-java = "0.23"
 tree-sitter-zig = "1.1.2"
 tree-sitter-c = "0.23"
 tree-sitter-cpp = "0.23"
-once_cell = "1.20"
 arboard = { version = "3.4", features = ["wayland-data-control"] }
 nucleo-matcher = "0.3"
 tui-textarea = "0.7"
 sha2 = "0.10"
 shlex = "1.3"
-git2 = { version = "0.20", default-features = false, features = ["vendored-libgit2", "vendored-openssl", "https"] }
+git2 = { version = "0.20", default-features = false, features = ["vendored-libgit2"] }
 jj-lib = { version = "0.37.0", features = ["git"], optional = true }
 chrono = { version = "0.4", optional = true }
 tokio = { version = "1.0", features = ["io-util"], optional = true }
@@ -67,5 +70,13 @@ jj = ["jj-lib", "chrono", "pollster", "futures", "tokio"]
 [dev-dependencies]
 tempfile = "3"
 
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = "warn"
+
 [profile.release]
 lto = true
+codegen-units = 1
+strip = "symbols"

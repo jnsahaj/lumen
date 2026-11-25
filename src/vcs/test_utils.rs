@@ -5,6 +5,7 @@
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+#[cfg(feature = "jj")]
 use std::process::Command;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -201,6 +202,12 @@ impl RepoGuard {
             dir,
             original,
         }
+    }
+}
+
+impl Default for RepoGuard {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

@@ -256,39 +256,49 @@ impl JjBackend {
         }
     }
 
+    fn diff_trees(
+        from_tree: &jj_lib::merged_tree::MergedTree,
+        to_tree: &jj_lib::merged_tree::MergedTree,
+    ) -> Vec<String> {
+        let diff_stream = from_tree.diff_stream(to_tree, &EverythingMatcher);
+        let entries: Vec<_> = async { diff_stream.collect().await }.block_on();
+        entries
+            .into_iter()
+            .filter_map(|entry| {
+                let path_str = entry.path.as_internal_file_string();
+                (!should_exclude_path(path_str)).then(|| path_str.to_string())
+            })
+            .collect()
+    }
+
+    fn parent_tree_of(&self, commit: &Commit) -> Result<jj_lib::merged_tree::MergedTree, VcsError> {
+        let repo = self.repo.as_ref();
+        if commit.parent_ids().is_empty() {
+            Ok(repo.store().empty_merged_tree())
+        } else {
+            let parent = repo
+                .store()
+                .get_commit(&commit.parent_ids()[0])
+                .map_err(|e| VcsError::Other(format!("failed to get parent: {e}")))?;
+            Ok(parent.tree())
+        }
+    }
+
+    fn format_range_error(from: &str, to: &str) -> VcsError {
+        for r in [from, to] {
+            if let Some(suggestion) = detect_git_syntax(r) {
+                return VcsError::Other(format!("'{r}' is git syntax, use '{suggestion}' instead"));
+            }
+        }
+        VcsError::InvalidRef(format!("invalid range: {from}..{to}"))
+    }
 }
 
 impl VcsBackend for JjBackend {
     fn get_changed_files(&self, reference: &str) -> Result<Vec<String>, VcsError> {
         let commit = self.resolve_single_commit(reference)?;
-        let repo = self.repo.as_ref();
-
-        // Get parent tree (or empty tree for root commits)
-        let parent_tree = if commit.parent_ids().is_empty() {
-            repo.store().empty_merged_tree()
-        } else {
-            let parent_id = &commit.parent_ids()[0];
-            let parent = repo
-                .store()
-                .get_commit(parent_id)
-                .map_err(|e| VcsError::Other(format!("failed to get parent: {}", e)))?;
-            parent.tree()
-        };
-
-        let commit_tree = commit.tree();
-        let diff_stream = parent_tree.diff_stream(&commit_tree, &EverythingMatcher);
-        let entries: Vec<_> = async { diff_stream.collect().await }.block_on();
-
-        let mut files = Vec::new();
-        for entry in entries {
-            let path_str = entry.path.as_internal_file_string();
-            // Skip excluded files (same as GIT_DIFF_EXCLUSIONS)
-            if !should_exclude_path(path_str) {
-                files.push(path_str.to_string());
-            }
-        }
-
-        Ok(files)
+        let parent_tree = self.parent_tree_of(&commit)?;
+        Ok(Self::diff_trees(&parent_tree, &commit.tree()))
     }
 
     fn get_file_content_at_ref(&self, reference: &str, path: &Path) -> Result<String, VcsError> {
@@ -369,38 +379,7 @@ impl VcsBackend for JjBackend {
     }
 
     fn get_working_tree_changed_files(&self) -> Result<Vec<String>, VcsError> {
-        // For jj, working tree changes are in @ vs @-
-        // This is the same as get_changed_files("@") but we implement directly
-        // to avoid the overhead of re-resolving the commit
-        let wc_commit = self.resolve_single_commit("@")?;
-        let repo = self.repo.as_ref();
-
-        // Get parent tree (or empty tree for root commits)
-        let parent_tree = if wc_commit.parent_ids().is_empty() {
-            repo.store().empty_merged_tree()
-        } else {
-            let parent_id = &wc_commit.parent_ids()[0];
-            let parent = repo
-                .store()
-                .get_commit(parent_id)
-                .map_err(|e| VcsError::Other(format!("failed to get parent: {}", e)))?;
-            parent.tree()
-        };
-
-        let wc_tree = wc_commit.tree();
-        let diff_stream = parent_tree.diff_stream(&wc_tree, &EverythingMatcher);
-        let entries: Vec<_> = async { diff_stream.collect().await }.block_on();
-
-        let mut files = Vec::new();
-        for entry in entries {
-            let path_str = entry.path.as_internal_file_string();
-            // Skip excluded files (same as GIT_DIFF_EXCLUSIONS)
-            if !should_exclude_path(path_str) {
-                files.push(path_str.to_string());
-            }
-        }
-
-        Ok(files)
+        self.get_changed_files("@")
     }
 
     fn get_merge_base(&self, ref1: &str, ref2: &str) -> Result<String, VcsError> {
@@ -418,23 +397,7 @@ impl VcsBackend for JjBackend {
     fn get_range_changed_files(&self, from: &str, to: &str) -> Result<Vec<String>, VcsError> {
         let from_commit = self.resolve_single_commit(from)?;
         let to_commit = self.resolve_single_commit(to)?;
-
-        let from_tree = from_commit.tree();
-        let to_tree = to_commit.tree();
-
-        let diff_stream = from_tree.diff_stream(&to_tree, &EverythingMatcher);
-        let entries: Vec<_> = async { diff_stream.collect().await }.block_on();
-
-        let mut files = Vec::new();
-        for entry in entries {
-            let path_str = entry.path.as_internal_file_string();
-            // Skip excluded files (same as GIT_DIFF_EXCLUSIONS)
-            if !should_exclude_path(path_str) {
-                files.push(path_str.to_string());
-            }
-        }
-
-        Ok(files)
+        Ok(Self::diff_trees(&from_commit.tree(), &to_commit.tree()))
     }
 
     fn get_parent_ref_or_empty(&self, reference: &str) -> Result<String, VcsError> {
@@ -466,44 +429,14 @@ impl VcsBackend for JjBackend {
         self.with_revset_context(|context| {
             let mut diagnostics = RevsetDiagnostics::new();
             let expression = jj_lib::revset::parse(&mut diagnostics, &revset_str, context)
-                .map_err(|_| {
-                    // Check both refs for git syntax hints
-                    if let Some(suggestion) = detect_git_syntax(from) {
-                        return VcsError::Other(format!(
-                            "'{}' is git syntax, use '{}' instead",
-                            from, suggestion
-                        ));
-                    }
-                    if let Some(suggestion) = detect_git_syntax(to) {
-                        return VcsError::Other(format!(
-                            "'{}' is git syntax, use '{}' instead",
-                            to, suggestion
-                        ));
-                    }
-                    VcsError::InvalidRef(format!("invalid range: {}..{}", from, to))
-                })?;
+                .map_err(|_| Self::format_range_error(from, to))?;
 
             let symbol_resolver =
                 SymbolResolver::new(repo, &([] as [&Box<dyn SymbolResolverExtension>; 0]));
 
             let resolved = expression
                 .resolve_user_expression(repo, &symbol_resolver)
-                .map_err(|_| {
-                    // Check both refs for git syntax hints
-                    if let Some(suggestion) = detect_git_syntax(from) {
-                        return VcsError::Other(format!(
-                            "'{}' is git syntax, use '{}' instead",
-                            from, suggestion
-                        ));
-                    }
-                    if let Some(suggestion) = detect_git_syntax(to) {
-                        return VcsError::Other(format!(
-                            "'{}' is git syntax, use '{}' instead",
-                            to, suggestion
-                        ));
-                    }
-                    VcsError::InvalidRef(format!("invalid range: {}..{}", from, to))
-                })?;
+                .map_err(|_| Self::format_range_error(from, to))?;
 
             let revset = resolved
                 .evaluate(repo)
@@ -767,7 +700,9 @@ mod tests {
 
         // jj allows short prefixes for commit IDs
         let prefix = &commit_id[..8.min(commit_id.len())];
-        let sha = backend.resolve_ref(prefix).expect("a commit SHA prefix resolves");
+        let sha = backend
+            .resolve_ref(prefix)
+            .expect("a commit SHA prefix resolves");
 
         assert_eq!(sha, commit_id, "resolved SHA should match original commit");
     }
@@ -1109,7 +1044,7 @@ mod tests {
 
     #[test]
     fn test_stacked_diff_integration_jj() {
-        use crate::command::diff::git::load_single_commit_diffs;
+        use crate::diff::load_single_commit_diffs;
         use std::fs;
 
         let Some(repo) = JjRepoGuard::new() else {

@@ -34,9 +34,7 @@
 
               nativeBuildInputs = [
                 pkgs.pkg-config
-                pkgs.perl
               ];
-              buildInputs = [ pkgs.openssl ];
               doCheck = false;
             };
           default = self.packages.${system}.lumiere;
@@ -50,10 +48,6 @@
             pkgs.rustc
             pkgs.rustfmt
             pkgs.pkg-config
-            pkgs.perl
-          ];
-          buildInputs = [
-            pkgs.openssl
           ];
         };
       }
