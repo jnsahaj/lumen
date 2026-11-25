@@ -1,0 +1,35 @@
+[book]
+title = "Lumiere"
+description = "Review diffs in the terminal and discuss them with your coding agent."
+authors = ["Alexandre Duverger"]
+language = "en"
+src = "src"
+
+[build]
+build-dir = "book"
+create-missing = false
+
+[output.html]
+default-theme = "ayu"
+preferred-dark-theme = "ayu"
+git-repository-url = "https://github.com/aduverger/lumiere"
+git-repository-icon = "fa-github"
+edit-url-template = "https://github.com/aduverger/lumiere/edit/main/docs/{path}"
+additional-css = ["theme/custom.css"]
+no-section-label = false
+
+[output.html.fold]
+enable = true
+level = 1
+
+[output.html.search]
+enable = true
+limit-results = 30
+teaser-word-count = 30
+use-boolean-and = true
+boost-title = 2
+boost-hierarchy = 1
+boost-paragraph = 1
+expand = true
+heading-split-level = 3
+copy-js = true

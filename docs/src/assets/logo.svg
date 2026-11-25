@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Lumiere">
+  <rect width="128" height="128" rx="28" fill="#16161d"/>
+  <!-- Old side: an outline. New side: lit. The gap is the divider of a side-by-side diff. -->
+  <path d="M60 36a28 28 0 0 0 0 56z" fill="none" stroke="#6b6f85" stroke-width="5" stroke-linejoin="round"/>
+  <path d="M68 36a28 28 0 0 1 0 56z" fill="#ffc857"/>
+  <g stroke="#ffc857" stroke-width="5" stroke-linecap="round">
+    <path d="M106 64h8"/>
+    <path d="M98 36l6-6"/>
+    <path d="M98 92l6 6"/>
+  </g>
+</svg>
