@@ -4,6 +4,13 @@
 
 <p align="center">Review diffs in the terminal and discuss them with your coding agent.</p>
 
+<p align="center">
+  <a href="https://aduverger.github.io/lumiere/">Documentation</a> ·
+  <a href="#quick-start">Quick Start</a> ·
+  <a href="#review-threads">Review Threads</a> ·
+  <a href="#development">Development</a>
+</p>
+
 Lumiere is a side-by-side diff viewer for the terminal. You comment on the lines an
 agent wrote; the agent answers inside the same thread while the review stays open.
 
@@ -262,9 +269,18 @@ releases, and restarts its version at 0.1.0. The main differences:
 ## Development
 
 ```bash
-cargo build
+cargo fmt --all -- --check
+cargo clippy --all-targets -- -D warnings
 cargo test
-cargo clippy --all-targets
+cargo test --no-default-features
+```
+
+The codebase is organized around five core modules (`vcs`, `diff`, `review`, `search`, `ui`)
+documented in [`docs/`](docs/src/architecture/overview.md). To preview the documentation site
+locally with [mdBook](https://rust-lang.github.io/mdBook/):
+
+```bash
+mdbook serve docs --open
 ```
 
 `bench/` measures how fast Lumiere starts and reacts, to compare a change before and
